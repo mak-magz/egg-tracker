@@ -52,6 +52,25 @@ A multi-tenant SaaS for egg farms that tracks production, computed inventory, sa
 - Custom components: the quantity input and display (trays + loose ↔ eggs), a multi-size production entry form that writes several rows in one submit, and a production day-summary card.
 - Navigation has 5 destinations (Dashboard, Production, Sales, Inventory, Clients): a sidebar on desktop, bottom tabs and a FAB on mobile.
 
+## Claude Code setup (`.claude/`)
+
+### Dev team workflow
+Features are built by a team of subagents, coordinated by the main session. Subagents can't call each other, so the main session runs each step. Each feature has one shared doc at `docs/features/NN-<name>.md` (copy it from `_TEMPLATE.md`), and each role fills in its own section. `/feature <idea>` runs the whole pipeline with a user checkpoint after each handoff; `/feature NN-name` resumes one.
+
+1. `product-manager`: writes the story, acceptance criteria, and scope (§1–2). Status becomes `draft`. Take any open owner questions to the user before design starts.
+2. `ux-designer`: writes flows, mobile and desktop wireframes, states, and copy (§2.5). Skip it for features with no UI.
+3. `architect`: writes the data, RLS, API contracts, frontend structure, and an ordered `[BE]`/`[FE]` task list (§3). Status becomes `designed`. Show the user any decisions that need their call.
+4. `backend-dev` + `frontend-dev` (in parallel once the §3 API contract is fixed), plus `devops` for tooling, CI, env, or deploy: implement their tasks and record what they built (§4).
+5. `qa-reviewer`: checks each acceptance criterion with evidence, reviews the rules above, runs the tests, and gives a PASS/FAIL verdict (§5). If it's FAIL, send the findings back to the dev who owns them, then run QA again (at most 2 rounds before going to the user).
+
+`security-auditor` is not part of each feature. It's a read-only, whole-system audit. Run it after changes to auth, middleware, RLS helpers, or the repository layer, before the first deploy, and before a second farm starts using the app.
+
+Small fixes don't need the full pipeline. Still run `qa-reviewer` on anything that touches the DB, server, auth, or sales/inventory logic.
+
+### Hooks
+- `guard-service-role.mjs` blocks writing service-role key references outside `server/`, `supabase/`, `tests/`, `nuxt.config`, and `.env*`.
+- `typecheck-on-stop.mjs` typechecks at the end of a turn when `.ts`/`.vue` files changed. It does nothing until the app is scaffolded, and it prefers an npm `typecheck` script if one exists.
+
 ## Open decisions
 
 - How quantities are entered (two fields for trays + loose, or decimal trays). Pick one and use it everywhere.

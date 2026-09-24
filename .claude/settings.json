@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "allow": [
+      "Bash(npm run *)",
+      "Bash(npm install *)",
+      "Bash(npm ci)",
+      "Bash(npm ls *)",
+      "Bash(npx nuxi *)",
+      "Bash(npx vitest *)",
+      "Bash(npx eslint *)",
+      "Bash(npx supabase start)",
+      "Bash(npx supabase stop)",
+      "Bash(npx supabase status)",
+      "Bash(npx supabase migration new *)",
+      "Bash(npx supabase test db*)",
+      "Bash(npx supabase gen types *)",
+      "Bash(git status*)",
+      "Bash(git diff*)",
+      "Bash(git log*)",
+      "Bash(git show*)",
+      "Bash(git branch*)",
+      "WebFetch(domain:ui.nuxt.com)",
+      "WebFetch(domain:nuxt.com)",
+      "WebFetch(domain:supabase.com)"
+    ],
+    "ask": [
+      "Bash(npx supabase db push*)",
+      "Bash(npx supabase link*)",
+      "Bash(npx supabase db reset*)",
+      "Bash(supabase db push*)",
+      "Bash(supabase link*)",
+      "Bash(vercel *)",
+      "Bash(npx vercel *)"
+    ],
+    "deny": [
+      "Read(./.env)",
+      "Read(./.env.local)",
+      "Read(./.env.production)",
+      "Read(./.env.*.local)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard-service-role.mjs\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/typecheck-on-stop.mjs\"",
+            "timeout": 300,
+            "statusMessage": "Typechecking changed files..."
+          }
+        ]
+      }
+    ]
+  }
+}
