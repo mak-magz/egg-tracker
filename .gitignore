@@ -1,0 +1,25 @@
+# Nuxt / Node
+node_modules/
+.nuxt/
+.output/
+.nitro/
+.cache/
+dist/
+.vercel/
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+
+# Logs & OS
+*.log
+.DS_Store
+Thumbs.db
+
+# Supabase local
+supabase/.temp/
+supabase/.branches/
+
+# Claude Code local settings
+.claude/settings.local.json
