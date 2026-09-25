@@ -81,3 +81,37 @@ describe('TenantDb.scoped', () => {
     expect(db.tenantId).toBe(TENANT)
   })
 })
+
+describe('TenantDb.rpc', () => {
+  function rpcClient(result: { data: unknown, error: unknown } = { data: { ok: true }, error: null }) {
+    const calls: [string, Record<string, unknown>][] = []
+    const client = {
+      rpc: (fn: string, args: Record<string, unknown>) => {
+        calls.push([fn, args])
+        return Promise.resolve(result)
+      },
+    }
+    return { client: client as unknown as SupabaseClient<Database>, calls }
+  }
+
+  it('injects p_tenant_id from the db and passes the other args through', async () => {
+    const { client, calls } = rpcClient()
+    const res = await createTenantDbFromClient(client, TENANT).rpc('delete_production_day', { p_day: '2026-09-25' })
+    expect(calls).toEqual([['delete_production_day', { p_day: '2026-09-25', p_tenant_id: TENANT }]])
+    expect(res).toEqual({ data: { ok: true }, error: null })
+  })
+
+  it('drops a smuggled p_tenant_id', async () => {
+    const { client, calls } = rpcClient()
+    const args = { p_day: '2026-09-25', p_tenant_id: OTHER } as never
+    await createTenantDbFromClient(client, TENANT).rpc('delete_production_day', args)
+    expect(calls[0]![1]).toEqual({ p_day: '2026-09-25', p_tenant_id: TENANT })
+  })
+
+  it('returns the PostgREST error instead of throwing', async () => {
+    const error = { code: 'TM003', message: 'day has no production', details: '', hint: '' }
+    const { client } = rpcClient({ data: null, error })
+    const res = await createTenantDbFromClient(client, TENANT).rpc('delete_production_day', { p_day: '2026-09-25' })
+    expect(res).toEqual({ data: null, error })
+  })
+})

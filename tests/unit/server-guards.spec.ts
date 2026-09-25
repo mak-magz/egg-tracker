@@ -32,7 +32,15 @@ const apiFiles = walk(join(ROOT, 'server', 'api'))
 
 describe('server guards', () => {
   it('finds the server sources', () => {
-    expect(apiFiles.map(rel)).toContain('server/api/me.get.ts')
+    expect(apiFiles.map(rel)).toEqual(expect.arrayContaining([
+      'server/api/me.get.ts',
+      // Feature 01: rules (a) and (d) demonstrably run over the production routes.
+      'server/api/production/days.get.ts',
+      'server/api/production/days/[date].get.ts',
+      'server/api/production/days/[date].put.ts',
+      'server/api/production/days/[date].delete.ts',
+      'server/api/production/entries.post.ts',
+    ]))
   })
 
   it('(a) every server/api route is wrapped in defineAuthedHandler or defineTenantHandler', () => {
