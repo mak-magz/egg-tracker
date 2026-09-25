@@ -1,0 +1,222 @@
+<!--
+  App shell (T16, AC15–AC18). Design: template.html shell + §2.5 "App shell" wireframes.
+  - ≥1024px: sidebar (224px), expanded by default, collapsible to a 64px rail.
+  - 768–1023px: the same sidebar, collapsed to the icon rail by default (44px targets).
+  - <768px: no sidebar; bottom tabs + account avatar in the top bar.
+  Nav *visibility* is pure CSS, so SSR renders both navs and hydration is stable. Only the
+  rail's collapsed state is JS: session-only, reset whenever the width crosses a breakpoint.
+-->
+<script setup lang="ts">
+import { breakpointsTailwind, useBreakpoints } from '@vueuse/core'
+import type { NavigationMenuItem } from '@nuxt/ui'
+
+const route = useRoute()
+
+// ---- Account (AC13, AC21) -------------------------------------------------------------------
+// The middleware only lets 'farm' pages render here once /api/me has a farm, or when it failed
+// (then `farmLoadFailed` replaces the whole shell with the retry card, T20).
+const { me, status: meStatus, ensure } = useMe()
+const { signOut } = useAuthActions()
+const account = computed(() => ({ farmName: me.value?.farm?.name ?? '', email: me.value?.email ?? '' }))
+const farmLoadFailed = computed(() => meStatus.value === 'error')
+const retrying = ref(false)
+async function retryFarm() {
+  retrying.value = true
+  await ensure({ force: true })
+  retrying.value = false
+}
+// ---------------------------------------------------------------------------------------------
+
+// ---- Sidebar collapse (AC18) ----------------------------------------------------------------
+const breakpoints = useBreakpoints(breakpointsTailwind)
+const isLg = breakpoints.greaterOrEqual('lg')
+const isMd = breakpoints.greaterOrEqual('md')
+const viewport = computed(() => (isLg.value ? 'desktop' : isMd.value ? 'tablet' : 'mobile'))
+
+// SSR can't know the width, so it renders expanded; the breakpoint default is applied after
+// mount (not during hydration) to avoid a mismatch.
+const collapsed = ref(false)
+onMounted(() => {
+  watch(viewport, (v) => {
+    collapsed.value = v === 'tablet'
+  }, { immediate: true })
+})
+
+// ---- Nav + title ----------------------------------------------------------------------------
+const navItems = computed<NavigationMenuItem[]>(() => APP_NAV.map(item => ({
+  label: item.label,
+  icon: item.icon,
+  to: item.to,
+  active: isNavItemActive(item, route.path),
+})))
+
+const activeItem = computed(() => findActiveNavItem(route.path))
+
+// Client-only "Today, Sep 25" (the server's UTC date must never render).
+const today = ref<string | null>(null)
+function refreshToday() {
+  today.value = formatTodaySubtitle(new Date())
+}
+onMounted(refreshToday)
+watch(() => route.path, () => {
+  if (import.meta.client) refreshToday()
+})
+
+// Pages that aren't nav destinations (the 404) set `definePageMeta({ title })`; none is highlighted.
+const title = computed(() => activeItem.value?.title ?? route.meta.title ?? 'Tamago')
+useHead({ title: computed(() => `${title.value} · Tamago`) })
+const subtitle = computed(() => {
+  const item = activeItem.value
+  if (!item) return null
+  return item.subtitleIsToday ? today.value : item.subtitle
+})
+
+// ---- Per-state sizing (layout only; colours live in app.config.ts) --------------------------
+const sidebarUi = computed(() => ({
+  root: 'md:flex bg-default transition-[width] duration-200 ease-out motion-reduce:transition-none',
+  header: ['border-b border-default gap-2', collapsed.value ? 'px-0 justify-center' : 'px-4'],
+  body: 'px-2 py-2.5 gap-0',
+  footer: ['border-t border-default py-3', collapsed.value ? 'px-2.5 justify-center' : 'px-3'],
+}))
+
+const navUi = computed(() => ({
+  list: 'flex flex-col gap-0.5',
+  link: [
+    'text-base gap-2.5 px-2.5 py-2 min-h-11 lg:min-h-10',
+    collapsed.value && 'justify-center px-0',
+  ],
+  linkLeadingIcon: 'size-[18px]',
+}))
+</script>
+
+<template>
+  <div class="contents">
+    <!-- T20: /api/me failed (network/500). No shell, no farm data; retry or sign out. -->
+    <div
+      v-if="farmLoadFailed"
+      class="flex min-h-svh w-full items-start justify-center bg-muted p-6 pt-12 md:items-center md:pt-6"
+    >
+      <AuthCard title="Couldn't load your farm.">
+        <div
+          role="alert"
+          class="flex flex-col gap-3"
+        >
+          <UButton
+            size="xl"
+            block
+            icon="i-lucide-refresh-cw"
+            label="Try again"
+            :loading="retrying"
+            @click="retryFarm"
+          />
+          <UButton
+            color="neutral"
+            variant="outline"
+            size="xl"
+            block
+            icon="i-lucide-log-out"
+            label="Sign out"
+            @click="signOut"
+          />
+        </div>
+      </AuthCard>
+    </div>
+
+    <UDashboardGroup
+      v-else
+      unit="px"
+      :persistent="false"
+    >
+      <UDashboardSidebar
+        v-model:collapsed="collapsed"
+        collapsible
+        :default-size="224"
+        :min-size="224"
+        :max-size="224"
+        :collapsed-size="64"
+        :toggle="false"
+        :ui="sidebarUi"
+      >
+        <template #header>
+          <AppLogo :size="28" />
+          <div
+            v-if="!collapsed"
+            class="min-w-0 flex-1"
+          >
+            <p class="truncate text-base leading-tight font-bold text-highlighted">
+              Tamago
+            </p>
+            <p class="truncate text-xs text-muted">
+              Egg farm tracker
+            </p>
+          </div>
+        </template>
+
+        <UNavigationMenu
+          :items="navItems"
+          orientation="vertical"
+          :collapsed="collapsed"
+          tooltip
+          aria-label="Main"
+          :ui="navUi"
+        />
+
+        <template #footer>
+          <!-- Expanded: full row, opens upward. Rail: avatar only, opens to the right. -->
+          <AppAccountMenu
+            :farm-name="account.farmName"
+            :email="account.email"
+            :variant="collapsed ? 'avatar' : 'row'"
+            :side="collapsed ? 'right' : 'top'"
+            :align="collapsed ? 'end' : 'start'"
+          />
+        </template>
+      </UDashboardSidebar>
+
+      <UDashboardPanel :ui="{ body: 'bg-muted p-4 sm:p-4 md:p-6 sm:gap-4' }">
+        <template #header>
+          <UDashboardNavbar
+            :toggle="false"
+            :ui="{ root: 'bg-default px-4 sm:px-4 md:px-5 gap-3', left: 'gap-3' }"
+          >
+            <template #left>
+              <UDashboardSidebarCollapse class="md:flex size-11 justify-center lg:size-9" />
+              <div class="min-w-0">
+                <h1 class="truncate text-xl font-bold tracking-[-0.01em] text-highlighted">
+                  {{ title }}
+                </h1>
+                <p
+                  v-if="subtitle"
+                  class="truncate text-sm text-muted"
+                >
+                  {{ subtitle }}
+                </p>
+              </div>
+            </template>
+
+            <template #right>
+              <div class="md:hidden">
+                <AppAccountMenu
+                  :farm-name="account.farmName"
+                  :email="account.email"
+                  variant="avatar"
+                  side="bottom"
+                  align="end"
+                />
+              </div>
+            </template>
+          </UDashboardNavbar>
+        </template>
+
+        <template #body>
+          <!-- Bottom padding below md clears the fixed tab bar (64px + safe area). -->
+          <div class="mx-auto w-full max-w-[1120px] pb-[calc(4rem+env(safe-area-inset-bottom))] md:pb-0">
+            <slot />
+          </div>
+        </template>
+      </UDashboardPanel>
+
+      <AppBottomTabs />
+    </UDashboardGroup>
+  </div>
+</template>
