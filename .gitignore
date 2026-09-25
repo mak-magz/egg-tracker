@@ -4,8 +4,14 @@ node_modules/
 .output/
 .nitro/
 .cache/
+.data/
 dist/
 .vercel/
+
+# Bun is the package manager (bun.lock is committed). Keep other lockfiles out.
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
 
 # Env / secrets
 .env
@@ -23,3 +29,6 @@ supabase/.branches/
 
 # Claude Code local settings
 .claude/settings.local.json
+
+# Design export: extracted runtime/fonts are regenerable (node docs/design/extract.mjs)
+docs/design/source/assets/
