@@ -49,6 +49,9 @@ Customer invoicing / accounts-receivable · delivery routing/scheduling · SaaS 
 - **Service-role key is strictly server-side** — only in Nuxt's `server/` directory, in server-only runtime config, never bundled to the client. The browser uses the **anon key** only (RLS protects it).
 - If a long-running process is ever needed (real pool, background workers, no timeout), the fork is a Node host running Nuxt as a persistent server — keeps all-TypeScript, drops serverless constraints.
 
+### Pinned versions (settled in `docs/features/00-project-scaffold.md` §3.1, 2026-09-25)
+Nuxt **4.5** (the `app/` directory layout, with `server/` and `shared/`) · Nuxt UI **4.x** (it bundles `@nuxt/fonts`, `@nuxt/icon` and `@nuxtjs/color-mode`) · Tailwind **4** · `@nuxtjs/supabase` **2.x** (on `@supabase/ssr`, with its redirect turned off in favour of our own middleware) · TypeScript **~6.0** (not 7; vue-tsc needs the TS 6 API) · Node **24** · Vitest **5** for unit tests · pgTAP via `supabase test db` for DB and isolation tests · ESLint via `@nuxt/eslint`.
+
 ---
 
 ## 3. Multi-Tenancy
@@ -76,6 +79,23 @@ Customer invoicing / accounts-receivable · delivery routing/scheduling · SaaS 
 - A `users` / `memberships` table maps a user to one or more `tenant_id`s; the server resolves tenant per request.
 - **Defense-in-depth:** keep RLS armed even when server routes use a privileged role. Connect with a non-superuser role and set tenant context per transaction (e.g. `SET LOCAL app.current_tenant`) so RLS backstops a forgotten `WHERE tenant_id = ...` — turning a missed filter from a data leak into an empty result.
 
+### As built (feature 00, 2026-09-25)
+- **Server DB access in v1 = `supabase-js` acting as the signed-in user** (`serverSupabaseClient(event)`: the publishable key plus the user's session cookies). PostgREST runs every query as the non-superuser role `authenticated` and `SET LOCAL`s the user's JWT claims per transaction. That is how the defense-in-depth rule above is met, and there's no privileged DB credential in the request path. A direct pooler connection with `SET LOCAL app.current_tenant` is reserved for future non-request work (cron/workers), which must then also `set local role authenticated`.
+- **Tenant resolution helper:** `app.current_tenant_id()`. It's security definer, lives in the `app` schema (which PostgREST doesn't expose), and reads `memberships` by `auth.uid()`. In v1 each user has exactly one membership (`unique (user_id)`). Every RLS policy calls it as `(select app.current_tenant_id())`.
+- **Repository layer:** `server/utils/db.ts` → `TenantDb.scoped(table)` pre-applies `.eq('tenant_id', …)` to select/update/delete and injects `tenant_id` into inserts. Routes use `defineTenantHandler` / `defineAuthedHandler` (`server/utils/handlers.ts`), and only repositories touch the client.
+- **Service role at runtime:** none in v1. The secret key is used only by the local provisioning CLI (`server/cli/provision.ts`) and isn't configured on Vercel.
+- **Multi-statement atomic writes** are Postgres functions (`security invoker`) called through `rpc`, so each one runs as a single transaction.
+- **RLS policy template for every tenant-owned table:**
+  ```sql
+  alter table public.<t> enable row level security;
+  revoke all on public.<t> from anon;
+  create policy <t>_select on public.<t> for select to authenticated using (tenant_id = (select app.current_tenant_id()));
+  create policy <t>_insert on public.<t> for insert to authenticated with check (tenant_id = (select app.current_tenant_id()));
+  create policy <t>_update on public.<t> for update to authenticated using (tenant_id = (select app.current_tenant_id())) with check (tenant_id = (select app.current_tenant_id()));
+  create policy <t>_delete on public.<t> for delete to authenticated using (tenant_id = (select app.current_tenant_id()));
+  ```
+- **Isolation test:** pgTAP in `supabase/tests/database/`, run with `npm run test:db`. A new table adds one row to `tests.tenant_table_registry()`, and the shared A-vs-B checker covers it. A coverage meta-test fails if any `public` table is missing RLS, `tenant_id`, `updated_at` or its registry row.
+
 ### Where the client/server line is drawn
 - **Ordinary reads/writes** may go through `supabase-js` with RLS protecting them.
 - **Nuxt server routes** own: privileged operations (service-role), business logic & derived metrics (inventory, dashboard figures, any anomaly flags), tenant provisioning, and anything that must not live in the client or a SQL policy.
@@ -97,6 +117,11 @@ Customer invoicing / accounts-receivable · delivery routing/scheduling · SaaS 
 ## 5. Data Model
 
 Core domains: **Production**, **Inventory** (computed), **Sales** (absorbs deliveries), **Clients**, plus tenant/user tables. Every table carries `tenant_id`. Consider `updated_at` on every table (useful for "recently changed" queries and a cheap hedge that keeps a future sync/offline layer unblocked).
+
+### Tenant tables (built in feature 00)
+- **`tenants`** `(id uuid pk, name text 1–100 chars, eggs_per_tray integer not null default 30 check (>= 1), created_at, updated_at)`. It's the **root**: its `id` *is* the tenant id, so it has no separate `tenant_id` column. It's the one named exception to "every table has `tenant_id`", and it's still RLS-filtered by `id`.
+- **`memberships`** `(id, tenant_id → tenants, user_id → auth.users, created_at, updated_at, unique (user_id))`: one farm per user in v1.
+- Owners have **read-only** access to both tables (no write grants and no write policies). Farms and memberships are created only by provisioning (the Admin API plus service-role-only SQL functions).
 
 ### Design principle: categories are data, not columns
 Size, quality, and fulfillment type are **column values**, not fixed columns (no `large_count`, `jumbo_count`). Adding a new size or quality later = a new allowed value (an insert), not an `ALTER TABLE`. Totals are `SUM`/`GROUP BY`, not hand-summed columns.
@@ -204,3 +229,4 @@ The data model (the expensive-to-reverse part) is settled. Remaining work is mec
 - This spec reflects the **planned** architecture from the design conversation. If the actual codebase has diverged, treat the code as source of truth and update this doc to match rather than the reverse.
 - Two open implementation conventions left to build-time (both noted in the UI spec): the exact **quantity input convention** (two fields vs decimal-trays) and **client delete = soft-delete/archive** behavior.
 - Real values still needed from the owner: actual **tray size** (eggs per tray) and whether **hen counts** are tracked (drives the optional lay-rate metric).
+  - *Update 2026-09-25:* the owner chose **30 eggs per tray** as the farm default (the `tenants.eggs_per_tray` column default) and **trays + loose as two fields** for quantity entry. Hen counts are still open.

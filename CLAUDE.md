@@ -14,12 +14,15 @@ Pre-code: the repo has only planning specs, no application code, package.json, o
 | `docs/egg-farm-app-architecture-spec.md` | **Most current backend spec**: stack, multi-tenancy, data model, build order |
 | `docs/egg-farm-app-ui-spec.md` | Screens, components, flows, Nuxt UI v4 implementation notes |
 | `docs/egg-farm-app-design.md` | Older, fuller decision log (predates the architecture spec) |
+| `docs/design/` | **The owner's UI design, and the source of truth for screen visuals, layout, and copy.** UX and frontend follow it; don't invent layouts. `Tamago Egg Farm Tracker.html` is the Claude Design bundle export (open it in a browser to view it). Read `source/template.html` instead: it holds the markup, the design tokens in the `<style>`, and a `text/x-dc` script with the screen logic and sample data. Run `node docs/design/extract.mjs` to regenerate `source/`. The logo is `tamago-logo.png`. |
 
 If the code and the specs disagree once code exists, the code wins. Update the spec to match.
 
 ## What it is
 
 A multi-tenant SaaS for egg farms that tracks production, computed inventory, sales (deliveries are one kind of sale), and clients. v1 has a single owner-operator who logs data quickly on a phone. It is an online-only web app with no offline support.
+
+**Package manager:** **Bun** (`bun install`, `bun run <script>`, `bunx`). Don't use npm, npx, or `package-lock.json`. The app still runs on Node at runtime (Nuxt/Nitro, Vercel), and tests use Vitest via `bun run test:unit`, not `bun test`.
 
 **Stack:** Nuxt (SSR) + TypeScript, Nitro server routes for business logic and privileged operations, Supabase (Postgres + Auth), hosted on Vercel, UI in Nuxt UI v4 + Tailwind.
 
@@ -30,9 +33,10 @@ A multi-tenant SaaS for egg farms that tracks production, computed inventory, sa
 **Tenancy and security**
 - Every table has `tenant_id` (and `updated_at`) starting with the first migration. Tenancy uses shared tables with RLS, not a schema per tenant.
 - Derive `tenant_id` on the server from the authenticated user through a `memberships`-style mapping. Never trust a `tenant_id` sent by the client.
-- Tenant scoping lives in one repository/query layer, not in hand-written filters on each query. Keep RLS on even for server routes: connect as a non-superuser role and set tenant context per transaction (e.g. `SET LOCAL app.current_tenant`).
-- The service-role key is used only under `server/`, through server-only runtime config. The browser uses the anon key and RLS.
-- Vercel runs serverless, so connect through the Supabase connection pooler (transaction mode) or `supabase-js`. Don't keep a long-lived pool, and don't put long-running work in request handlers.
+- Tenant scoping lives in one repository/query layer, not in hand-written filters on each query. RLS stays on for server routes: server data access uses **supabase-js acting as the signed-in user** (their JWT), so Postgres sees the non-superuser `authenticated` role, and RLS is enforced through `app.current_tenant_id()`. The repository layer adds the `tenant_id` filter as well. Don't switch to a privileged or direct-pooler connection with `SET LOCAL` without an architecture decision (see `docs/egg-farm-app-architecture-spec.md` §3).
+- The service-role (secret) key is **not used at app runtime**. Only the local provisioning CLI (`server/cli/`) uses it, through server-only config. The browser uses the publishable (anon) key and RLS.
+- Every server route is wrapped in `defineAuthedHandler` or `defineTenantHandler`, and a guard test enforces this. `tenants` is the root table (its `id` is the tenant id) and is the only table without a `tenant_id` column.
+- Vercel runs serverless, so don't keep a long-lived pool and don't put long-running work in request handlers.
 
 **Units and data model**
 - The stored unit is always individual eggs. Trays exist only at input and display, through one shared conversion helper. Eggs-per-tray is a per-tenant setting and must never be hardcoded.
@@ -68,10 +72,11 @@ Features are built by a team of subagents, coordinated by the main session. Suba
 Small fixes don't need the full pipeline. Still run `qa-reviewer` on anything that touches the DB, server, auth, or sales/inventory logic.
 
 ### Hooks
-- `guard-service-role.mjs` blocks writing service-role key references outside `server/`, `supabase/`, `tests/`, `nuxt.config`, and `.env*`.
-- `typecheck-on-stop.mjs` typechecks at the end of a turn when `.ts`/`.vue` files changed. It does nothing until the app is scaffolded, and it prefers an npm `typecheck` script if one exists.
+- `guard-service-role.mjs` blocks writing service-role or secret-key references (including `NUXT_SUPABASE_SECRET_KEY`, `supabase.secretKey`, and `sb_secret_`) outside `server/`, `supabase/`, `tests/`, `nuxt.config`, and `.env*`.
+- `typecheck-on-stop.mjs` typechecks at the end of a turn when `.ts`/`.vue` files changed. It does nothing until the app is scaffolded, and it runs the package `typecheck` script with Bun (`bun run typecheck`) when `bun.lock` exists.
 
 ## Open decisions
 
-- How quantities are entered (two fields for trays + loose, or decimal trays). Pick one and use it everywhere.
-- Real eggs-per-tray value, and whether hen counts are tracked (the optional lay-rate metric depends on it).
+- Whether hen counts are tracked (the optional lay-rate metric depends on it).
+
+Decided: quantities are entered as **trays + loose, in two fields** (per the design). The default eggs-per-tray is **30**, stored as a per-farm setting, never hardcoded.
