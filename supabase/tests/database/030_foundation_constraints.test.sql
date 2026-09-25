@@ -1,6 +1,6 @@
 -- 030_foundation_constraints: tenants/memberships constraints, triggers and provisioning (AC22, AC30).
 begin;
-select plan(28);
+select plan(29);
 
 -- eggs_per_tray default and range (AC22)
 insert into public.tenants (id, name) values ('00000000-0000-0000-0000-00000000a001', 'Default Farm');
@@ -62,6 +62,10 @@ select is(
   row('Hendricks Farm', 30, 'created')::text,
   'provision_farm creates a farm (trimmed name, default 30 eggs per tray)');
 select is((select count(*) from public.tenants), (select n + 1 from _t0), 'exactly one tenant was created');
+select is(
+  array(select s.name from public.sizes s where s.tenant_id = tests.tenant_id_of('p1') order by s.sort_order),
+  array['Small', 'Medium', 'Large', 'Jumbo'],
+  'provision_farm gives the new farm the default sizes with no extra step (AC37)');
 
 select is(
   (select row(f.tenant_id, f.farm_name, f.eggs_per_tray, f.outcome)::text

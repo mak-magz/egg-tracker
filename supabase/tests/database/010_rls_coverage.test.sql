@@ -1,7 +1,7 @@
 -- 010_rls_coverage: meta-guards over the whole `public` schema (docs/features/00-project-scaffold.md §3.7).
 -- A new table that forgets RLS, updated_at, tenant_id, its index, or its isolation-registry row fails here.
 begin;
-select plan(15);
+select plan(19);
 
 -- Ordinary + partitioned tables in public.
 create temp view _public_tables as
@@ -133,6 +133,45 @@ select ok(
   and has_function_privilege('authenticated', 'app.current_tenant_id()', 'execute')
   and not has_function_privilege('anon', 'app.current_tenant_id()', 'execute'),
   'app.current_tenant_id() is callable by authenticated only');
+
+-- Feature 01: the production RPCs are security INVOKER (RLS applies inside), authenticated-only.
+create temp view _production_rpcs as
+  select f from unnest(array[
+    'public.production_days(uuid,date,date)'::regprocedure,
+    'public.log_production(uuid,uuid,date,uuid[],integer[],integer)'::regprocedure,
+    'public.replace_production_day(uuid,date,uuid[],integer[],integer)'::regprocedure,
+    'public.delete_production_day(uuid,date)'::regprocedure]) f;
+
+select is(
+  array(select r.f::text from _production_rpcs r join pg_proc p on p.oid = r.f where p.prosecdef order by 1),
+  '{}'::text[],
+  'the production RPCs are security invoker');
+
+select is(
+  array(select r.f::text from _production_rpcs r where has_function_privilege('anon', r.f, 'execute') order by 1),
+  '{}'::text[],
+  'anon cannot execute the production RPCs');
+
+select is(
+  array(select r.f::text from _production_rpcs r where not has_function_privilege('authenticated', r.f, 'execute') order by 1),
+  '{}'::text[],
+  'authenticated can execute the production RPCs');
+
+select is(
+  array(select f::text from unnest(array[
+          'app.assert_tenant(uuid)'::regprocedure,
+          'app.production_days_json(uuid,date,date)'::regprocedure,
+          'app.production_day_json(uuid,date)'::regprocedure,
+          'app.check_production_input(date,uuid[],integer[],integer)'::regprocedure,
+          'app.lock_production_day(uuid,date)'::regprocedure,
+          'app.seed_default_sizes(uuid)'::regprocedure,
+          'app.seed_default_sizes_trigger()'::regprocedure,
+          'app.production_bounds()'::regprocedure]) f
+        where has_function_privilege('anon', f, 'execute')
+           or (f::text like 'app.seed_default_sizes%' and has_function_privilege('authenticated', f, 'execute'))
+        order by 1),
+  '{}'::text[],
+  'the app.* production helpers are not executable by anon (and size seeding not by authenticated)');
 
 select * from finish();
 rollback;

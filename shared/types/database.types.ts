@@ -66,6 +66,130 @@ export type Database = {
           },
         ]
       }
+      production: {
+        Row: {
+          created_at: string
+          eggs: number
+          id: string
+          produced_on: string
+          quality: string
+          size_id: string | null
+          tenant_id: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          eggs: number
+          id?: string
+          produced_on: string
+          quality: string
+          size_id?: string | null
+          tenant_id: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          eggs?: number
+          id?: string
+          produced_on?: string
+          quality?: string
+          size_id?: string | null
+          tenant_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "production_size_fk"
+            columns: ["tenant_id", "size_id"]
+            isOneToOne: false
+            referencedRelation: "sizes"
+            referencedColumns: ["tenant_id", "id"]
+          },
+          {
+            foreignKeyName: "production_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      production_submissions: {
+        Row: {
+          created_at: string
+          had_before: boolean
+          id: string
+          produced_on: string
+          tenant_id: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          had_before: boolean
+          id: string
+          produced_on: string
+          tenant_id: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          had_before?: boolean
+          id?: string
+          produced_on?: string
+          tenant_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "production_submissions_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      sizes: {
+        Row: {
+          archived_at: string | null
+          color_slot: number
+          created_at: string
+          id: string
+          name: string
+          sort_order: number
+          tenant_id: string
+          updated_at: string
+        }
+        Insert: {
+          archived_at?: string | null
+          color_slot: number
+          created_at?: string
+          id?: string
+          name: string
+          sort_order: number
+          tenant_id: string
+          updated_at?: string
+        }
+        Update: {
+          archived_at?: string | null
+          color_slot?: number
+          created_at?: string
+          id?: string
+          name?: string
+          sort_order?: number
+          tenant_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "sizes_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       tenants: {
         Row: {
           created_at: string
@@ -97,6 +221,25 @@ export type Database = {
     Functions: {
       admin_revoke_sessions: { Args: { p_user_id: string }; Returns: number }
       admin_user_id_by_email: { Args: { p_email: string }; Returns: string }
+      delete_production_day: {
+        Args: { p_day: string; p_tenant_id: string }
+        Returns: Json
+      }
+      log_production: {
+        Args: {
+          p_day: string
+          p_eggs: number[]
+          p_rejects: number
+          p_size_ids: string[]
+          p_submission_id: string
+          p_tenant_id: string
+        }
+        Returns: Json
+      }
+      production_days: {
+        Args: { p_from?: string; p_tenant_id: string; p_to?: string }
+        Returns: Json
+      }
       provision_farm: {
         Args: {
           p_eggs_per_tray?: number
@@ -110,6 +253,16 @@ export type Database = {
           outcome: string
           tenant_id: string
         }[]
+      }
+      replace_production_day: {
+        Args: {
+          p_day: string
+          p_eggs: number[]
+          p_rejects: number
+          p_size_ids: string[]
+          p_tenant_id: string
+        }
+        Returns: Json
       }
     }
     Enums: {
