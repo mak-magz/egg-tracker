@@ -71,6 +71,10 @@ const subtitle = computed(() => {
   return item.subtitleIsToday ? today.value : item.subtitle
 })
 
+// ---- Primary action: top-bar button (md+) and FAB (<md) (feature 01 §3.4, AC1, AC31, AC32) ----
+const { action: primaryAction, hasFab, fabVisible, trigger: triggerPrimaryAction } = usePrimaryAction()
+// ---------------------------------------------------------------------------------------------
+
 // ---- Per-state sizing (layout only; colours live in app.config.ts) --------------------------
 const sidebarUi = computed(() => ({
   root: 'md:flex bg-default transition-[width] duration-200 ease-out motion-reduce:transition-none',
@@ -195,6 +199,15 @@ const navUi = computed(() => ({
             </template>
 
             <template #right>
+              <!-- 44px on tablet (touch), 40px at lg+. -->
+              <UButton
+                v-if="primaryAction"
+                class="hidden shrink-0 md:inline-flex max-lg:min-h-11"
+                size="lg"
+                :icon="primaryAction.icon"
+                :label="primaryAction.label"
+                @click="triggerPrimaryAction"
+              />
               <div class="md:hidden">
                 <AppAccountMenu
                   :farm-name="account.farmName"
@@ -209,12 +222,26 @@ const navUi = computed(() => ({
         </template>
 
         <template #body>
-          <!-- Bottom padding below md clears the fixed tab bar (64px + safe area). -->
-          <div class="mx-auto w-full max-w-[1120px] pb-[calc(4rem+env(safe-area-inset-bottom))] md:pb-0">
+          <!-- Bottom padding below md clears the fixed tab bar (64px + safe area), plus the FAB (84px)
+               on screens that have one, so the last card scrolls clear of both (AC31). -->
+          <div
+            class="mx-auto w-full max-w-[1120px] md:pb-0"
+            :class="hasFab ? 'pb-[calc(4rem+env(safe-area-inset-bottom)+84px)]' : 'pb-[calc(4rem+env(safe-area-inset-bottom))]'"
+          >
             <slot />
           </div>
         </template>
       </UDashboardPanel>
+
+      <!-- FAB: 52px, above the tab bar (D8), hidden while the page's sheet or a dialog is open. -->
+      <UButton
+        v-if="primaryAction && fabVisible"
+        class="fixed right-4 bottom-[calc(4rem+env(safe-area-inset-bottom)+1rem)] z-40 size-13 justify-center rounded-full shadow-lg md:hidden"
+        :icon="primaryAction.icon"
+        :aria-label="primaryAction.ariaLabel"
+        :ui="{ leadingIcon: 'size-6' }"
+        @click="triggerPrimaryAction"
+      />
 
       <AppBottomTabs />
     </UDashboardGroup>
