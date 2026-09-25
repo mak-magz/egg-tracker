@@ -84,7 +84,7 @@ Nuxt **4.5** (the `app/` directory layout, with `server/` and `shared/`) · Nuxt
 - **Tenant resolution helper:** `app.current_tenant_id()`. It's security definer, lives in the `app` schema (which PostgREST doesn't expose), and reads `memberships` by `auth.uid()`. In v1 each user has exactly one membership (`unique (user_id)`). Every RLS policy calls it as `(select app.current_tenant_id())`.
 - **Repository layer:** `server/utils/db.ts` → `TenantDb.scoped(table)` pre-applies `.eq('tenant_id', …)` to select/update/delete and injects `tenant_id` into inserts. Routes use `defineTenantHandler` / `defineAuthedHandler` (`server/utils/handlers.ts`), and only repositories touch the client.
 - **Service role at runtime:** none in v1. The secret key is used only by the local provisioning CLI (`server/cli/provision.ts`) and isn't configured on Vercel.
-- **Multi-statement atomic writes** are Postgres functions (`security invoker`) called through `rpc`, so each one runs as a single transaction.
+- **Multi-statement atomic writes** are Postgres functions (`security invoker`) called through `rpc`, so each one runs as a single transaction. *(Feature 01)* Repositories call them through `TenantDb.rpc(fn, args)`, which injects `p_tenant_id` from the server context (never from the request). Every such function first calls `app.assert_tenant(p_tenant_id)`, which raises unless it equals `app.current_tenant_id()`, so RLS **and** the repository filter must agree, as for table queries. Domain errors use custom SQLSTATEs (`TM001`…, never the `PT` prefix), which repositories map to `ApiErrorData`. Reads that could exceed PostgREST's `max_rows` (1000) aggregate in SQL and return a single `jsonb` value.
 - **RLS policy template for every tenant-owned table:**
   ```sql
   alter table public.<t> enable row level security;
@@ -94,7 +94,7 @@ Nuxt **4.5** (the `app/` directory layout, with `server/` and `shared/`) · Nuxt
   create policy <t>_update on public.<t> for update to authenticated using (tenant_id = (select app.current_tenant_id())) with check (tenant_id = (select app.current_tenant_id()));
   create policy <t>_delete on public.<t> for delete to authenticated using (tenant_id = (select app.current_tenant_id()));
   ```
-- **Isolation test:** pgTAP in `supabase/tests/database/`, run with `npm run test:db`. A new table adds one row to `tests.tenant_table_registry()`, and the shared A-vs-B checker covers it. A coverage meta-test fails if any `public` table is missing RLS, `tenant_id`, `updated_at` or its registry row.
+- **Isolation test:** pgTAP in `supabase/tests/database/`, run with `bun run test:db`. A new table adds one row to `tests.tenant_table_registry()`, and the shared A-vs-B checker covers it. A coverage meta-test fails if any `public` table is missing RLS, `tenant_id`, `updated_at` or its registry row.
 
 ### Where the client/server line is drawn
 - **Ordinary reads/writes** may go through `supabase-js` with RLS protecting them.
@@ -124,23 +124,37 @@ Core domains: **Production**, **Inventory** (computed), **Sales** (absorbs deliv
 - Owners have **read-only** access to both tables (no write grants and no write policies). Farms and memberships are created only by provisioning (the Admin API plus service-role-only SQL functions).
 
 ### Design principle: categories are data, not columns
-Size, quality, and fulfillment type are **column values**, not fixed columns (no `large_count`, `jumbo_count`). Adding a new size or quality later = a new allowed value (an insert), not an `ALTER TABLE`. Totals are `SUM`/`GROUP BY`, not hand-summed columns.
+Size, quality, and fulfillment type are **data**, not fixed columns (no `large_count`, `jumbo_count`). Totals are `SUM`/`GROUP BY`, not hand-summed columns.
+- **Sizes are per-farm rows** (owner decision, feature 01): each farm has its own ordered list in `sizes`, and rows reference it by `size_id`. Adding, renaming or reordering a size is a row change, never an `ALTER TABLE`, and never a code change. The app never hardcodes the list.
+- **Quality and fulfillment type are column values** (`text` + check constraint). A new one is a new allowed value.
+
+### Sizes (built in feature 01)
+- **`sizes`** `(id, tenant_id → tenants, name text 1–40 chars, sort_order int >= 0, color_slot smallint >= 0, archived_at timestamptz null, created_at, updated_at)`, with `unique (tenant_id, id)` (the composite-FK target), a unique name per farm (case-insensitive), and a unique `color_slot` per farm (a colour is never reused, so archived sizes keep theirs in past charts).
+- Seeded with **Small, Medium, Large, Jumbo** (slots 0–3) by a trigger on `tenants` insert (`app.seed_default_sizes`), and backfilled for existing farms by the migration. The default list lives only in that function.
+- **Never deleted.** Retiring a size sets `archived_at` (the "Farm settings: sizes" feature). Past production keeps pointing at it, and a rename relabels past days without changing counts.
+- Owners have read-only access in feature 01. The size list is sent with the farm in `GET /api/me` (`FarmSummary.sizes`).
 
 ### Production
-Shape: **`(date, size, quality, count)`** + `tenant_id`.
-- **size** — small / medium / large / jumbo. **Nullable** (null = "size doesn't apply", used for rejects).
-- **quality** — good / reject (extensible: dirty, etc.). Always present.
-- **count** — number of individual eggs.
-- **size and quality are independent axes** — a large egg can be good or reject; a small egg can be good or reject. Separate columns so you can slice either way.
-- A morning's collection = several rows, e.g. `large/good/200`, `large/reject/5`, `medium/good/80`, `(null)/reject/12`.
+Shape: **`(produced_on, size_id, quality, eggs)`** + `tenant_id` (as built in feature 01; the planning names were `date, size, quality, count`).
+- **produced_on**: the owner's local calendar date (a `date`, sent by the device).
+- **size_id**: a row of the farm's `sizes`. **Nullable**: null means "size doesn't apply", used only for rejects. A composite FK `(tenant_id, size_id) → sizes (tenant_id, id)` guarantees it's the same farm's size.
+- **quality**: `good` / `reject` (extensible: dirty, etc.). Always present.
+- **eggs**: individual eggs, `between 1 and 1000000` (`production_eggs_range`; the upper bound equals `MAX_EGGS_PER_LINE` in `shared/constants/production.ts`). Zero amounts aren't stored.
+- **Table-level bounds hold for every write path**, including direct PostgREST writes with the owner's JWT. The `production_bounds` trigger (`before insert or update`) enforces:
+  - `produced_on` not after UTC today + 1 (TM002);
+  - the per-line cap (TM007);
+  - a good row's size is **active** (TM001), unless that size already has a row on the same farm-day (an update to an existing line, which lets Edit day correct a day holding a since-archived size). On UPDATE, the size must be active only if the row's size, date, quality or tenant changes.
+- **Good eggs are always sized and rejects are always unsized** (owner decision, 2026-09-25): check `(quality = 'reject') = (size_id is null)`. Sized or graded rejects ("cracked large") aren't in v1. If they're added later, this check is relaxed and a sized-reject row still never enters inventory.
+- **One row per (farm, date, quality, size)** (`unique nulls not distinct`). Logging a date again **adds** to that day's rows (upsert). Edit day **replaces** the day's rows, and Delete day removes them by date. All three are single `security invoker` functions, so each save is all-or-nothing. An "add" carries a client-generated submission id recorded in `production_submissions`, so a retried save never counts twice.
+- A morning's collection = several rows, e.g. `Large/good/264`, `Medium/good/148`, `(null)/reject/5`.
 
 ### Rejects
 - **A dead end.** Tracked at production (so the farm knows its loss/quality rate) but **never enter sellable inventory and are never sold.**
-- Reject rows: `size = null`, `quality = reject`.
+- Reject rows: `size_id = null`, `quality = reject`. One unsized amount per day.
 
 ### Inventory
 - **Computed, not stored** — on-hand = (sellable eggs produced) − (eggs sold). No stored running figure to drift out of sync.
-- **Tracked by size** (large on hand, jumbo on hand, …), because sales are sized.
+- **Tracked by size** (by the farm's `sizes`: large on hand, jumbo on hand, …), because sales are sized. On-hand = `sum(production.eggs) where quality = 'good' group by size_id` minus completed sales by `size_id`.
 - Only **good** production counts; rejects excluded.
 - **On-hand = physically present right now.** Inventory subtracts **at delivery/completion**, not at order time (a pending delivery hasn't left yet). If "available to promise" is ever needed, that's a separate computed notion (on-hand minus pending) — not in v1.
 
@@ -151,7 +165,7 @@ Shape (roughly): **`(date_ordered, date_delivered, status, size, quantity, price
 - **date_ordered** — when agreed/created. Always set.
 - **date_delivered** — **nullable**; null until fulfilled, then stamped. Doubles as the "outstanding" signal.
 - **status** — `pending` / `complete`. **Lifecycle only.**
-- **size** — the egg size sold (sales are always sized).
+- **size_id** — the egg size sold (sales are always sized), from the same per-farm `sizes` list, with the same composite `(tenant_id, size_id)` FK as production.
 - **quantity** — stored in **individual eggs** (frontend accepts trays/loose, converts).
 - **price** — **snapshotted onto the sale** at sale time. A client's default price may *pre-fill* the form but is **not** authoritative for historical sales.
 - **fulfillment_type** — `delivery` / `on_site` (extensible: `pickup`).
@@ -217,8 +231,8 @@ The data model (the expensive-to-reverse part) is settled. Remaining work is mec
 - **Canonical unit = eggs**; trays are display/input only; **eggs-per-tray is a per-tenant setting** (defaulted, not hardcoded).
 - **Inventory = physically on-hand**; subtract **at delivery/completion**.
 - **Price snapshot on sales** — store on the sale, not a live client lookup.
-- **Nullables are meaningful:** `size` null (rejects), `client_id` null (on-site sales), `date_delivered` null (pending).
-- **Categories as data** (size, quality, fulfillment_type are values, not columns).
+- **Nullables are meaningful:** `size_id` null (rejects), `client_id` null (on-site sales), `date_delivered` null (pending).
+- **Categories as data** (size, quality, fulfillment_type are values, not columns). **Sizes are per-farm rows** in `sizes`, referenced by `size_id` with a composite `(tenant_id, size_id)` FK; never hardcode the list. **Rejects are always unsized.**
 - **One `status` field** (`pending`/`complete`) in v1; add a second axis only when payment arrives.
 - **`updated_at` on every table** — cheap hedge; do not design *against* a future offline/sync layer.
 

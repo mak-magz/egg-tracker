@@ -4,7 +4,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project status
 
-Pre-code: the repo has only planning specs, no application code, package.json, or git history yet. There are no build/lint/test commands yet. When the project is scaffolded, add them here.
+Feature 00 (scaffold: auth, tenancy, RLS foundation, app shell) is merged. Features are tracked in `docs/features/`. Setup is in `README.md`.
+
+**Commands** (Bun; the local Supabase stack needs Docker):
+- `bun run dev`: Nuxt dev server
+- `bun run typecheck` / `bun run lint` (`lint:fix`)
+- `bun run test:unit`: Vitest (a single file: `bunx vitest run tests/unit/<file>.spec.ts`)
+- `bun run test:db`: pgTAP tests in `supabase/tests/database/` (the local stack must be running)
+- `bun run test`: both
+- `bun run db:start` / `db:stop` / `db:reset` (re-applies migrations) / `db:types` (regenerates `shared/types/database.types.ts`)
+- `bun run provision`: local CLI that creates a farm and owner account (uses the secret key from `.env`)
 
 ## Spec documents (read before building)
 
@@ -34,19 +43,20 @@ A multi-tenant SaaS for egg farms that tracks production, computed inventory, sa
 - Every table has `tenant_id` (and `updated_at`) starting with the first migration. Tenancy uses shared tables with RLS, not a schema per tenant.
 - Derive `tenant_id` on the server from the authenticated user through a `memberships`-style mapping. Never trust a `tenant_id` sent by the client.
 - Tenant scoping lives in one repository/query layer, not in hand-written filters on each query. RLS stays on for server routes: server data access uses **supabase-js acting as the signed-in user** (their JWT), so Postgres sees the non-superuser `authenticated` role, and RLS is enforced through `app.current_tenant_id()`. The repository layer adds the `tenant_id` filter as well. Don't switch to a privileged or direct-pooler connection with `SET LOCAL` without an architecture decision (see `docs/egg-farm-app-architecture-spec.md` §3).
+- Multi-row writes are `security invoker` Postgres functions called through `TenantDb.rpc`, which passes `p_tenant_id` from the server context; each function asserts it equals `app.current_tenant_id()`.
 - The service-role (secret) key is **not used at app runtime**. Only the local provisioning CLI (`server/cli/`) uses it, through server-only config. The browser uses the publishable (anon) key and RLS.
 - Every server route is wrapped in `defineAuthedHandler` or `defineTenantHandler`, and a guard test enforces this. `tenants` is the root table (its `id` is the tenant id) and is the only table without a `tenant_id` column.
 - Vercel runs serverless, so don't keep a long-lived pool and don't put long-running work in request handlers.
 
 **Units and data model**
 - The stored unit is always individual eggs. Trays exist only at input and display, through one shared conversion helper. Eggs-per-tray is a per-tenant setting and must never be hardcoded.
-- Categories are data, not columns. Size, quality, and fulfillment type are column values; never add columns like `large_count`.
-- Production rows are `(date, size, quality, count)`. Rejects have `size = null` and `quality = reject`, and they never enter inventory or sales.
+- Categories are data, not columns. **Egg sizes are per-farm rows in `sizes`** (ordered, with a stable colour slot, retired with `archived_at`, never deleted), referenced by `size_id`. Quality and fulfillment type are column values. Never add columns like `large_count`, and never hardcode the size list.
+- Production rows are `(produced_on, size_id, quality, eggs)`, one row per farm, date, quality and size; logging a date again adds to it. **Rejects are always unsized**: `size_id` is null exactly when `quality = reject` (check constraint), and they never enter inventory or sales. A production or sale row's size must belong to the same farm (composite FK on `(tenant_id, size_id)`).
 - Inventory is computed, never stored: good production minus completed sales, grouped by size. Pending deliveries are not subtracted.
 - Sales cover deliveries too; there is no separate deliveries table. `status` is either `pending` or `complete`, and a second status field is added only when payment tracking arrives.
 - Marking a delivery complete is one update: it sets `status = complete` and stamps `date_delivered`, and inventory follows automatically. On-site sales are created already `complete`.
 - Sales store a snapshot of `price`. A client's default price only pre-fills the form.
-- Null values carry meaning: `size` (reject), `client_id` (on-site sale), `date_delivered` (pending).
+- Null values carry meaning: `size_id` (reject), `client_id` (on-site sale), `date_delivered` (pending).
 - Clients are the farm's customers, not tenants. Delete them with a soft-delete or archive so past sales keep their data.
 
 ## UI notes
@@ -77,6 +87,9 @@ Small fixes don't need the full pipeline. Still run `qa-reviewer` on anything th
 
 ## Open decisions
 
-- Whether hen counts are tracked (the optional lay-rate metric depends on it).
+None right now.
 
-Decided: quantities are entered as **trays + loose, in two fields** (per the design). The default eggs-per-tray is **30**, stored as a per-farm setting, never hardcoded.
+Decided:
+- Quantities are entered as **trays + loose, in two fields** (per the design). The default eggs-per-tray is **30**, stored as a per-farm setting, never hardcoded.
+- Hen counts and the lay-rate metric are **not in v1**. They're a future feature (see `docs/features/01-production-logging.md`, follow-ups).
+- Egg sizes are **editable per farm** (seeded Small, Medium, Large, Jumbo). Feature 01 stores them; the "Farm settings: sizes" feature adds the screen to manage them.
