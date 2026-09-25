@@ -19,7 +19,7 @@ export async function findMembershipWithFarm(
 ): Promise<MembershipWithFarm | null> {
   const { data, error } = await client
     .from('memberships')
-    .select('tenant_id, tenants ( id, name, eggs_per_tray )')
+    .select('tenant_id, tenants ( id, name, eggs_per_tray, sizes ( id, name, sort_order, color_slot, archived_at ) )')
     .eq('user_id', userId)
     .maybeSingle()
 
