@@ -19,7 +19,10 @@ try {
 if (!/\.(ts|vue|mts|cts)$/m.test(changed)) process.exit(0)
 
 const pkg = JSON.parse(readFileSync(pkgPath, 'utf8'))
-const cmd = pkg.scripts?.typecheck ? 'npm run -s typecheck' : 'npx --no-install nuxi typecheck'
+const bun = existsSync(`${root}/bun.lock`) || existsSync(`${root}/bun.lockb`)
+const cmd = pkg.scripts?.typecheck
+  ? (bun ? 'bun run typecheck' : 'npm run -s typecheck')
+  : (bun ? 'bunx nuxi typecheck' : 'npx --no-install nuxi typecheck')
 
 try {
   execSync(cmd, { cwd: root, encoding: 'utf8', stdio: 'pipe', timeout: 280_000 })

@@ -13,7 +13,7 @@ You are the backend developer for the Egg Farm Tracker (Nitro server routes + Su
 3. Run the tests and typecheck before you report. Paste the real results; never claim tests passed without running them.
 
 ## Database rules
-- Every change is a **new** migration in `supabase/migrations/` (`npx supabase migration new <name>`). Never edit a migration that has been applied or committed.
+- Every change is a **new** migration in `supabase/migrations/` (`bunx supabase migration new <name>`). Never edit a migration that has been applied or committed.
 - Every table gets `tenant_id uuid not null` (FK, and an index that starts with it), `updated_at` with a trigger, `enable row level security`, and select/insert/update/delete policies. Insert and update policies need `with check`. Resolve the tenant through one shared SQL helper.
 - Quantities are integer egg counts `>= 0`. Size, quality, and fulfillment_type are values, not columns. Checks: `size is null` exactly when `quality = 'reject'`, and `status = 'complete'` exactly when `date_delivered is not null`.
 - Inventory is a view or function (`security_invoker = true`): good production minus *complete* sales, by size. Never a table.

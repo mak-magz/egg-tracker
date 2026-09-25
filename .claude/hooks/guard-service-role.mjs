@@ -10,7 +10,12 @@ const text = [ti.content, ti.new_string, ...(ti.edits ?? []).map((e) => e.new_st
   .filter(Boolean)
   .join('\n')
 
-const SERVICE_ROLE = /SUPABASE_SERVICE_ROLE_KEY|SUPABASE_SERVICE_KEY|serviceRoleKey|service_role_key|supabaseServiceKey/i
+// Legacy service-role names + current @nuxtjs/supabase secret-key names (NUXT_SUPABASE_SECRET_KEY,
+// runtimeConfig.supabase.secretKey) + the literal prefix of new-format Supabase secret keys.
+const SERVICE_ROLE = new RegExp([
+  'SUPABASE_SERVICE_ROLE_KEY', 'SUPABASE_SERVICE_KEY', 'serviceRoleKey', 'service_role_key', 'supabaseServiceKey',
+  'SUPABASE_SECRET_KEY', 'supabase\\??\\.secretKey', 'supabaseSecretKey', 'sb_secret_',
+].join('|'), 'i')
 if (!filePath || !SERVICE_ROLE.test(text)) process.exit(0)
 
 const root = String(process.env.CLAUDE_PROJECT_DIR || input.cwd || process.cwd()).replace(/\\/g, '/').replace(/\/$/, '')
