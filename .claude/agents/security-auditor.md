@@ -4,7 +4,6 @@ description: Security Auditor for the Egg Farm Tracker. Performs deep, whole-sys
 tools: Read, Grep, Glob, Bash, WebFetch
 model: inherit
 skills:
-  - security-review
   - supabase:supabase
 ---
 
