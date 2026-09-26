@@ -2,22 +2,36 @@ import { createError, isError } from 'h3'
 import type { H3Error } from 'h3'
 import type { ApiErrorCode, ApiErrorData } from '../../shared/types/api'
 
-const API_ERROR_CODES: readonly ApiErrorCode[] = ['unauthenticated', 'no_farm', 'validation_failed', 'not_found', 'internal']
+const API_ERROR_CODES: readonly ApiErrorCode[] = ['unauthenticated', 'no_farm', 'validation_failed', 'not_found', 'conflict', 'internal']
 
 const STATUS_MESSAGES: Record<ApiErrorCode, string> = {
   unauthenticated: 'Unauthorized',
   no_farm: 'Forbidden',
   validation_failed: 'Bad Request',
   not_found: 'Not Found',
+  conflict: 'Conflict',
   internal: 'Internal Server Error',
 }
 
+/** Optional extras on an error body (feature 02 §3.3): why a 409 happened, the clashing size, the current sizes. */
+export type ApiErrorExtra = Pick<ApiErrorData, 'reason' | 'existing' | 'sizes'>
+
 /**
  * The one way server code raises an API error. The body is `{ statusCode, statusMessage, data: ApiErrorData }`,
- * so the client reads the code from `FetchError.data.data.code`.
+ * so the client reads the code from `FetchError.data.data.code`. `extra` carries `reason`, `existing` and `sizes`;
+ * only keys that are set end up in the body.
  */
-export function apiError(statusCode: number, code: ApiErrorCode, fields?: Record<string, string>): H3Error<ApiErrorData> {
-  const data: ApiErrorData = fields ? { code, fields } : { code }
+export function apiError(
+  statusCode: number,
+  code: ApiErrorCode,
+  fields?: Record<string, string>,
+  extra?: ApiErrorExtra,
+): H3Error<ApiErrorData> {
+  const data: ApiErrorData = { code }
+  if (fields) data.fields = fields
+  if (extra?.reason !== undefined) data.reason = extra.reason
+  if (extra?.existing !== undefined) data.existing = extra.existing
+  if (extra?.sizes !== undefined) data.sizes = extra.sizes
   return createError<ApiErrorData>({ statusCode, statusMessage: STATUS_MESSAGES[code], data })
 }
 
