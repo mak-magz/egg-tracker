@@ -23,11 +23,18 @@ export interface ChartModel {
 
 export const REJECTS_SERIES_KEY = 'rejects'
 
-/** `sizes` is the farm's full list in its order (useFarm().sizes). */
+/**
+ * `sizes` is the farm's full list in its order (useFarm().sizes). Active sizes always plot (a line at 0 when
+ * the range has none), in the farm's order; archived sizes plot only when the range has eggs of them and
+ * come AFTER the active ones, before Rejects (feature 02 S4, AC12), the same order as Edit day.
+ */
 export function buildChartModel(daysNewestFirst: readonly ProductionDay[], sizes: readonly FarmSize[]): ChartModel {
   const days = [...daysNewestFirst].reverse()
   const present = new Set(days.flatMap(d => d.good.filter(g => g.eggs > 0).map(g => g.sizeId)))
-  const shown = sizes.filter(s => s.active || present.has(s.id))
+  const shown = [
+    ...sizes.filter(s => s.active),
+    ...sizes.filter(s => !s.active && present.has(s.id)),
+  ]
 
   const series: ChartSeries[] = shown.map((s) => {
     const color = sizeColor(s.colorSlot)

@@ -39,3 +39,13 @@
   --ui-primary: var(--ui-color-primary-400);
   --ui-error: var(--ui-color-error-400);
 }
+
+/*
+ * Settings > Sizes (feature 02 R1): the row that just changed gets the same short tint as a saved day
+ * card (primary at 8%), fading out over 1.5s into the row's own background. Reduced motion: none.
+ */
+@keyframes size-row-flash {
+  from {
+    background-color: color-mix(in oklab, var(--ui-primary) 8%, transparent);
+  }
+}

@@ -1,7 +1,7 @@
 // The signed-in user's email + farm, from GET /api/me (§3.4, §3.8). Fetched once per app load
 // (SSR forwards cookies via useRequestFetch) and kept in useState, so it's in the SSR payload and
 // the shell never renders without it.
-import type { MeResponse } from '#shared/types/api'
+import type { FarmSize, MeResponse } from '#shared/types/api'
 
 export type MeStatus = 'idle' | 'loading' | 'ready' | 'error'
 /** What `ensure()` found. `unauthenticated` = /api/me said 401 (session missing, invalid or revoked). */
@@ -55,10 +55,20 @@ export function useMe() {
     status.value = 'idle'
   }
 
+  /**
+   * Replaces the farm's size list (feature 02: a change made on Settings, or a quiet refresh). Every reader
+   * (Production form, day cards, chart) follows because they all read `me.farm.sizes`. Does nothing without a
+   * farm and never touches `status`, so it can't send the shell to "Couldn't load your farm".
+   */
+  function setSizes(sizes: FarmSize[]) {
+    me.value = replaceFarmSizes(me.value, sizes)
+  }
+
   return {
     me: readonly(me),
     status: readonly(status),
     ensure,
     clear,
+    setSizes,
   }
 }

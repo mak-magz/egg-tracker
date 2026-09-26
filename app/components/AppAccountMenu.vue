@@ -1,6 +1,7 @@
 <!--
   Account menu (T21: AC13, AC14, AC19a, AC21). Header (not an item): farm name + email.
-  Items: Dark mode / Light mode (stays open so the change is visible) and Sign out (no confirmation).
+  Items: Settings (feature 02: a link, closes the menu), Dark mode / Light mode (stays open so the change
+  is visible) and Sign out (no confirmation).
   `variant`: 'row' = the expanded sidebar footer (opens upward, left-aligned);
              'avatar' = tablet rail (opens to the right) and mobile top bar (opens downward, right-aligned).
 -->
@@ -21,6 +22,7 @@ const props = withDefaults(defineProps<{
 })
 
 const colorMode = useColorMode()
+const route = useRoute()
 const { signOut } = useAuthActions()
 
 const isDark = computed(() => colorMode.value === 'dark')
@@ -32,6 +34,13 @@ const items = computed<DropdownMenuItem[][]>(() => [
     label: props.farmName,
   }],
   [{
+    // Feature 02 (owner decision Q3): Settings lives here, not in a sixth tab. A link item: selecting it
+    // navigates and closes the menu; on /settings it shows as the current item.
+    label: SIZE_COPY.menuItem,
+    icon: 'i-lucide-settings',
+    to: '/settings',
+    active: route.path === '/settings',
+  }, {
     label: isDark.value ? 'Light mode' : 'Dark mode',
     icon: isDark.value ? 'i-lucide-sun' : 'i-lucide-moon',
     onSelect(event: Event) {

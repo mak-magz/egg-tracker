@@ -34,6 +34,29 @@ describe('buildChartModel (AC20)', () => {
     expect(buildChartModel([day('2026-09-25', [['old', 1]])], sizes).series.map(s => s.key)).toContain('old')
   })
 
+  it('puts archived-with-eggs after the active sizes, before Rejects, whatever their stored order (feature 02 S4)', () => {
+    // Archived Medium sits between two active sizes in the list; it still plots after all the active ones.
+    const sizes = [size('s', 'Small', 0, 0), size('m', 'Medium', 1, 1, false), size('l', 'Large', 2, 2), size('j', 'Jumbo', 3, 3)]
+    const m = buildChartModel([day('2026-09-25', [['m', 12], ['l', 30]])], sizes)
+    expect(m.series.map(s => s.name)).toEqual(['Small', 'Large', 'Jumbo', 'Medium', 'Rejects'])
+    expect(m.series.find(s => s.key === 'm')!.values).toEqual([12])
+  })
+
+  it('keeps its own colour slot and plots 0 on range days without its eggs', () => {
+    const sizes = [size('s', 'Small', 0, 0), size('old', 'Old', 1, 6, false)]
+    const m = buildChartModel([day('2026-09-25', [['s', 30]]), day('2026-09-24', [['old', 5]])], sizes)
+    const old = m.series.find(s => s.key === 'old')!
+    expect(old.values).toEqual([5, 0])
+    expect(old.colorClass).toBe(buildChartModel([day('2026-09-24', [['old', 5]])], sizes).series.find(s => s.key === 'old')!.colorClass)
+  })
+
+  it('omits an archived size with no eggs in the range but still shows active sizes at 0', () => {
+    const sizes = [size('s', 'Small', 0, 0), size('m', 'Medium', 1, 1), size('old', 'Old', 2, 4, false)]
+    const m = buildChartModel([day('2026-09-25', [['s', 30]])], sizes)
+    expect(m.series.map(s => s.name)).toEqual(['Small', 'Medium', 'Rejects'])
+    expect(m.series.find(s => s.key === 'm')!.values).toEqual([0])
+  })
+
   it('handles no days and one day without errors', () => {
     expect(buildChartModel([], SIZES).max).toBe(1)
     expect(xPercent(0, 1)).toBe(50)

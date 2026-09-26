@@ -2,6 +2,7 @@
 // §3.4, UX data need 1). Both ride on /api/me (useMe), so they're in the SSR payload and the log
 // form opens with no spinner. Never hardcode a tray size or a size list; read them from here.
 import type { FarmSize } from '#shared/types/api'
+import type { SizeApi } from '~/utils/size-mutations'
 
 export interface ResolvedSize {
   id: string
@@ -14,7 +15,10 @@ export interface ResolvedSize {
 }
 
 export function useFarm() {
-  const { me, ensure } = useMe()
+  const { me, setSizes } = useMe()
+  const api = useApi()
+  // Counts every applied list, so a slow quiet refresh can't undo a change made meanwhile (see refreshSizes).
+  const sizesVersion = useState('farm:sizes-version', () => 0)
 
   const farm = computed(() => me.value?.farm ?? null)
 
@@ -25,7 +29,10 @@ export function useFarm() {
   const sizes = computed<readonly FarmSize[]>(() => farm.value?.sizes ?? [])
 
   /** Sizes offered for new entries. */
-  const activeSizes = computed(() => sizes.value.filter(s => s.active))
+  const activeSizes = computed(() => groupSizes(sizes.value).active)
+
+  /** Retired sizes, in their last order (feature 02). They still label past days. */
+  const archivedSizes = computed(() => groupSizes(sizes.value).archived)
 
   const byId = computed(() => new Map(sizes.value.map(s => [s.id, s])))
 
@@ -36,10 +43,21 @@ export function useFarm() {
     return { id, name: 'Unknown size', sortOrder: Number.MAX_SAFE_INTEGER, colorSlot: 0, active: false, known: false }
   }
 
-  /** Re-read /api/me, e.g. after the server said the sizes changed. */
-  function refreshSizes() {
-    return ensure({ force: true })
+  /** Puts a new list into the farm context: the Production form, day cards and chart follow at once. */
+  function applySizes(list: FarmSize[]) {
+    sizesVersion.value++
+    setSizes(list)
   }
 
-  return { farm, eggsPerTray, sizes, activeSizes, sizeById, refreshSizes }
+  /**
+   * Quiet re-read of the farm's sizes over GET /api/sizes (feature 02 §3.4). Resolves 'ok' | 'error' and on
+   * error changes nothing, so it can never blank the app (it does not go through /api/me). A reply that
+   * arrives after another list was applied is dropped.
+   */
+  function refreshSizes(): Promise<'ok' | 'error'> {
+    const started = sizesVersion.value
+    return fetchSizes(api as SizeApi, { apply: applySizes, superseded: () => sizesVersion.value !== started })
+  }
+
+  return { farm, eggsPerTray, sizes, activeSizes, archivedSizes, sizeById, applySizes, refreshSizes }
 }

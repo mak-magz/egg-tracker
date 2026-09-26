@@ -47,17 +47,36 @@ const mutations = useProductionMutations()
 
 const isEdit = computed(() => props.mode === 'edit')
 
-// Size lines: active sizes in the farm's order; Edit also keeps any (archived) size already on the day.
-const sizeLines = computed(() => {
-  const ids = new Set(activeSizes.value.map(s => s.id))
-  for (const g of props.editDay?.good ?? []) ids.add(g.sizeId)
-  return [...ids].map(id => sizeById(id)).sort((a, b) => a.sortOrder - b.sortOrder)
-})
-const sizeIds = computed(() => sizeLines.value.map(s => s.id))
+// Size lines, built ONCE here from the farm's sizes as they are when the form opens (a snapshot, not a live
+// computed): a refreshSizes() after a stale-sizes error, or a change on the Settings screen, must not add a
+// line with no `state.lines[id]` and crash the template. "Your sizes have changed. Close this form and open
+// it again." is then true. Log: the active sizes in the farm's order. Edit: the same, then any ARCHIVED size
+// that is on the day, after the active ones (feature 02 AC13, S3), so the active lines match the Log form
+// line for line. An archived line is pre-filled and editable; 0 or blank removes it; untouched, it keeps its eggs.
+interface SizeLine {
+  id: string
+  name: string
+  archived: boolean
+}
+function buildSizeLines(): SizeLine[] {
+  const active = activeSizes.value
+  const activeIds = new Set(active.map(s => s.id))
+  const onDay = isEdit.value ? new Set((props.editDay?.good ?? []).map(g => g.sizeId)) : new Set<string>()
+  const archivedOnDay = [...onDay]
+    .filter(id => !activeIds.has(id))
+    .map(id => sizeById(id))
+    .sort((a, b) => a.sortOrder - b.sortOrder)
+  return [
+    ...active.map(s => ({ id: s.id, name: s.name, archived: false })),
+    ...archivedOnDay.map(s => ({ id: s.id, name: s.name, archived: true })),
+  ]
+}
+const sizeLines: readonly SizeLine[] = buildSizeLines()
+const sizeIds: readonly string[] = sizeLines.map(s => s.id)
 
 const state = reactive(createProductionFormState({
   date: props.editDay?.date ?? props.today,
-  sizeIds: sizeIds.value,
+  sizeIds,
   eggsPerTray: props.eggsPerTray,
   day: isEdit.value ? props.editDay : null,
 }))
@@ -65,12 +84,12 @@ const initial = JSON.stringify(state)
 
 const schema = computed(() => createProductionFormSchema({
   eggsPerTray: props.eggsPerTray,
-  sizeIds: sizeIds.value,
+  sizeIds,
   today: props.today,
   mode: props.mode,
 }))
 
-const amounts = computed(() => toProductionAmounts(state, props.eggsPerTray, sizeIds.value))
+const amounts = computed(() => toProductionAmounts(state, props.eggsPerTray, sizeIds))
 
 /** Log: any quantity typed (a changed date alone doesn't count). Edit: anything differs. */
 const dirty = computed(() => {
@@ -152,7 +171,7 @@ function serverFieldPath(key: string): string | null {
   if (key === 'amounts') return PRODUCTION_FORM_PATHS.amounts
   if (key === 'rejects') return PRODUCTION_FORM_PATHS.rejects('trays')
   const m = /^good\.(.+)$/.exec(key)
-  if (m && sizeIds.value.includes(m[1]!)) return PRODUCTION_FORM_PATHS.line(m[1]!, 'trays')
+  if (m && sizeIds.includes(m[1]!)) return PRODUCTION_FORM_PATHS.line(m[1]!, 'trays')
   return null
 }
 
@@ -346,14 +365,26 @@ defineExpose({ dirty, saving, focusFirstQuantity: () => focusQty(0) })
           :key="size.id"
           class="flex flex-col gap-2 rounded-md bg-muted p-3 lg:flex-row lg:items-start lg:gap-3"
         >
+          <!-- An archived size that is on this day (Edit only) comes after the active ones, with an "Archived"
+               text badge after the name and "{Name} (archived)" in the inputs' accessible names (AC13). -->
           <span
-            class="min-w-0 text-base font-medium break-words text-default lg:w-24 lg:shrink-0 lg:pt-2"
+            class="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-base font-medium break-words text-default lg:w-24 lg:shrink-0 lg:self-start lg:pt-2"
             :title="size.name"
-          >{{ size.name }}</span>
+          >
+            {{ size.name }}
+            <UBadge
+              v-if="size.archived"
+              color="neutral"
+              variant="subtle"
+              size="xs"
+              :label="SIZE_COPY.archivedBadge"
+              class="shrink-0"
+            />
+          </span>
           <QuantityInput
             v-model="state.lines[size.id]!"
             :eggs-per-tray="eggsPerTray"
-            :label="size.name"
+            :label="size.archived ? SIZE_COPY.editDayArchivedAria(size.name) : size.name"
             :name="`lines.${size.id}`"
             :id-prefix="`qty-${size.id}`"
             :error="lineError(size.id)"

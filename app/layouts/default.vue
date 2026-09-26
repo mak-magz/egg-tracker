@@ -67,9 +67,17 @@ const title = computed(() => activeItem.value?.title ?? route.meta.title ?? 'Tam
 useHead({ title: computed(() => `${title.value} · Tamago`) })
 const subtitle = computed(() => {
   const item = activeItem.value
-  if (!item) return null
+  if (!item) return route.meta.subtitle ?? null
   return item.subtitleIsToday ? today.value : item.subtitle
 })
+
+// Phone-only ← for screens with no highlighted tab (Settings; feature 02 C3). Back to the previous screen
+// when this app pushed one (vue-router keeps it in history.state.back), else to the Dashboard.
+const router = useRouter()
+function goBack() {
+  if (import.meta.client && window.history.state?.back) router.back()
+  else void navigateTo('/')
+}
 
 // ---- Primary action: top-bar button (md+) and FAB (<md) (feature 01 §3.4, AC1, AC31, AC32) ----
 const { action: primaryAction, hasFab, fabVisible, trigger: triggerPrimaryAction } = usePrimaryAction()
@@ -184,6 +192,15 @@ const navUi = computed(() => ({
             :ui="{ root: 'bg-default px-4 sm:px-4 md:px-5 gap-3', left: 'gap-3' }"
           >
             <template #left>
+              <UButton
+                v-if="route.meta.back"
+                color="neutral"
+                variant="ghost"
+                icon="i-lucide-arrow-left"
+                aria-label="Back"
+                class="size-11 shrink-0 justify-center md:hidden"
+                @click="goBack"
+              />
               <UDashboardSidebarCollapse class="md:flex size-11 justify-center lg:size-9" />
               <div class="min-w-0">
                 <h1 class="truncate text-xl font-bold tracking-[-0.01em] text-highlighted">

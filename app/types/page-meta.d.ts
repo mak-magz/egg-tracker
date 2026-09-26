@@ -8,6 +8,13 @@ declare module '#app' {
     auth?: 'farm' | 'user' | 'guest' | 'public'
     /** Top-bar title for shell pages that aren't nav destinations (e.g. the 404). */
     title?: string
+    /** Top-bar subtitle for shell pages that aren't nav destinations (e.g. Settings: "Farm settings"). */
+    subtitle?: string
+    /**
+     * Shows a phone-only ← button at the start of the top bar (44px, `aria-label="Back"`), for screens with no
+     * highlighted tab. It goes back to the previous screen, or to the Dashboard when there was none.
+     */
+    back?: boolean
     /**
      * The screen's "add" action (feature 01 §3.4, AC1, AC32). The layout renders it as a top-bar
      * button at md+ and, when `fab` is set, as a round FAB above the bottom tabs below md.
