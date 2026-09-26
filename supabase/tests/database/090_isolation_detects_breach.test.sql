@@ -4,7 +4,7 @@
 -- subtransaction and always rolls it back (DDL is transactional in Postgres), and the whole file is
 -- wrapped in begin/rollback as a second guarantee. The last assertions prove everything was restored.
 begin;
-select plan(16);
+select plan(20);
 
 select tests.create_farm('Farm A', 'a');
 select tests.create_farm('Farm B', 'b');
@@ -97,17 +97,53 @@ select ok(tests.mutation_detected($m$
     using (true) with check (tenant_id = (select app.current_tenant_id()));
 $m$, 'a', 'b'), 'm13 detected: production_update USING replaced with (true), WITH CHECK kept');
 
+-- m14 (feature 02): sizes insert policy without a tenant WITH CHECK. Owners now have an insert grant on
+-- (tenant_id, name), so this is a reachable breach: as A, `insert into sizes (tenant_id, name) values (<B>, ...)`.
+-- Since the security audit fix (L-1) the sizes_write_guard trigger ALSO refuses another farm's tenant_id (42501,
+-- before the RLS check), so a weak policy alone is no longer a breach: the second lock holds. The mutation
+-- therefore removes both locks: the weak policy, and the guard (with defaults standing in for the slot and position
+-- it assigns, so the insert can otherwise succeed). The checker must still notice.
+select ok(tests.mutation_detected($m$
+  drop policy sizes_insert on public.sizes;
+  create policy sizes_insert on public.sizes for insert to authenticated with check (true);
+  alter table public.sizes disable trigger sizes_write_guard;
+  alter table public.sizes alter column sort_order set default 99, alter column color_slot set default 99;
+$m$, 'a', 'b'), 'm14 detected: sizes_insert replaced with with check (true) and the guard trigger disabled');
+
+-- m14b (audit L-1): the RLS policy alone is still enough to refuse the insert when the trigger is disabled.
+select ok(not tests.mutation_detected($m$
+  alter table public.sizes disable trigger sizes_write_guard;
+  alter table public.sizes alter column sort_order set default 99, alter column color_slot set default 99;
+$m$, 'a', 'b'), 'm14b not a breach: with only the guard trigger disabled the sizes_insert policy still holds');
+
+-- m15 (feature 02): sizes update policy with no tenant filter at all. NOTE: a weak USING or a weak WITH CHECK
+-- ALONE is not a reachable breach on sizes, because owners have no privilege on tenant_id: a victim row stays a
+-- victim row, so the correct half of the policy still stops the write (verified). With both weakened, as A,
+-- `update public.sizes set updated_at = updated_at where true` reaches B's rows; checker check 11 detects it.
+select ok(tests.mutation_detected($m$
+  drop policy sizes_update on public.sizes;
+  create policy sizes_update on public.sizes for update to authenticated using (true) with check (true);
+$m$, 'a', 'b'), 'm15 detected: sizes_update replaced with using (true) with check (true)');
+
+-- m16 (feature 02): a delete grant and a permissive delete policy on sizes (AC25: no owner can delete a size).
+select ok(tests.mutation_detected($m$
+  grant delete on public.sizes to authenticated;
+  create policy sizes_delete_any on public.sizes for delete to authenticated using (true);
+$m$, 'a', 'b'), 'm16 detected: delete grant + permissive delete policy on sizes');
+
 -- Everything was restored by the mutation helper (not just by the final rollback).
 select ok(not exists (select 1 from tests.isolation_checks('a', 'b') c where not c.passed),
   'after all mutations: every isolation check passes again (mutations were undone)');
 select is(
   array(select p.polname::text from pg_policy p
         where p.polrelid in ('public.tenants'::regclass, 'public.memberships'::regclass, 'public.sizes'::regclass,
-                             'public.production'::regclass, 'public.production_submissions'::regclass)
-        order by 1),
+                             'public.production'::regclass, 'public.production_submissions'::regclass,
+                             'public.size_submissions'::regclass)
+        order by p.polname::text collate "C"),
   array['memberships_select_own', 'production_delete', 'production_insert', 'production_select',
         'production_submissions_insert', 'production_submissions_select', 'production_update',
-        'sizes_select', 'tenants_select_own'],
+        'size_submissions_insert', 'size_submissions_select', 'sizes_insert', 'sizes_select', 'sizes_update',
+        'tenants_select_own'],
   'after all mutations: only the original policies exist, RLS grants unchanged')
   ;
 

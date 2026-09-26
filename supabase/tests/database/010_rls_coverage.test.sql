@@ -1,7 +1,7 @@
 -- 010_rls_coverage: meta-guards over the whole `public` schema (docs/features/00-project-scaffold.md §3.7).
 -- A new table that forgets RLS, updated_at, tenant_id, its index, or its isolation-registry row fails here.
 begin;
-select plan(19);
+select plan(32);
 
 -- Ordinary + partitioned tables in public.
 create temp view _public_tables as
@@ -172,6 +172,103 @@ select is(
         order by 1),
   '{}'::text[],
   'the app.* production helpers are not executable by anon (and size seeding not by authenticated)');
+
+-- Feature 02: the size-management RPCs are security INVOKER, authenticated-only. The owner now WRITES sizes, so
+-- what an owner can NOT do is pinned down at the privilege level (column grants), not only in the functions.
+create temp view _size_rpcs as
+  select f from unnest(array[
+    'public.add_size(uuid,uuid,text)'::regprocedure,
+    'public.rename_size(uuid,uuid,text)'::regprocedure,
+    'public.reorder_sizes(uuid,uuid[])'::regprocedure,
+    'public.archive_size(uuid,uuid)'::regprocedure,
+    'public.restore_size(uuid,uuid)'::regprocedure]) f;
+
+select is(
+  array(select r.f::text from _size_rpcs r join pg_proc p on p.oid = r.f where p.prosecdef order by 1),
+  '{}'::text[],
+  'the size RPCs are security invoker');
+
+select is(
+  array(select r.f::text from _size_rpcs r where has_function_privilege('anon', r.f, 'execute') order by 1),
+  '{}'::text[],
+  'anon cannot execute the size RPCs');
+
+select is(
+  array(select r.f::text from _size_rpcs r where not has_function_privilege('authenticated', r.f, 'execute') order by 1),
+  '{}'::text[],
+  'authenticated can execute the size RPCs');
+
+select is(
+  array(select f::text from unnest(array[
+          'app.normalize_size_name(text)'::regprocedure,
+          'app.lock_tenant_sizes(uuid)'::regprocedure,
+          'app.compact_size_order(uuid)'::regprocedure,
+          'app.sizes_write_guard()'::regprocedure,
+          'app.sizes_keep_one_active()'::regprocedure,
+          'app.size_submissions_guard()'::regprocedure]) f
+        where has_function_privilege('anon', f, 'execute') order by 1),
+  '{}'::text[],
+  'the app.* size helpers and trigger functions are not executable by anon');
+
+select is(
+  array(select f::text from unnest(array[
+          'app.normalize_size_name(text)'::regprocedure,
+          'app.lock_tenant_sizes(uuid)'::regprocedure,
+          'app.compact_size_order(uuid)'::regprocedure]) f
+        where not has_function_privilege('authenticated', f, 'execute') order by 1),
+  '{}'::text[],
+  'the size helpers the invoker functions and the name check call are executable by authenticated');
+
+select is(
+  array(select p from unnest(array['delete', 'truncate', 'references', 'trigger']) p
+        where has_table_privilege('authenticated', 'public.sizes', p) order by 1),
+  '{}'::text[],
+  'authenticated has no delete, truncate, references or trigger privilege on sizes (AC25)');
+
+select is(
+  array(select c from unnest(array['id', 'sort_order', 'color_slot', 'archived_at', 'created_at', 'updated_at']) c
+        where has_column_privilege('authenticated', 'public.sizes', c, 'insert') order by 1),
+  '{}'::text[],
+  'authenticated cannot insert id, sort_order, color_slot, archived_at, created_at or updated_at into sizes (the trigger assigns them)');
+
+select is(
+  array(select c from unnest(array['id', 'tenant_id', 'color_slot', 'created_at']) c
+        where has_column_privilege('authenticated', 'public.sizes', c, 'update') order by 1),
+  '{}'::text[],
+  'authenticated cannot update id, tenant_id, color_slot or created_at on sizes');
+
+select ok(
+  has_column_privilege('authenticated', 'public.sizes', 'tenant_id', 'insert')
+  and has_column_privilege('authenticated', 'public.sizes', 'name', 'insert')
+  and has_column_privilege('authenticated', 'public.sizes', 'name', 'update')
+  and has_column_privilege('authenticated', 'public.sizes', 'sort_order', 'update')
+  and has_column_privilege('authenticated', 'public.sizes', 'archived_at', 'update'),
+  'authenticated can insert (tenant_id, name) and update (name, sort_order, archived_at) on sizes');
+
+select is(
+  array(select p.polname::text from pg_policy p where p.polrelid = 'public.sizes'::regclass and p.polcmd in ('d', '*')),
+  '{}'::text[],
+  'sizes has no delete policy (no grant and no policy: two locks)');
+
+select is(
+  array(select p from unnest(array['update', 'delete', 'truncate']) p
+        where has_table_privilege('authenticated', 'public.size_submissions', p) order by 1),
+  '{}'::text[],
+  'authenticated can only select and insert on size_submissions');
+
+-- Security audit M-1: the ledger insert grant is limited to the columns add_size writes.
+select is(
+  array(select c from unnest(array['created_at', 'updated_at']) c
+        where has_column_privilege('authenticated', 'public.size_submissions', c, 'insert') order by 1),
+  '{}'::text[],
+  'authenticated cannot insert created_at or updated_at into size_submissions');
+
+select ok(
+  has_column_privilege('authenticated', 'public.size_submissions', 'tenant_id', 'insert')
+  and has_column_privilege('authenticated', 'public.size_submissions', 'id', 'insert')
+  and has_column_privilege('authenticated', 'public.size_submissions', 'size_id', 'insert')
+  and has_column_privilege('authenticated', 'public.size_submissions', 'name', 'insert'),
+  'authenticated can insert (tenant_id, id, size_id, name) into size_submissions (what add_size writes)');
 
 select * from finish();
 rollback;

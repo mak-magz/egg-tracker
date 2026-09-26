@@ -192,7 +192,14 @@ create or replace function tests.tenant_table_registry()
        'insert into public.memberships (tenant_id, user_id) values (%1$L, auth.uid())'),
     -- Feature 01. sizes: seeded by the tenants insert trigger (Small/Medium/Large/Jumbo).
     ('public.sizes'::regclass, 'tenant_id', null::text,
-       'insert into public.sizes (tenant_id, name, sort_order, color_slot) values (%1$L, ''Attack'', 99, 99)'),
+       'insert into public.sizes (tenant_id, name) values (%1$L, ''Attack'')'),
+    -- Feature 02. Owners can only insert (tenant_id, name) into sizes (column grants), so the sizes attack above
+    -- names only those columns: one that named sort_order/color_slot would raise 42501 for the WRONG reason (a
+    -- column privilege) and stop testing the insert policy. The ledger's attack uses a random size_id: RLS
+    -- (42501) is reported before the FK check.
+    ('public.size_submissions'::regclass, 'tenant_id',
+       'insert into public.size_submissions (tenant_id, id, size_id, name) select %1$L, gen_random_uuid(), s.id, ''seed'' from public.sizes s where s.tenant_id = %1$L order by s.sort_order limit 1',
+       'insert into public.size_submissions (tenant_id, id, size_id, name) values (%1$L, gen_random_uuid(), gen_random_uuid(), ''x'')'),
     -- production seeds an UNSIZED reject row. A sized row would make every cross-tenant move fail on the
     -- composite size FK (23503), which aborts the whole statement and hides whether rows were movable; with a
     -- reject row, a theft (check 10) or a push (check 8) shows up as moved rows (`ok:n`). The composite FK is
@@ -232,6 +239,9 @@ $$;
 --                        with the real WITH CHECK, setting <col> to the attacker's own id passes it and pulls
 --                        the victim's rows into the attacker's tenant (QA feature 01 round 2, 090 m13).
 --                        Any other error (e.g. 23503 from a victim row's composite FK) counts as detected.
+--  11 update_unrestricted  `update ... set updated_at = now() where true` (rolled back) touches no more rows than
+--                        the attacker owns, or is denied (42501). Catches a weak UPDATE policy on a table whose
+--                        tenant_id the attacker may not write (sizes, feature 02), where checks 8 and 10 only see 42501.
 -- Each check is isolated (tests.try_as catches errors), so one failure never hides the rest.
 -- --------------------------------------------------------------------------------------------
 create or replace function tests.isolation_checks(p_attacker text, p_victim text)
@@ -341,6 +351,20 @@ begin
     description := v_prefix || 'attacker''s unrestricted update touches only its own rows (or is denied) [got '
       || v_res || ', attacker owns ' || v_n || ']';
     return next;
+
+    -- 11 (a weak UPDATE policy when the attacker CANNOT write tenant_id, e.g. sizes with column-level grants:
+    -- checks 8 and 10 then stop on the privilege error and prove nothing about the policy, and check 4's
+    -- column-referencing WHERE masks a weak USING). Updating a column the attacker may write to a constant (a SET that
+    -- reads a column, like updated_at = updated_at, would also apply the SELECT policy), with no
+    -- column-referencing WHERE, must not touch more rows than the attacker owns. updated_at exists on every
+    -- table (010 enforces it) and is in the sizes update grant for exactly this reason.
+    execute format('select count(*) from %s where %I = %L', v_t, v_col, v_own) into v_n;
+    v_res := tests.try_as_rolled_back(p_attacker, format('update %s set updated_at = now() where true', v_t));
+    check_name := 'update_unrestricted';
+    passed := v_res = '42501' or (v_res like 'ok:%' and substr(v_res, 4)::bigint <= v_n);
+    description := v_prefix || 'attacker''s unrestricted update of updated_at touches only its own rows (or is denied) [got '
+      || v_res || ', attacker owns ' || v_n || ']';
+    return next;
   end loop;
 
   perform tests.clear_authentication();
@@ -350,7 +374,7 @@ $$;
 -- Number of checks isolation_checks() returns per direction (keeps plan() counts in sync).
 create or replace function tests.isolation_check_count()
   returns integer language sql stable as $$
-  select 10 * count(*)::int from tests.tenant_table_registry()
+  select 11 * count(*)::int from tests.tenant_table_registry()
 $$;
 
 -- AC25: applies p_mutation (as postgres), runs the checker, then UNDOES the mutation by raising and

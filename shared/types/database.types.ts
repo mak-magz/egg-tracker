@@ -149,6 +149,48 @@ export type Database = {
           },
         ]
       }
+      size_submissions: {
+        Row: {
+          created_at: string
+          id: string
+          name: string
+          size_id: string
+          tenant_id: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          id: string
+          name: string
+          size_id: string
+          tenant_id: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          name?: string
+          size_id?: string
+          tenant_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "size_submissions_size_fk"
+            columns: ["tenant_id", "size_id"]
+            isOneToOne: false
+            referencedRelation: "sizes"
+            referencedColumns: ["tenant_id", "id"]
+          },
+          {
+            foreignKeyName: "size_submissions_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       sizes: {
         Row: {
           archived_at: string | null
@@ -219,8 +261,16 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      add_size: {
+        Args: { p_name: string; p_submission_id: string; p_tenant_id: string }
+        Returns: Json
+      }
       admin_revoke_sessions: { Args: { p_user_id: string }; Returns: number }
       admin_user_id_by_email: { Args: { p_email: string }; Returns: string }
+      archive_size: {
+        Args: { p_size_id: string; p_tenant_id: string }
+        Returns: Json
+      }
       delete_production_day: {
         Args: { p_day: string; p_tenant_id: string }
         Returns: Json
@@ -254,6 +304,14 @@ export type Database = {
           tenant_id: string
         }[]
       }
+      rename_size: {
+        Args: { p_name: string; p_size_id: string; p_tenant_id: string }
+        Returns: Json
+      }
+      reorder_sizes: {
+        Args: { p_size_ids: string[]; p_tenant_id: string }
+        Returns: Json
+      }
       replace_production_day: {
         Args: {
           p_day: string
@@ -262,6 +320,10 @@ export type Database = {
           p_size_ids: string[]
           p_tenant_id: string
         }
+        Returns: Json
+      }
+      restore_size: {
+        Args: { p_size_id: string; p_tenant_id: string }
         Returns: Json
       }
     }

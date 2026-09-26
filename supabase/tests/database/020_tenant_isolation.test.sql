@@ -3,7 +3,7 @@
 -- later feature only adds a registry row in 000_helpers.sql. The named cases below spell out AC24.
 begin;
 
-select plan(2 * tests.isolation_check_count() + 30);
+select plan(2 * tests.isolation_check_count() + 30 + 30 + 1 + 6);
 
 select tests.create_farm('Farm A', 'a');
 select tests.create_farm('Farm B', 'b');
@@ -135,6 +135,75 @@ select is(
   '42501', 'anon cannot execute replace_production_day');
 select is(tests.try_as('anon', format('select public.delete_production_day(%L, date ''2026-01-01'')', (select ta from _ids))),
   '42501', 'anon cannot execute delete_production_day');
+
+-- ---------------------------------------------------------------------------------------------
+-- Feature 02 (AC26, AC27): size management, both directions. Owners now WRITE sizes (column-limited grants +
+-- functions), so the write side of the isolation is spelled out here. tests.try_as() returns 'ok:<rows>' or the
+-- SQLSTATE.
+-- ---------------------------------------------------------------------------------------------
+create temp table _sz_dir as
+  select * from (values
+    ('a', (select ta from _ids), (select tb from _ids), (select a_large from _ids), (select b_large from _ids)),
+    ('b', (select tb from _ids), (select ta from _ids), (select b_large from _ids), (select a_large from _ids))
+  ) v(who, own, victim, own_size, victim_size);
+grant select on _sz_dir to authenticated, anon;
+
+-- Templates: %1$L victim tenant, %2$L victim's size id, %3$L own tenant, %4$L own size id, %5$L a fresh uuid.
+create temp table _sz_cases as
+  select * from (values
+    ('add_size with the other farm''s tenant id', 'select public.add_size(%1$L, %5$L, ''x'')', 'TM006'),
+    ('rename_size with the other farm''s tenant id', 'select public.rename_size(%1$L, %2$L, ''x'')', 'TM006'),
+    ('reorder_sizes with the other farm''s tenant id', 'select public.reorder_sizes(%1$L, array[%2$L]::uuid[])', 'TM006'),
+    ('archive_size with the other farm''s tenant id', 'select public.archive_size(%1$L, %2$L)', 'TM006'),
+    ('restore_size with the other farm''s tenant id', 'select public.restore_size(%1$L, %2$L)', 'TM006'),
+    ('rename_size on the other farm''s size id', 'select public.rename_size(%3$L, %2$L, ''x'')', 'TM011'),
+    ('archive_size on the other farm''s size id', 'select public.archive_size(%3$L, %2$L)', 'TM011'),
+    ('restore_size on the other farm''s size id', 'select public.restore_size(%3$L, %2$L)', 'TM011'),
+    ('reorder_sizes with the other farm''s size id', 'select public.reorder_sizes(%3$L, array[%2$L]::uuid[])', 'TM012'),
+    ('a direct update of the other farm''s size names', 'update public.sizes set name = ''Pwned'' where tenant_id = %1$L', 'ok:0'),
+    ('a direct insert of a size into the other farm', 'insert into public.sizes (tenant_id, name) values (%1$L, ''Pwned'')', '42501'),
+    ('a direct delete of the other farm''s sizes', 'delete from public.sizes where tenant_id = %1$L', '42501'),
+    ('a direct read of the other farm''s size ledger', 'select 1 from public.size_submissions where tenant_id = %1$L', 'ok:0'),
+    -- Security audit M-1, L-1: the ledger insert is refused for another farm's tenant_id (by the guard trigger,
+    -- before it takes that farm's lock), and a ledger row can't point at another farm's size (composite FK).
+    ('a direct insert of a ledger row into the other farm', 'insert into public.size_submissions (tenant_id, id, size_id, name) values (%1$L, %5$L, %2$L, ''x'')', '42501'),
+    ('a direct ledger row for own farm pointing at the other farm''s size', 'insert into public.size_submissions (tenant_id, id, size_id, name) values (%3$L, %5$L, %2$L, ''x'')', '23503')
+  ) c(descr, tpl, expected);
+
+create temp table _sz_before as
+  select id, tenant_id, name, sort_order, color_slot, archived_at from public.sizes
+  where tenant_id in ((select ta from _ids), (select tb from _ids));
+
+select is(
+  tests.try_as(d.who, format(c.tpl, d.victim, d.victim_size, d.own, d.own_size, gen_random_uuid())),
+  c.expected,
+  format('%s: %s (%s)', d.who, c.descr, c.expected))
+from _sz_dir d cross join _sz_cases c;
+
+select is(
+  array(select row(s.id, s.tenant_id, s.name, s.sort_order, s.color_slot, s.archived_at)::text
+        from public.sizes s where s.tenant_id in ((select ta from _ids), (select tb from _ids)) order by s.id),
+  array(select row(b.id, b.tenant_id, b.name, b.sort_order, b.color_slot, b.archived_at)::text
+        from _sz_before b order by b.id),
+  'both farms'' sizes are unchanged after every attempt (re-read as postgres)');
+
+select is(
+  tests.try_as('anon', format('select public.add_size(%L, gen_random_uuid(), ''x'')', (select ta from _ids))),
+  '42501', 'anon cannot execute add_size');
+select is(
+  tests.try_as('anon', format('select public.rename_size(%L, %L, ''x'')', (select ta from _ids), (select a_large from _ids))),
+  '42501', 'anon cannot execute rename_size');
+select is(
+  tests.try_as('anon', format('select public.reorder_sizes(%L, array[%L]::uuid[])', (select ta from _ids), (select a_large from _ids))),
+  '42501', 'anon cannot execute reorder_sizes');
+select is(
+  tests.try_as('anon', format('select public.archive_size(%L, %L)', (select ta from _ids), (select a_large from _ids))),
+  '42501', 'anon cannot execute archive_size');
+select is(
+  tests.try_as('anon', format('select public.restore_size(%L, %L)', (select ta from _ids), (select a_large from _ids))),
+  '42501', 'anon cannot execute restore_size');
+select is(tests.try_as('anon', 'insert into public.sizes (tenant_id, name) values (gen_random_uuid(), ''x'')'), '42501',
+  'anon cannot insert a size');
 
 select * from finish();
 rollback;
