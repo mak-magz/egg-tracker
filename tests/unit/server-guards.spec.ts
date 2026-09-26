@@ -40,6 +40,13 @@ describe('server guards', () => {
       'server/api/production/days/[date].put.ts',
       'server/api/production/days/[date].delete.ts',
       'server/api/production/entries.post.ts',
+      // Feature 02: rules (a), (b2) and (d) demonstrably run over the sizes routes.
+      'server/api/sizes/index.get.ts',
+      'server/api/sizes/index.post.ts',
+      'server/api/sizes/[id].patch.ts',
+      'server/api/sizes/order.put.ts',
+      'server/api/sizes/[id]/archive.post.ts',
+      'server/api/sizes/[id]/restore.post.ts',
     ]))
   })
 

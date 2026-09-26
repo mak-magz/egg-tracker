@@ -9,7 +9,7 @@ type SizeRow = Database['public']['Tables']['sizes']['Row']
 export const FARM_SUMMARY_COLUMNS = 'id, name, eggs_per_tray, sizes ( id, name, sort_order, color_slot, archived_at )'
 
 export type FarmSummaryRow = Pick<TenantRow, 'id' | 'name' | 'eggs_per_tray'> & {
-  sizes: Pick<SizeRow, 'id' | 'name' | 'sort_order' | 'color_slot' | 'archived_at'>[] | null
+  sizes: SizeRowForFarm[] | null
 }
 
 function compareSizes(a: FarmSize, b: FarmSize): number {
@@ -18,12 +18,21 @@ function compareSizes(a: FarmSize, b: FarmSize): number {
   return a.id < b.id ? -1 : a.id > b.id ? 1 : 0
 }
 
-/** ALL of the farm's sizes (active + archived), sorted by sortOrder, name, id. */
-export function toFarmSummary(row: FarmSummaryRow): FarmSummary {
-  const sizes: FarmSize[] = (row.sizes ?? [])
+export type SizeRowForFarm = Pick<SizeRow, 'id' | 'name' | 'sort_order' | 'color_slot' | 'archived_at'>
+
+/**
+ * ALL of the farm's sizes (active + archived), sorted by sortOrder, name, id. The ONE mapper and the ONE order:
+ * `/api/me` and `GET /api/sizes` (feature 02) both use it. `sort_order` is kept compact with active sizes first
+ * (docs/features/02-farm-settings.md D7), so this is also "active first, then archived".
+ */
+export function toFarmSizes(rows: readonly SizeRowForFarm[] | null): FarmSize[] {
+  return (rows ?? [])
     .map(s => ({ id: s.id, name: s.name, sortOrder: s.sort_order, colorSlot: s.color_slot, active: s.archived_at === null }))
     .sort(compareSizes)
-  return { id: row.id, name: row.name, eggsPerTray: row.eggs_per_tray, sizes }
+}
+
+export function toFarmSummary(row: FarmSummaryRow): FarmSummary {
+  return { id: row.id, name: row.name, eggsPerTray: row.eggs_per_tray, sizes: toFarmSizes(row.sizes) }
 }
 
 /** The signed-in user's farm. `tenants` is the root table, so it is scoped by `id`, not `tenant_id`. */
