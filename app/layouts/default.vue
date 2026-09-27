@@ -65,11 +65,17 @@ watch(() => route.path, () => {
 // Pages that aren't nav destinations (the 404) set `definePageMeta({ title })`; none is highlighted.
 const title = computed(() => activeItem.value?.title ?? route.meta.title ?? 'Tamago')
 useHead({ title: computed(() => `${title.value} · Tamago`) })
-const subtitle = computed(() => {
-  const item = activeItem.value
-  if (!item) return route.meta.subtitle ?? null
-  return item.subtitleIsToday ? today.value : item.subtitle
-})
+// A page that sets its own subtitle (Clients: "5 customers") declares `ownSubtitle` in its page meta, so the server and
+// the client's first render agree: no subtitle until the page has set one (utils/shell-subtitle.ts).
+const { override: subtitleOverride } = useShellSubtitle()
+const ownsSubtitle = computed(() => route.meta.ownSubtitle === true)
+const subtitle = computed(() => resolveShellSubtitle({
+  ownSubtitle: ownsSubtitle.value,
+  override: subtitleOverride.value,
+  item: activeItem.value,
+  metaSubtitle: route.meta.subtitle,
+  today: today.value,
+}))
 
 // Phone-only ← for screens with no highlighted tab (Settings; feature 02 C3). Back to the previous screen
 // when this app pushed one (vue-router keeps it in history.state.back), else to the Dashboard.
@@ -206,9 +212,11 @@ const navUi = computed(() => ({
                 <h1 class="truncate text-xl font-bold tracking-[-0.01em] text-highlighted">
                   {{ title }}
                 </h1>
+                <!-- A page-owned subtitle keeps its line while empty, so the title doesn't shift when the count arrives. -->
                 <p
-                  v-if="subtitle"
+                  v-if="subtitle || ownsSubtitle"
                   class="truncate text-sm text-muted"
+                  :class="ownsSubtitle && 'min-h-5'"
                 >
                   {{ subtitle }}
                 </p>
@@ -220,6 +228,7 @@ const navUi = computed(() => ({
               <UButton
                 v-if="primaryAction"
                 class="hidden shrink-0 md:inline-flex max-lg:min-h-11"
+                data-primary-action
                 size="lg"
                 :icon="primaryAction.icon"
                 :label="primaryAction.label"
@@ -254,6 +263,7 @@ const navUi = computed(() => ({
       <UButton
         v-if="primaryAction && fabVisible"
         class="fixed right-4 bottom-[calc(4rem+env(safe-area-inset-bottom)+1rem)] z-40 size-13 justify-center rounded-full shadow-lg md:hidden"
+        data-primary-action
         :icon="primaryAction.icon"
         :aria-label="primaryAction.ariaLabel"
         :ui="{ leadingIcon: 'size-6' }"

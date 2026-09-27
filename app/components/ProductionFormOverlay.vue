@@ -54,55 +54,9 @@ function onOpenAutoFocus(event: Event) {
   nextTick(() => form.value?.focusFirstQuantity())
 }
 
-// ---- Keep the sheet above the on-screen keyboard (visual viewport) ----------------------------------
-function setViewportVars() {
-  const vv = window.visualViewport
-  if (!vv) return
-  const root = document.documentElement.style
-  root.setProperty('--sheet-kb', `${Math.max(0, Math.round(window.innerHeight - vv.height - vv.offsetTop))}px`)
-  root.setProperty('--sheet-vvh', `${Math.round(vv.height)}px`)
-}
-function clearViewportVars() {
-  const root = document.documentElement.style
-  root.removeProperty('--sheet-kb')
-  root.removeProperty('--sheet-vvh')
-}
-watch(open, (isOpen) => {
-  const vv = import.meta.client ? window.visualViewport : null
-  if (!vv) return
-  if (isOpen) {
-    setViewportVars()
-    vv.addEventListener('resize', setViewportVars)
-    vv.addEventListener('scroll', setViewportVars)
-  }
-  else {
-    vv.removeEventListener('resize', setViewportVars)
-    vv.removeEventListener('scroll', setViewportVars)
-    clearViewportVars()
-  }
-})
-onBeforeUnmount(() => {
-  if (!import.meta.client) return
-  window.visualViewport?.removeEventListener('resize', setViewportVars)
-  window.visualViewport?.removeEventListener('scroll', setViewportVars)
-  clearViewportVars()
-})
-
-const sheetUi = {
-  overlay: 'bg-[rgba(15,23,43,.5)] backdrop-blur-[4px]',
-  content: [
-    // Phone: the design's bottom sheet, lifted by the keyboard inset.
-    'inset-x-0 left-0 top-auto bottom-(--sheet-kb,0px) translate-x-0 translate-y-0 w-full max-w-none',
-    'rounded-t-2xl rounded-b-none ring-0 shadow-xl divide-y-0',
-    'max-h-[min(88dvh,calc(var(--sheet-vvh,100dvh)-1rem))] sm:max-h-[min(88dvh,calc(var(--sheet-vvh,100dvh)-1rem))]',
-    'data-[state=open]:animate-[slide-in-from-bottom_200ms_var(--ease-out)] data-[state=closed]:animate-[slide-out-to-bottom_200ms_var(--ease-out)]',
-    'motion-reduce:data-[state=open]:animate-none motion-reduce:data-[state=closed]:animate-none',
-    // md+: the centred 520px dialog.
-    'md:inset-x-auto md:top-1/2 md:left-1/2 md:bottom-auto md:-translate-x-1/2 md:-translate-y-1/2',
-    'md:w-[calc(100vw-2rem)] md:max-w-[520px] md:rounded-2xl md:max-h-[85vh]',
-    'md:data-[state=open]:animate-[scale-in_200ms_var(--ease-out)] md:data-[state=closed]:animate-[scale-out_200ms_var(--ease-out)]',
-  ].join(' '),
-}
+// Keep the sheet above the on-screen keyboard (AC5); the classes are shared with the Clients overlay.
+useSheetKeyboard(open)
+const ui = sheetUi(520)
 
 const discardTitle = computed(() => (props.mode === 'edit' ? PRODUCTION_COPY.discardEditTitle : PRODUCTION_COPY.discardLogTitle))
 const discardBody = computed(() => (props.mode === 'edit' && props.editDay
@@ -117,7 +71,7 @@ const discardBody = computed(() => (props.mode === 'edit' && props.editDay
     :dismissible="false"
     :close="false"
     :content="{ onOpenAutoFocus }"
-    :ui="sheetUi"
+    :ui="ui"
     @close:prevent="requestClose"
   >
     <template #content>

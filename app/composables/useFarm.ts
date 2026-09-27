@@ -1,7 +1,10 @@
-// The signed-in farm's settings for the UI: eggs-per-tray and the farm's own size list (feature 01
-// §3.4, UX data need 1). Both ride on /api/me (useMe), so they're in the SSR payload and the log
-// form opens with no spinner. Never hardcode a tray size or a size list; read them from here.
+// The signed-in farm's settings for the UI: eggs-per-tray, the farm's own size list (feature 01 §3.4,
+// UX data need 1) and its currency (feature 03 AC35). All ride on /api/me (useMe), so they're in the SSR
+// payload and the forms open with no spinner. Never hardcode a tray size, a size list or a currency
+// symbol; read them from here.
 import type { FarmSize } from '#shared/types/api'
+import { DEFAULT_CURRENCY } from '#shared/constants/currency'
+import { currencySymbol as symbolFor, formatPrice as formatPriceIn } from '#shared/utils/price'
 import type { SizeApi } from '~/utils/size-mutations'
 
 export interface ResolvedSize {
@@ -24,6 +27,20 @@ export function useFarm() {
 
   /** The farm's tray size (>= 1). Only null when there is no farm, which the shell never renders. */
   const eggsPerTray = computed(() => farm.value?.eggsPerTray ?? null)
+
+  /**
+   * The farm's ISO currency code (feature 03). Falls back to the default only when there is no farm; an unknown
+   * code is handled by formatPrice / currencySymbol themselves (they show the default's symbol, AC36).
+   */
+  const currency = computed(() => farm.value?.currency ?? DEFAULT_CURRENCY)
+
+  /** The symbol for the price field's prefix (`₱`). Never typed into a screen. */
+  const currencySymbol = computed(() => symbolFor(currency.value))
+
+  /** A price in the farm's currency: `₱250.00`, `₱1,250.00`. The one rule for every price (AC36). Never converts. */
+  function formatPrice(amount: number): string {
+    return formatPriceIn(amount, currency.value)
+  }
 
   /** ALL sizes (active + archived), in the farm's order (the server sorts them). */
   const sizes = computed<readonly FarmSize[]>(() => farm.value?.sizes ?? [])
@@ -59,5 +76,5 @@ export function useFarm() {
     return fetchSizes(api as SizeApi, { apply: applySizes, superseded: () => sizesVersion.value !== started })
   }
 
-  return { farm, eggsPerTray, sizes, activeSizes, archivedSizes, sizeById, applySizes, refreshSizes }
+  return { farm, eggsPerTray, currency, currencySymbol, formatPrice, sizes, activeSizes, archivedSizes, sizeById, applySizes, refreshSizes }
 }

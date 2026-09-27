@@ -11,6 +11,12 @@ declare module '#app' {
     /** Top-bar subtitle for shell pages that aren't nav destinations (e.g. Settings: "Farm settings"). */
     subtitle?: string
     /**
+     * The page sets its own top-bar subtitle from client-side data (`useShellSubtitle().setSubtitle`), e.g. Clients:
+     * "5 customers". The layout then shows no subtitle (and keeps its line reserved) until the page has set one, on the
+     * server and the client's first render alike, so hydration matches. Never falls back to the nav's static text.
+     */
+    ownSubtitle?: boolean
+    /**
      * Shows a phone-only ← button at the start of the top bar (44px, `aria-label="Back"`), for screens with no
      * highlighted tab. It goes back to the previous screen, or to the Dashboard when there was none.
      */
