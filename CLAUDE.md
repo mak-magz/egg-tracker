@@ -47,6 +47,7 @@ A multi-tenant SaaS for egg farms that tracks production, computed inventory, sa
 - The service-role (secret) key is **not used at app runtime**. Only the local provisioning CLI (`server/cli/`) uses it, through server-only config. The browser uses the publishable (anon) key and RLS.
 - Every server route is wrapped in `defineAuthedHandler` or `defineTenantHandler`, and a guard test enforces this. `tenants` is the root table (its `id` is the tenant id) and is the only table without a `tenant_id` column.
 - Vercel runs serverless, so don't keep a long-lived pool and don't put long-running work in request handlers.
+- Clients are the first personal data (names, phones). Never put them in logs (repositories log SQLSTATE codes, not error objects, because Postgres error details carry row values), in error messages, in the URL or search string, or in `/api/me` or the SSR payload (fetch the list on the client after mount). Clear client state on sign-out.
 
 **Units and data model**
 - The stored unit is always individual eggs. Trays exist only at input and display, through one shared conversion helper. Eggs-per-tray is a per-tenant setting and must never be hardcoded.
@@ -57,7 +58,8 @@ A multi-tenant SaaS for egg farms that tracks production, computed inventory, sa
 - Marking a delivery complete is one update: it sets `status = complete` and stamps `date_delivered`, and inventory follows automatically. On-site sales are created already `complete`.
 - Sales store a snapshot of `price`. A client's default price only pre-fills the form.
 - Null values carry meaning: `size_id` (reject), `client_id` (on-site sale), `date_delivered` (pending).
-- Clients are the farm's customers, not tenants. Delete them with a soft-delete or archive so past sales keep their data.
+- Clients are the farm's customers, not tenants, and are never deleted: no delete grant, policy, function or route. `archived_at` marks one inactive (the UI says "Inactive"), and past sales keep pointing at it. Names are unique per farm ignoring case and spacing, inactive ones included, and are not folded for accents. A sale stores its own price but **not** the client's name: a rename shows on past sales. Clients change only through `security invoker` functions (`add_client` with the `client_submissions` ledger, `update_client` with a `version` check, `archive_client`, `restore_client`); a farm holds at most 500.
+- Prices are plain numbers (`numeric`, 2 decimals, above 0) shown in the farm's currency, which is a per-farm setting (`tenants.currency`, an ISO code, default `PHP`, shown as ₱). Every price goes through the one `formatPrice` helper in `shared/utils/price.ts`; never type a currency symbol into a screen, and never convert a stored price when the currency changes (it only relabels). Clients' default price is per tray.
 
 ## UI notes
 

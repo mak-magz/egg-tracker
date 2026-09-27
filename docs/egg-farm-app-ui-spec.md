@@ -205,7 +205,7 @@ Derived from the product context (single owner-operator, responsive web, fast da
 - Desktop: table/list. Mobile: cards.
 - Search/filter by name.
 
-**Row actions:** view/edit, delete (confirm; consider what happens to their past sales — sales keep their snapshotted client name/price, so deleting a client shouldn't corrupt historical sales; consider soft-delete or "archive").
+**Row actions:** edit, and mark inactive / mark active (no delete: decided in feature 03). A sale keeps its own price snapshot but **not** the client's name (a rename shows on past sales), and a client is never deleted so a sale's client always resolves; an inactive client stays in the list and on past sales and is not offered for new sales.
 
 ### 7b. Add / edit client
 **Trigger:** ＋ Add on Clients screen, OR inline "＋ new client" from the Sales form.
