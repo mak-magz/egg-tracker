@@ -13,13 +13,13 @@ const STATUS_MESSAGES: Record<ApiErrorCode, string> = {
   internal: 'Internal Server Error',
 }
 
-/** Optional extras on an error body (feature 02 §3.3): why a 409 happened, the clashing size, the current sizes. */
-export type ApiErrorExtra = Pick<ApiErrorData, 'reason' | 'existing' | 'sizes'>
+/** Optional extras on an error body (feature 02 §3.3, feature 03 §3.3): why a 409 happened, the clashing row, the current sizes, the current client. */
+export type ApiErrorExtra = Pick<ApiErrorData, 'reason' | 'existing' | 'sizes' | 'client'>
 
 /**
  * The one way server code raises an API error. The body is `{ statusCode, statusMessage, data: ApiErrorData }`,
- * so the client reads the code from `FetchError.data.data.code`. `extra` carries `reason`, `existing` and `sizes`;
- * only keys that are set end up in the body.
+ * so the client reads the code from `FetchError.data.data.code`. `extra` carries `reason`, `existing`, `sizes` and
+ * `client`; only keys that are set end up in the body.
  */
 export function apiError(
   statusCode: number,
@@ -32,6 +32,7 @@ export function apiError(
   if (extra?.reason !== undefined) data.reason = extra.reason
   if (extra?.existing !== undefined) data.existing = extra.existing
   if (extra?.sizes !== undefined) data.sizes = extra.sizes
+  if (extra?.client !== undefined) data.client = extra.client
   return createError<ApiErrorData>({ statusCode, statusMessage: STATUS_MESSAGES[code], data })
 }
 

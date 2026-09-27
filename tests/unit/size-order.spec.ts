@@ -63,7 +63,7 @@ describe('canArchive (AC14)', () => {
 })
 
 describe('replaceFarmSizes (useMe().setSizes)', () => {
-  const me: MeResponse = { email: 'a@b.c', farm: { id: 'f', name: 'Farm', eggsPerTray: 30, sizes: [size('a', 'Small', 0)] } }
+  const me: MeResponse = { email: 'a@b.c', farm: { id: 'f', name: 'Farm', eggsPerTray: 30, currency: 'PHP', sizes: [size('a', 'Small', 0)] } }
 
   it('swaps only the size list', () => {
     const next = replaceFarmSizes(me, [size('b', 'Big', 0)])!

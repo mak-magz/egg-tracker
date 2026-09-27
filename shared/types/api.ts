@@ -5,10 +5,15 @@
 export type ApiErrorCode = 'unauthenticated' | 'no_farm' | 'validation_failed' | 'not_found' | 'conflict' | 'internal'
 
 /** Why a 'conflict' (409) happened. The UI has copy for each (feature 02 §2.5 "Copy"). */
-export type ApiErrorReason = 'name_taken' | 'last_active_size' | 'sizes_changed'
+export type ApiErrorReason = 'name_taken' | 'last_active_size' | 'sizes_changed' | 'client_limit' | 'client_changed'
 
-/** The size that already has the name being saved (AC4). `archived` picks "Restore it instead". */
-export interface SizeNameMatch { id: string, name: string, archived: boolean }
+/**
+ * The row that already has the name being saved (sizes, feature 02 AC4; clients, feature 03 AC11).
+ * `archived` picks "Restore it instead" for a size, and "marked inactive, mark it active" for a client.
+ */
+export interface NameMatch { id: string, name: string, archived: boolean }
+/** Kept so feature 02 code still imports it. */
+export type SizeNameMatch = NameMatch
 
 /**
  * The `data` payload of every error our server routes throw:
@@ -21,10 +26,12 @@ export interface ApiErrorData {
   fields?: Record<string, string>
   /** With code 'conflict'. */
   reason?: ApiErrorReason
-  /** With reason 'name_taken'. */
-  existing?: SizeNameMatch
+  /** With reason 'name_taken'. Absent if the lookup failed. */
+  existing?: NameMatch
   /** With 'conflict' and a 404 on a size: the farm's CURRENT sizes, so the screen refreshes with no second request. Absent if that read failed. */
   sizes?: FarmSize[]
+  /** With reason 'client_changed' (feature 03 AC19): the client as it is NOW, so the row updates with no second request. Absent if that read failed. */
+  client?: Client
 }
 
 /**
@@ -47,6 +54,11 @@ export interface FarmSummary {
   eggsPerTray: number
   /** ALL of the farm's sizes (active + archived), sorted by sortOrder, name. New in feature 01. */
   sizes: FarmSize[]
+  /**
+   * The farm's currency, an ISO 4217 code such as 'PHP' (feature 03 AC35). Any three capital letters may arrive;
+   * show prices through `formatPrice(amount, currency)` (shared/utils/price.ts), which treats an unknown code as PHP.
+   */
+  currency: string
 }
 
 /** `GET /api/me`. `farm` is null when the signed-in user has no farm membership (AC12). */
@@ -127,3 +139,32 @@ export interface ReorderSizesRequest { sizeId: string, order: string[] }
  * size that changed (for the highlight and the toast). For add, a replayed submissionId returns the first size.
  */
 export interface SizeChangeResponse { sizes: FarmSize[], changedId: string }
+
+// ---- Clients (docs/features/03-clients.md §3.3) ----
+// No egg counts here. Limits and messages are in shared/constants/clients.ts. Prices are shown through shared/utils/price.ts.
+
+/** One customer of the farm. The price is the number the owner typed, PER TRAY, in the farm's currency. Never a tenant id. */
+export interface Client {
+  id: string
+  name: string
+  phone: string | null
+  defaultPrice: number | null
+  /** false = "Inactive" in the UI (archived_at is set). Inactive clients keep their past sales. */
+  active: boolean
+  /** Changes on every real edit or status change. Send it back with an edit (AC19). */
+  version: number
+}
+
+/** GET /api/clients: ALL clients, active and inactive, in NO promised order (sort with `compareClients`). */
+export interface ClientsResponse { clients: Client[] }
+/** POST /api/clients. `submissionId`: a UUID per form opening, reused on a retry of the SAME name, phone and price. Omitted phone or price means none. */
+export interface AddClientRequest { submissionId: string, name: string, phone?: string | null, defaultPrice?: number | null }
+export interface AddClientResponse {
+  client: Client
+  /** true when this submissionId had already been applied; nothing new was created and `client` is the first one. */
+  replayed: boolean
+}
+/** PUT /api/clients/:id: replaces the three fields (all keys required; null clears). `version` is the client's version when the form opened. */
+export interface UpdateClientRequest { version: number, name: string, phone: string | null, defaultPrice: number | null }
+/** PUT, archive and restore: `changed` is false when there was nothing to do (already in that state, or the same values). */
+export interface ClientChangeResponse { client: Client, changed: boolean }

@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import { createError } from 'h3'
 import { apiError, isApiError, toApiError } from '../../server/utils/errors'
-import type { FarmSize } from '../../shared/types/api'
+import type { Client, FarmSize } from '../../shared/types/api'
 
 const SIZES: FarmSize[] = [{ id: 'a', name: 'Small', sortOrder: 0, colorSlot: 0, active: true }]
+const CLIENT: Client = { id: 'c', name: 'Maple Street Market', phone: null, defaultPrice: 6.5, active: true, version: 4 }
 
 describe('apiError', () => {
   it('builds a plain error with just the code', () => {
@@ -45,6 +46,28 @@ describe('apiError', () => {
   it('carries sizes on a 404', () => {
     expect(apiError(404, 'not_found', undefined, { sizes: SIZES }).data).toEqual({ code: 'not_found', sizes: SIZES })
   })
+
+  it('carries the current client on a stale edit (client_changed), and only the set keys', () => {
+    const data = apiError(409, 'conflict', undefined, { reason: 'client_changed', client: CLIENT }).data!
+    expect(data).toEqual({ code: 'conflict', reason: 'client_changed', client: CLIENT })
+    expect(Object.keys(data).sort()).toEqual(['client', 'code', 'reason'])
+  })
+
+  it('leaves out `client` when that read failed', () => {
+    const data = apiError(409, 'conflict', undefined, { reason: 'client_changed', client: undefined }).data!
+    expect(Object.keys(data)).toEqual(['code', 'reason'])
+  })
+
+  it('carries a client name clash and the client limit', () => {
+    const existing = { id: 'o', name: 'Oakhill Bakery', archived: true }
+    expect(apiError(409, 'conflict', { name: 'That name already exists.' }, { reason: 'name_taken', existing }).data).toEqual({
+      code: 'conflict',
+      fields: { name: 'That name already exists.' },
+      reason: 'name_taken',
+      existing,
+    })
+    expect(apiError(409, 'conflict', undefined, { reason: 'client_limit' }).data).toEqual({ code: 'conflict', reason: 'client_limit' })
+  })
 })
 
 describe('isApiError / toApiError with conflict', () => {
@@ -52,6 +75,15 @@ describe('isApiError / toApiError with conflict', () => {
     const e = apiError(409, 'conflict', undefined, { reason: 'sizes_changed' })
     expect(isApiError(e)).toBe(true)
     expect(toApiError(e)).toBe(e)
+  })
+
+  it('passes the new client reasons through toApiError unchanged', () => {
+    for (const reason of ['client_limit', 'client_changed'] as const) {
+      const e = apiError(409, 'conflict', undefined, { reason })
+      expect(isApiError(e)).toBe(true)
+      expect(toApiError(e)).toBe(e)
+      expect(toApiError(e).data?.reason).toBe(reason)
+    }
   })
 
   it('does not treat an unknown code as ours', () => {
