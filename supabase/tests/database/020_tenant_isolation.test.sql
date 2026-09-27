@@ -3,7 +3,7 @@
 -- later feature only adds a registry row in 000_helpers.sql. The named cases below spell out AC24.
 begin;
 
-select plan(2 * tests.isolation_check_count() + 30 + 30 + 1 + 6);
+select plan(2 * tests.isolation_check_count() + 30 + 30 + 1 + 6 + 30 + 1 + 5 + 2 + 4);
 
 select tests.create_farm('Farm A', 'a');
 select tests.create_farm('Farm B', 'b');
@@ -204,6 +204,96 @@ select is(
   '42501', 'anon cannot execute restore_size');
 select is(tests.try_as('anon', 'insert into public.sizes (tenant_id, name) values (gen_random_uuid(), ''x'')'), '42501',
   'anon cannot insert a size');
+
+-- ---------------------------------------------------------------------------------------------
+-- Feature 03 (AC28, AC32, AC35): clients, the first personal data. Both directions, reads AND writes. Owners write
+-- clients through column-limited grants and four security invoker functions, so the write side is spelled out here.
+-- The registry rows (000_helpers) already run the 11 generic checks for `clients` and `client_submissions`.
+-- ---------------------------------------------------------------------------------------------
+-- The registry seed ("Seed client") exists for both farms by now.
+create temp table _cl_ids as
+  select (select ta from _ids) as ta, (select tb from _ids) as tb,
+         (select c.id from public.clients c where c.tenant_id = (select ta from _ids) order by c.created_at, c.id limit 1) as a_client,
+         (select c.id from public.clients c where c.tenant_id = (select tb from _ids) order by c.created_at, c.id limit 1) as b_client;
+grant select on _cl_ids to authenticated, anon;
+
+create temp table _cl_dir as
+  select * from (values
+    ('a', (select ta from _cl_ids), (select tb from _cl_ids), (select a_client from _cl_ids), (select b_client from _cl_ids)),
+    ('b', (select tb from _cl_ids), (select ta from _cl_ids), (select b_client from _cl_ids), (select a_client from _cl_ids))
+  ) v(who, own, victim, own_client, victim_client);
+grant select on _cl_dir to authenticated, anon;
+
+-- Templates: %1$L victim tenant, %2$L victim's client id, %3$L own tenant, %4$L own client id, %5$L a fresh uuid.
+create temp table _cl_cases as
+  select * from (values
+    ('add_client with the other farm''s tenant id', 'select public.add_client(%1$L, %5$L, ''x'')', 'TM006'),
+    ('update_client with the other farm''s tenant id', 'select public.update_client(%1$L, %2$L, 1, ''x'', null, null)', 'TM006'),
+    ('archive_client with the other farm''s tenant id', 'select public.archive_client(%1$L, %2$L)', 'TM006'),
+    ('restore_client with the other farm''s tenant id', 'select public.restore_client(%1$L, %2$L)', 'TM006'),
+    ('update_client on the other farm''s client id', 'select public.update_client(%3$L, %2$L, 1, ''x'', null, null)', 'TM023'),
+    ('archive_client on the other farm''s client id', 'select public.archive_client(%3$L, %2$L)', 'TM023'),
+    ('restore_client on the other farm''s client id', 'select public.restore_client(%3$L, %2$L)', 'TM023'),
+    ('a direct update of the other farm''s client names', 'update public.clients set name = ''Pwned'' where tenant_id = %1$L', 'ok:0'),
+    ('a direct mark-inactive of the other farm''s clients', 'update public.clients set archived_at = now() where tenant_id = %1$L', 'ok:0'),
+    ('a direct insert of a client into the other farm', 'insert into public.clients (tenant_id, name) values (%1$L, ''Pwned'')', '42501'),
+    ('a direct delete of the other farm''s clients', 'delete from public.clients where tenant_id = %1$L', '42501'),
+    ('a direct read of the other farm''s clients', 'select 1 from public.clients where tenant_id = %1$L', 'ok:0'),
+    ('a direct read of the other farm''s client ledger', 'select 1 from public.client_submissions where tenant_id = %1$L', 'ok:0'),
+    ('a direct insert of a ledger row into the other farm', 'insert into public.client_submissions (tenant_id, id, client_id, payload_hash) values (%1$L, %5$L, %2$L, repeat(''0'', 64))', '42501'),
+    ('a direct ledger row for own farm pointing at the other farm''s client', 'insert into public.client_submissions (tenant_id, id, client_id, payload_hash) values (%3$L, %5$L, %2$L, repeat(''0'', 64))', '23503')
+  ) c(descr, tpl, expected);
+
+create temp table _cl_before as
+  select id, tenant_id, name, phone, default_price, archived_at, version from public.clients
+  where tenant_id in ((select ta from _cl_ids), (select tb from _cl_ids));
+
+select is(
+  tests.try_as(d.who, format(c.tpl, d.victim, d.victim_client, d.own, d.own_client, gen_random_uuid())),
+  c.expected,
+  format('%s: %s (%s)', d.who, c.descr, c.expected))
+from _cl_dir d cross join _cl_cases c;
+
+select is(
+  array(select row(s.id, s.tenant_id, s.name, s.phone, s.default_price, s.archived_at, s.version)::text
+        from public.clients s where s.tenant_id in ((select ta from _cl_ids), (select tb from _cl_ids)) order by s.id),
+  array(select row(b.id, b.tenant_id, b.name, b.phone, b.default_price, b.archived_at, b.version)::text
+        from _cl_before b order by b.id),
+  'both farms'' clients are unchanged after every attempt (re-read as postgres)');
+
+select is(
+  tests.try_as('anon', format('select public.add_client(%L, gen_random_uuid(), ''x'')', (select ta from _cl_ids))),
+  '42501', 'anon cannot execute add_client');
+select is(
+  tests.try_as('anon', format('select public.update_client(%L, %L, 1, ''x'', null, null)', (select ta from _cl_ids), (select a_client from _cl_ids))),
+  '42501', 'anon cannot execute update_client');
+select is(
+  tests.try_as('anon', format('select public.archive_client(%L, %L)', (select ta from _cl_ids), (select a_client from _cl_ids))),
+  '42501', 'anon cannot execute archive_client');
+select is(
+  tests.try_as('anon', format('select public.restore_client(%L, %L)', (select ta from _cl_ids), (select a_client from _cl_ids))),
+  '42501', 'anon cannot execute restore_client');
+select is(tests.try_as('anon', 'insert into public.clients (tenant_id, name) values (gen_random_uuid(), ''x'')'), '42501',
+  'anon cannot insert a client');
+
+-- Uniqueness is per farm: farm A can add a name farm B has (and the reverse), and gets no hint that B has it.
+insert into public.clients (tenant_id, name) values ((select tb from _cl_ids), 'Maple Street Market');
+insert into public.clients (tenant_id, name) values ((select ta from _cl_ids), 'Zed Market');
+select is(
+  tests.try_as('a', format('select public.add_client(%L, gen_random_uuid(), ''Maple Street Market'')', (select ta from _cl_ids))),
+  'ok:1', 'AC28: A can add "Maple Street Market" although B has it: no error, no hint');
+select is(
+  tests.try_as('b', format('select public.add_client(%L, gen_random_uuid(), ''Zed Market'')', (select tb from _cl_ids))),
+  'ok:1', 'AC28: B can add "Zed Market" although A has it');
+
+-- The currency is the farm's own data (AC35): A never sees B's value, whatever B's currency is.
+select is(tests.try_as('a', format('select currency from public.tenants where id = %L', (select tb from _cl_ids))), 'ok:0',
+  'AC35: A cannot read B''s currency');
+update public.tenants set currency = 'USD' where id = (select tb from _cl_ids);
+select is(tests.try_as('a', 'select 1 from public.tenants where currency = ''USD'''), 'ok:0',
+  'AC35: with B on USD, A sees no USD farm');
+select is(tests.try_as('a', 'select 1 from public.tenants where currency = ''PHP'''), 'ok:1', 'AC35: A still reads PHP for itself');
+select is(tests.try_as('b', 'select 1 from public.tenants where currency = ''USD'''), 'ok:1', 'AC35: B reads USD for itself');
 
 select * from finish();
 rollback;

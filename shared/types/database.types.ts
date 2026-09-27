@@ -34,6 +34,92 @@ export type Database = {
   }
   public: {
     Tables: {
+      client_submissions: {
+        Row: {
+          client_id: string
+          created_at: string
+          id: string
+          payload_hash: string
+          tenant_id: string
+          updated_at: string
+        }
+        Insert: {
+          client_id: string
+          created_at?: string
+          id: string
+          payload_hash: string
+          tenant_id: string
+          updated_at?: string
+        }
+        Update: {
+          client_id?: string
+          created_at?: string
+          id?: string
+          payload_hash?: string
+          tenant_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "client_submissions_client_fk"
+            columns: ["tenant_id", "client_id"]
+            isOneToOne: true
+            referencedRelation: "clients"
+            referencedColumns: ["tenant_id", "id"]
+          },
+          {
+            foreignKeyName: "client_submissions_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      clients: {
+        Row: {
+          archived_at: string | null
+          created_at: string
+          default_price: number | null
+          id: string
+          name: string
+          phone: string | null
+          tenant_id: string
+          updated_at: string
+          version: number
+        }
+        Insert: {
+          archived_at?: string | null
+          created_at?: string
+          default_price?: number | null
+          id?: string
+          name: string
+          phone?: string | null
+          tenant_id: string
+          updated_at?: string
+          version?: number
+        }
+        Update: {
+          archived_at?: string | null
+          created_at?: string
+          default_price?: number | null
+          id?: string
+          name?: string
+          phone?: string | null
+          tenant_id?: string
+          updated_at?: string
+          version?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "clients_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       memberships: {
         Row: {
           created_at: string
@@ -178,7 +264,7 @@ export type Database = {
           {
             foreignKeyName: "size_submissions_size_fk"
             columns: ["tenant_id", "size_id"]
-            isOneToOne: false
+            isOneToOne: true
             referencedRelation: "sizes"
             referencedColumns: ["tenant_id", "id"]
           },
@@ -235,6 +321,7 @@ export type Database = {
       tenants: {
         Row: {
           created_at: string
+          currency: string
           eggs_per_tray: number
           id: string
           name: string
@@ -242,6 +329,7 @@ export type Database = {
         }
         Insert: {
           created_at?: string
+          currency?: string
           eggs_per_tray?: number
           id?: string
           name: string
@@ -249,6 +337,7 @@ export type Database = {
         }
         Update: {
           created_at?: string
+          currency?: string
           eggs_per_tray?: number
           id?: string
           name?: string
@@ -261,12 +350,26 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      add_client: {
+        Args: {
+          p_default_price?: number
+          p_name: string
+          p_phone?: string
+          p_submission_id: string
+          p_tenant_id: string
+        }
+        Returns: Json
+      }
       add_size: {
         Args: { p_name: string; p_submission_id: string; p_tenant_id: string }
         Returns: Json
       }
       admin_revoke_sessions: { Args: { p_user_id: string }; Returns: number }
       admin_user_id_by_email: { Args: { p_email: string }; Returns: string }
+      archive_client: {
+        Args: { p_client_id: string; p_tenant_id: string }
+        Returns: Json
+      }
       archive_size: {
         Args: { p_size_id: string; p_tenant_id: string }
         Returns: Json
@@ -322,8 +425,23 @@ export type Database = {
         }
         Returns: Json
       }
+      restore_client: {
+        Args: { p_client_id: string; p_tenant_id: string }
+        Returns: Json
+      }
       restore_size: {
         Args: { p_size_id: string; p_tenant_id: string }
+        Returns: Json
+      }
+      update_client: {
+        Args: {
+          p_client_id: string
+          p_default_price?: number
+          p_name: string
+          p_phone?: string
+          p_tenant_id: string
+          p_version: number
+        }
         Returns: Json
       }
     }

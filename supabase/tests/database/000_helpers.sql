@@ -211,11 +211,19 @@ create or replace function tests.tenant_table_registry()
        'insert into public.production (tenant_id, produced_on, quality, eggs) values (%1$L, date ''2026-01-01'', ''reject'', 1)'),
     ('public.production_submissions'::regclass, 'tenant_id',
        'insert into public.production_submissions (tenant_id, id, produced_on, had_before) values (%1$L, gen_random_uuid(), date ''2026-01-01'', false)',
-       'insert into public.production_submissions (tenant_id, id, produced_on, had_before) values (%1$L, gen_random_uuid(), date ''2026-01-01'', false)')
-    -- Later features add e.g.:
-    -- ,('public.clients'::regclass, 'tenant_id',
-    --     'insert into public.clients (tenant_id, name) values (%1$L, ''Seed client'')',
-    --     'insert into public.clients (tenant_id, name) values (%1$L, ''Attack'')')
+       'insert into public.production_submissions (tenant_id, id, produced_on, had_before) values (%1$L, gen_random_uuid(), date ''2026-01-01'', false)'),
+    -- Feature 03 (personal data: the first isolation target for writes as well as reads). Owners can insert only
+    -- (tenant_id, name, phone, default_price) into clients (column grants), so the attack names only those columns: one
+    -- that named id or version would raise 42501 for the WRONG reason (a column privilege) and stop testing the insert
+    -- policy and the guard trigger. Checks 8 and 10 stop on the tenant_id column privilege (owners can't update it),
+    -- so check 11 (update ... set updated_at = now()) is what keeps a weakened clients_update detectable.
+    ('public.clients'::regclass, 'tenant_id',
+       'insert into public.clients (tenant_id, name) values (%1$L, ''Seed client'')',
+       'insert into public.clients (tenant_id, name) values (%1$L, ''Attack'')'),
+    -- The ledger's attack uses a random client_id: the guard trigger / RLS (42501) is reported before the FK check.
+    ('public.client_submissions'::regclass, 'tenant_id',
+       'insert into public.client_submissions (tenant_id, id, client_id, payload_hash) select %1$L, gen_random_uuid(), c.id, repeat(''0'', 64) from public.clients c where c.tenant_id = %1$L limit 1',
+       'insert into public.client_submissions (tenant_id, id, client_id, payload_hash) values (%1$L, gen_random_uuid(), gen_random_uuid(), repeat(''0'', 64))')
 $$;
 
 -- --------------------------------------------------------------------------------------------

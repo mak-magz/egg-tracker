@@ -1,7 +1,7 @@
 -- 010_rls_coverage: meta-guards over the whole `public` schema (docs/features/00-project-scaffold.md §3.7).
 -- A new table that forgets RLS, updated_at, tenant_id, its index, or its isolation-registry row fails here.
 begin;
-select plan(32);
+select plan(47);
 
 -- Ordinary + partitioned tables in public.
 create temp view _public_tables as
@@ -269,6 +269,128 @@ select ok(
   and has_column_privilege('authenticated', 'public.size_submissions', 'size_id', 'insert')
   and has_column_privilege('authenticated', 'public.size_submissions', 'name', 'insert'),
   'authenticated can insert (tenant_id, id, size_id, name) into size_submissions (what add_size writes)');
+
+-- Feature 03: the client RPCs are security INVOKER, authenticated-only. Owners WRITE clients (the first personal data),
+-- so what an owner can NOT do is pinned down at the privilege level, not only in the functions.
+create temp view _client_rpcs as
+  select f from unnest(array[
+    'public.add_client(uuid,uuid,text,text,numeric)'::regprocedure,
+    'public.update_client(uuid,uuid,bigint,text,text,numeric)'::regprocedure,
+    'public.archive_client(uuid,uuid)'::regprocedure,
+    'public.restore_client(uuid,uuid)'::regprocedure]) f;
+
+select is(
+  array(select r.f::text from _client_rpcs r join pg_proc p on p.oid = r.f where p.prosecdef order by 1),
+  '{}'::text[],
+  'the client RPCs are security invoker');
+
+select is(
+  array(select r.f::text from _client_rpcs r where has_function_privilege('anon', r.f, 'execute') order by 1),
+  '{}'::text[],
+  'anon cannot execute the client RPCs');
+
+select is(
+  array(select r.f::text from _client_rpcs r where not has_function_privilege('authenticated', r.f, 'execute') order by 1),
+  '{}'::text[],
+  'authenticated can execute the client RPCs');
+
+select is(
+  array(select f::text from unnest(array[
+          'app.normalize_client_name(text)'::regprocedure,
+          'app.normalize_client_phone(text)'::regprocedure,
+          'app.client_text_invalid(text)'::regprocedure,
+          'app.client_text_visible(text)'::regprocedure,
+          'app.lock_tenant_clients(uuid)'::regprocedure,
+          'app.assert_client_input_size(text,text)'::regprocedure,
+          'app.assert_client_fields(text,text,numeric)'::regprocedure,
+          'app.client_payload_hash(text,text,numeric)'::regprocedure,
+          'app.clients_write_guard()'::regprocedure,
+          'app.client_submissions_guard()'::regprocedure]) f
+        where has_function_privilege('anon', f, 'execute') order by 1),
+  '{}'::text[],
+  'the app.* client helpers and trigger functions are not executable by anon');
+
+select is(
+  array(select f::text from unnest(array[
+          'app.normalize_client_name(text)'::regprocedure,
+          'app.normalize_client_phone(text)'::regprocedure,
+          'app.client_text_invalid(text)'::regprocedure,
+          'app.client_text_visible(text)'::regprocedure,
+          'app.lock_tenant_clients(uuid)'::regprocedure,
+          'app.assert_client_input_size(text,text)'::regprocedure,
+          'app.assert_client_fields(text,text,numeric)'::regprocedure,
+          'app.client_payload_hash(text,text,numeric)'::regprocedure]) f
+        where not has_function_privilege('authenticated', f, 'execute') order by 1),
+  '{}'::text[],
+  'the client helpers the CHECK constraints and the invoker functions call are executable by authenticated');
+
+select is(
+  array(select t || ':' || p from unnest(array['public.clients', 'public.client_submissions']) t,
+                                   unnest(array['delete', 'truncate', 'references', 'trigger']) p
+        where has_table_privilege('authenticated', t, p) order by 1),
+  '{}'::text[],
+  'authenticated has no delete, truncate, references or trigger privilege on clients or client_submissions (AC21)');
+
+select is(
+  array(select c from unnest(array['id', 'version', 'archived_at', 'created_at', 'updated_at']) c
+        where has_column_privilege('authenticated', 'public.clients', c, 'insert') order by 1),
+  '{}'::text[],
+  'authenticated cannot insert id, version, archived_at, created_at or updated_at into clients (a client is born active)');
+
+select is(
+  array(select c from unnest(array['id', 'tenant_id', 'version', 'created_at']) c
+        where has_column_privilege('authenticated', 'public.clients', c, 'update') order by 1),
+  '{}'::text[],
+  'authenticated cannot update id, tenant_id, version or created_at on clients');
+
+select ok(
+  has_table_privilege('authenticated', 'public.clients', 'select')
+  and has_column_privilege('authenticated', 'public.clients', 'tenant_id', 'insert')
+  and has_column_privilege('authenticated', 'public.clients', 'name', 'insert')
+  and has_column_privilege('authenticated', 'public.clients', 'phone', 'insert')
+  and has_column_privilege('authenticated', 'public.clients', 'default_price', 'insert')
+  and has_column_privilege('authenticated', 'public.clients', 'name', 'update')
+  and has_column_privilege('authenticated', 'public.clients', 'phone', 'update')
+  and has_column_privilege('authenticated', 'public.clients', 'default_price', 'update')
+  and has_column_privilege('authenticated', 'public.clients', 'archived_at', 'update'),
+  'authenticated can select clients, insert (tenant_id, name, phone, default_price) and update (name, phone, default_price, archived_at)');
+
+select is(
+  array(select p.polname::text from pg_policy p where p.polrelid = 'public.clients'::regclass and p.polcmd in ('d', '*')),
+  '{}'::text[],
+  'clients has no delete policy (no grant and no policy: two locks)');
+
+select is(
+  array(select p from unnest(array['update', 'delete', 'truncate']) p
+        where has_table_privilege('authenticated', 'public.client_submissions', p) order by 1),
+  '{}'::text[],
+  'authenticated can only select and insert on client_submissions');
+
+select is(
+  array(select c from unnest(array['created_at', 'updated_at']) c
+        where has_column_privilege('authenticated', 'public.client_submissions', c, 'insert') order by 1),
+  '{}'::text[],
+  'authenticated cannot insert created_at or updated_at into client_submissions');
+
+select ok(
+  has_column_privilege('authenticated', 'public.client_submissions', 'tenant_id', 'insert')
+  and has_column_privilege('authenticated', 'public.client_submissions', 'id', 'insert')
+  and has_column_privilege('authenticated', 'public.client_submissions', 'client_id', 'insert')
+  and has_column_privilege('authenticated', 'public.client_submissions', 'payload_hash', 'insert'),
+  'authenticated can insert (tenant_id, id, client_id, payload_hash) into client_submissions (what add_client writes)');
+
+-- Feature 03 currency (AC35): the currency is the farm's own data; owners can read it and can not change it.
+select is(
+  array(select a.attname::text from pg_attribute a
+        where a.attrelid = 'public.tenants'::regclass and a.attnum > 0 and not a.attisdropped
+          and (has_column_privilege('authenticated', 'public.tenants', a.attname, 'update')
+               or has_column_privilege('authenticated', 'public.tenants', a.attname, 'insert'))
+        order by 1),
+  '{}'::text[],
+  'authenticated cannot insert or update any column of tenants, currency included (AC35)');
+
+select ok(has_column_privilege('authenticated', 'public.tenants', 'currency', 'select'),
+  'authenticated can read tenants.currency (through its own farm''s row)');
 
 select * from finish();
 rollback;

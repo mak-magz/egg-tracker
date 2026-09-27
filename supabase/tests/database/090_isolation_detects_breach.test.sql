@@ -4,7 +4,7 @@
 -- subtransaction and always rolls it back (DDL is transactional in Postgres), and the whole file is
 -- wrapped in begin/rollback as a second guarantee. The last assertions prove everything was restored.
 begin;
-select plan(20);
+select plan(26);
 
 select tests.create_farm('Farm A', 'a');
 select tests.create_farm('Farm B', 'b');
@@ -131,6 +131,49 @@ select ok(tests.mutation_detected($m$
   create policy sizes_delete_any on public.sizes for delete to authenticated using (true);
 $m$, 'a', 'b'), 'm16 detected: delete grant + permissive delete policy on sizes');
 
+-- m17 (feature 03): clients insert policy without a tenant WITH CHECK. Owners have an insert grant on
+-- (tenant_id, name, phone, default_price), so this is a reachable breach: as A, `insert into clients (tenant_id, name)
+-- values (<B>, ...)`. The clients_write_guard trigger ALSO refuses another farm's tenant_id (42501, before the RLS
+-- check), so the mutation removes both locks, as m14 does for sizes. The checker must still notice.
+select ok(tests.mutation_detected($m$
+  drop policy clients_insert on public.clients;
+  create policy clients_insert on public.clients for insert to authenticated with check (true);
+  alter table public.clients disable trigger clients_write_guard;
+$m$, 'a', 'b'), 'm17 detected: clients_insert replaced with with check (true) and the guard trigger disabled');
+
+-- m17b: the RLS policy alone is still enough to refuse the insert when the guard trigger is disabled.
+select ok(not tests.mutation_detected($m$
+  alter table public.clients disable trigger clients_write_guard;
+$m$, 'a', 'b'), 'm17b not a breach: with only the guard trigger disabled the clients_insert policy still holds');
+
+-- m18 (feature 03): clients update policy with no tenant filter at all. A weak USING or WITH CHECK ALONE is not a
+-- reachable breach (owners have no privilege on tenant_id); with both weakened, as A,
+-- `update public.clients set updated_at = now() where true` reaches B's rows; checker check 11 detects it.
+select ok(tests.mutation_detected($m$
+  drop policy clients_update on public.clients;
+  create policy clients_update on public.clients for update to authenticated using (true) with check (true);
+$m$, 'a', 'b'), 'm18 detected: clients_update replaced with using (true) with check (true)');
+
+-- m19 (feature 03): a delete grant and a permissive delete policy on clients (AC21: no owner can delete a client).
+select ok(tests.mutation_detected($m$
+  grant delete on public.clients to authenticated;
+  create policy clients_delete_any on public.clients for delete to authenticated using (true);
+$m$, 'a', 'b'), 'm19 detected: delete grant + permissive delete policy on clients');
+
+-- m20 (feature 03): the client ledger's insert policy without a tenant WITH CHECK, and its guard trigger disabled.
+-- (With both weakened the attacker's row reaches the foreign key instead of being refused with 42501, and the checker
+-- reports it.)
+select ok(tests.mutation_detected($m$
+  drop policy client_submissions_insert on public.client_submissions;
+  create policy client_submissions_insert on public.client_submissions for insert to authenticated with check (true);
+  alter table public.client_submissions disable trigger client_submissions_guard;
+$m$, 'a', 'b'), 'm20 detected: client_submissions_insert replaced with with check (true) and its guard trigger disabled');
+
+-- m20b: the ledger's RLS policy alone still refuses the insert when its guard trigger is disabled.
+select ok(not tests.mutation_detected($m$
+  alter table public.client_submissions disable trigger client_submissions_guard;
+$m$, 'a', 'b'), 'm20b not a breach: with only its guard trigger disabled the client_submissions_insert policy still holds');
+
 -- Everything was restored by the mutation helper (not just by the final rollback).
 select ok(not exists (select 1 from tests.isolation_checks('a', 'b') c where not c.passed),
   'after all mutations: every isolation check passes again (mutations were undone)');
@@ -138,9 +181,11 @@ select is(
   array(select p.polname::text from pg_policy p
         where p.polrelid in ('public.tenants'::regclass, 'public.memberships'::regclass, 'public.sizes'::regclass,
                              'public.production'::regclass, 'public.production_submissions'::regclass,
-                             'public.size_submissions'::regclass)
+                             'public.size_submissions'::regclass, 'public.clients'::regclass,
+                             'public.client_submissions'::regclass)
         order by p.polname::text collate "C"),
-  array['memberships_select_own', 'production_delete', 'production_insert', 'production_select',
+  array['client_submissions_insert', 'client_submissions_select', 'clients_insert', 'clients_select', 'clients_update',
+        'memberships_select_own', 'production_delete', 'production_insert', 'production_select',
         'production_submissions_insert', 'production_submissions_select', 'production_update',
         'size_submissions_insert', 'size_submissions_select', 'sizes_insert', 'sizes_select', 'sizes_update',
         'tenants_select_own'],

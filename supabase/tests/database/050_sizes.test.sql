@@ -3,13 +3,14 @@
 -- functions run as the owner, exactly as the server calls them. Concurrency (two owners archiving the last two
 -- sizes at once, two adds at once) can't be tested in one session: QA runs the manual recipe (§3.6 / §5).
 begin;
-select plan(180);
+select plan(190);
 
 select tests.create_farm('Farm E', 'e');   -- direct writes and the colour / position rules
 select tests.create_farm('Farm F', 'f');   -- last active size, bulk archive
 select tests.create_farm('Farm G', 'g');   -- the 100-size cap
 select tests.create_farm('Farm H', 'h');   -- the five functions
 select tests.create_farm('Farm I', 'i');   -- security audit fixes (M-1, M-2, L-1, L-2)
+select tests.create_farm('Farm O', 'o');   -- the ledger boundary (feature 03 QA S1)
 
 -- ---------------------------------------------------------------------------------------------
 -- Helpers
@@ -558,19 +559,52 @@ select is(tests.try_as('i', format('select public.add_size(%L, gen_random_uuid()
   'ok:1', 'L-2: add_size works after that too');
 select is(pg_temp.is_compact('i'), true, 'L-2: sort_order is compact again');
 
--- ---- M-1: a farm's ledger is capped at 100 rows, for owners and postgres alike (nothing legitimate reaches it). ----
-insert into public.size_submissions (tenant_id, id, size_id, name)
-  select tests.tenant_id_of('i'), gen_random_uuid(), pg_temp.sid('i', 'Small'), 'fill'
-  from generate_series(1, 100 - (select count(*)::int from public.size_submissions where tenant_id = tests.tenant_id_of('i')));
-select is((select count(*) from public.size_submissions where tenant_id = tests.tenant_id_of('i')), 100::bigint,
-  'M-1: a farm''s ledger can reach exactly 100 rows');
+-- ---- M-1 + QA S1 (feature 03 QA): one ledger row per size, so an owner can't fill the ledger and brick add_size. ----
+-- Before, the ledger was only capped (100 rows): an owner could write 100 rows through PostgREST and then add_size could
+-- not write its own ledger row (a 500 for that farm, with no way to delete the rows). Now UNIQUE (tenant_id, size_id):
+-- the ledger can't outgrow the size count, and add_size's row is always for a size created a moment ago.
+select is(
+  (select pg_get_constraintdef(c.oid) from pg_constraint c where c.conname = 'size_submissions_size_key' and c.conrelid = 'public.size_submissions'::regclass),
+  'UNIQUE (tenant_id, size_id)', 'QA S1: the size ledger has one row per size (the key starts with tenant_id)');
+select is(tests.try_as('i', format('insert into public.size_submissions (tenant_id, id, size_id, name) select %L, gen_random_uuid(), %L, ''fill'' from generate_series(1, 100)',
+                                   tests.tenant_id_of('i'), pg_temp.sid('i', 'Small'))),
+  '23505', 'QA S1: filling the ledger with 100 rows for one size is refused (23505)');
+select ok(tests.try_as('i', format('insert into public.size_submissions (tenant_id, id, size_id, name) select %L, gen_random_uuid(), s.id, ''fill'' from public.sizes s where s.tenant_id = %L and not exists (select 1 from public.size_submissions x where x.size_id = s.id)',
+                                   tests.tenant_id_of('i'), tests.tenant_id_of('i'))) like 'ok:%',
+  'QA S1: an owner can write one ledger row for every size that has none (the most the key allows)');
+select is((select count(*) from public.size_submissions where tenant_id = tests.tenant_id_of('i')),
+          (select count(*) from public.sizes where tenant_id = tests.tenant_id_of('i')),
+  'QA S1: the ledger now holds exactly one row per size');
+create temp table _s1 as select '00000000-0000-4000-8000-0000000000c1'::uuid as s_new;
+grant select on _s1 to authenticated;
+select is(pg_temp.rpc_as('i', format('select public.add_size(%L, %L, ''Still Works'')', tests.tenant_id_of('i'), (select s_new from _s1))) ->> 'replayed', 'false',
+  'QA S1: add_size still works after that attack (its ledger row is for a brand-new size)');
+select is(pg_temp.rpc_as('i', format('select public.add_size(%L, %L, ''Still Works'')', tests.tenant_id_of('i'), (select s_new from _s1))) ->> 'replayed', 'true',
+  'QA S1: ... and its replay still works');
 select is(tests.try_as('i', format('insert into public.size_submissions (tenant_id, id, size_id, name) values (%L, gen_random_uuid(), %L, ''x'')',
                                    tests.tenant_id_of('i'), pg_temp.sid('i', 'Small'))),
-  'TM016', 'M-1: the 101st ledger row is refused for an owner (TM016)');
+  '23505', 'QA S1: a second direct row for a size that already has one is refused');
+
+-- The boundary: a farm at 99 sizes with a ledger row for each (the attacker's maximum) can still add the 100th.
+insert into public.sizes (tenant_id, name)
+  select tests.tenant_id_of('o'), 'O' || g from generate_series(1, 95) g;
+select is((select count(*) from public.sizes where tenant_id = tests.tenant_id_of('o')), 99::bigint, 'QA S1: farm O has 99 sizes');
+select is(tests.try_as('o', format('insert into public.size_submissions (tenant_id, id, size_id, name) select %L, gen_random_uuid(), s.id, ''fill'' from public.sizes s where s.tenant_id = %L',
+                                   tests.tenant_id_of('o'), tests.tenant_id_of('o'))),
+  'ok:99', 'QA S1: ... and fills its ledger with 99 rows (one per size)');
+create temp table _s1o as select '00000000-0000-4000-8000-0000000000c2'::uuid as s_new;
+grant select on _s1o to authenticated;
+select is(pg_temp.rpc_as('o', format('select public.add_size(%L, %L, ''Hundredth'')', tests.tenant_id_of('o'), (select s_new from _s1o))) ->> 'replayed', 'false',
+  'QA S1: add_size still adds the 100th size (the ledger''s 100-row backstop is not in its way)');
+select is(pg_temp.rpc_as('o', format('select public.add_size(%L, %L, ''Hundredth'')', tests.tenant_id_of('o'), (select s_new from _s1o))) ->> 'replayed', 'true',
+  'QA S1: ... and its replay works at 100 sizes and 100 ledger rows');
+select is((select count(*) from public.size_submissions where tenant_id = tests.tenant_id_of('o')), 100::bigint, 'QA S1: farm O ends with 100 ledger rows');
+select is(tests.try_as('o', format('insert into public.size_submissions (tenant_id, id, size_id, name) values (%L, gen_random_uuid(), %L, ''x'')',
+                                   tests.tenant_id_of('o'), (select s.id from public.sizes s where s.tenant_id = tests.tenant_id_of('o') limit 1))),
+  'TM016', 'QA S1: the 100-row backstop still answers a 101st ledger row (TM016) for an owner');
 select throws_ok(format('insert into public.size_submissions (tenant_id, id, size_id, name) values (%L, gen_random_uuid(), %L, ''x'')',
-                        tests.tenant_id_of('i'), pg_temp.sid('i', 'Small')),
+                        tests.tenant_id_of('o'), (select s.id from public.sizes s where s.tenant_id = tests.tenant_id_of('o') limit 1)),
   'TM016', null, 'M-1: and for postgres');
-select is((select count(*) from public.size_submissions where tenant_id = tests.tenant_id_of('i')), 100::bigint, 'M-1: still 100 ledger rows');
 select is((select count(*) from public.size_submissions where tenant_id = tests.tenant_id_of('f')), 0::bigint, 'M-1: another farm''s ledger is not affected by the cap');
 
 select * from finish();
