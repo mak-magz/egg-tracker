@@ -4,7 +4,7 @@
 //   formatDateHint  -> "Today" / "Wednesday, Sep 24"                   (form date hint)
 //   formatShortDate -> "Sep 24" / "Sep 24, 2025"                       (ranges, chart labels)
 // Relative imports: tests/unit imports this file outside Nuxt.
-import type { IsoDate } from '../../shared/types/api'
+import type { IsoDate } from '#shared/types/api'
 
 function parts(date: IsoDate): { y: number, m: number, d: number } {
   const [y, m, d] = date.split('-').map(Number)

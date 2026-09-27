@@ -1,7 +1,7 @@
 // Maps a failed /api/production call to the few kinds the UI has copy for (feature 01 §3.4, UX data
 // need 9). Pure; tests import it directly. 401 is already handled by $api (session-expired flow).
-import type { ApiErrorData } from '../../shared/types/api'
-import { PRODUCTION_FIELDS } from '../../shared/constants/production'
+import type { ApiErrorData } from '#shared/types/api'
+import { PRODUCTION_FIELDS } from '#shared/constants/production'
 import { isNetworkError } from './auth-errors'
 
 export type ProductionErrorKind = 'network' | 'validation' | 'stale_sizes' | 'not_found' | 'unknown'

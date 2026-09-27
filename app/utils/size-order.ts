@@ -1,6 +1,6 @@
 // Pure helpers for the Settings > Sizes screen (feature 02 §3.4): grouping the farm's list and working out
 // a move. Relative imports: tests/unit imports this file outside Nuxt.
-import type { FarmSize, MeResponse } from '../../shared/types/api'
+import type { FarmSize, MeResponse } from '#shared/types/api'
 
 export interface GroupedSizes<T extends Pick<FarmSize, 'active'>> {
   /** Offered for new entries, in the farm's order. */

@@ -11,8 +11,8 @@ import type {
   ReorderSizesRequest,
   SizeChangeResponse,
   SizesResponse,
-} from '../../shared/types/api'
-import { normalizeSizeName } from '../../shared/utils/size-name'
+} from '#shared/types/api'
+import { normalizeSizeName } from '#shared/utils/size-name'
 import { mapSizeError } from './size-errors'
 import type { SizeError } from './size-errors'
 

@@ -2,7 +2,7 @@
 // X axis = the days that HAVE production in the filter (Q4), oldest left, evenly spaced. One series per
 // farm size (active, or present in the range) in the farm's order, then Rejects. A logged day with no
 // entry for a size plots 0. Relative imports: tests/unit imports this file outside Nuxt.
-import type { FarmSize, IsoDate, ProductionDay } from '../../shared/types/api'
+import type { FarmSize, IsoDate, ProductionDay } from '#shared/types/api'
 import { REJECT_COLOR, sizeColor } from './size-colors'
 
 export interface ChartSeries {

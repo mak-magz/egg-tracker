@@ -1,8 +1,8 @@
 // Maps a failed /api/sizes call to the few kinds the Settings screen has copy for (feature 02 §3.4).
 // Pure; tests import it directly. 401 is already handled by $api (session-expired flow). Same shape and
 // style as production-errors.ts.
-import type { ApiErrorData, FarmSize, SizeNameMatch } from '../../shared/types/api'
-import { SIZE_FIELDS } from '../../shared/constants/sizes'
+import type { ApiErrorData, FarmSize, SizeNameMatch } from '#shared/types/api'
+import { SIZE_FIELDS } from '#shared/constants/sizes'
 import { isNetworkError } from './auth-errors'
 
 export type SizeErrorKind

@@ -10,4 +10,18 @@ export default withNuxt({
     // Owner's design export and its extraction script (reference material, not app code).
     'docs/design/**',
   ],
+}, {
+  // `nuxt build` fails on relative imports of `shared/` from app code ("Could not resolve
+  // ../../../../../shared/...": Nuxt leaves `shared/` external in the Vite SSR build, and a
+  // relative specifier gets re-based to a path that does not exist). Use the `#shared/...` alias.
+  // `server/`, `shared/` and `tests/` are not affected, because Nitro or Vitest resolves them.
+  files: ['app/**/*.{ts,vue}'],
+  rules: {
+    'no-restricted-imports': ['error', {
+      patterns: [{
+        regex: '^\\.{1,2}/(.*/)?shared(/|$)',
+        message: 'Import shared code from app/ with the #shared/... alias. A relative path breaks `nuxt build`.',
+      }],
+    }],
+  },
 })

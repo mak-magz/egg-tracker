@@ -2,9 +2,9 @@
 //   Week  = today - 6 .. today     Month = today - 29 .. today
 //   From only -> from .. today     To only -> (open) .. to     From + To -> from .. to
 // A set date overrides the chip. Relative imports: tests/unit imports this file outside Nuxt.
-import type { IsoDate } from '../../shared/types/api'
-import { PRODUCTION_MESSAGES } from '../../shared/constants/production'
-import { addDays, compareIsoDates, isIsoDate } from '../../shared/utils/local-date'
+import type { IsoDate } from '#shared/types/api'
+import { PRODUCTION_MESSAGES } from '#shared/constants/production'
+import { addDays, compareIsoDates, isIsoDate } from '#shared/utils/local-date'
 
 export type RangeChip = 'week' | 'month'
 
