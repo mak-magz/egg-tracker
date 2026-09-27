@@ -47,6 +47,12 @@ describe('server guards', () => {
       'server/api/sizes/order.put.ts',
       'server/api/sizes/[id]/archive.post.ts',
       'server/api/sizes/[id]/restore.post.ts',
+      // Feature 03: rules (a), (b2) and (d) demonstrably run over the clients routes (there is no DELETE route: AC21).
+      'server/api/clients/index.get.ts',
+      'server/api/clients/index.post.ts',
+      'server/api/clients/[id].put.ts',
+      'server/api/clients/[id]/archive.post.ts',
+      'server/api/clients/[id]/restore.post.ts',
     ]))
   })
 
@@ -92,6 +98,15 @@ describe('server guards', () => {
       return mentionsRawTenant || bareTenantId !== null
     })
     expect(offenders.map(rel)).toEqual([])
+  })
+
+  it('(f) both handler wrappers refuse cross-site writes before touching auth (security audit L1)', () => {
+    // Every route is wrapped (rule a), so the check lives once, in the wrappers, ahead of any auth or database work.
+    const src = code(join(ROOT, 'server', 'utils', 'handlers.ts'))
+    expect(src.match(/\bassertRequestAllowed\(event\)/g) ?? []).toHaveLength(2)
+    expect(src).toMatch(/assertRequestAllowed\(event\)\s*\n\s*const \w+ = await requireAuth\(event\)/)
+    expect(src).toMatch(/assertRequestAllowed\(event\)\s*\n\s*const tenant = await requireTenant\(event\)/)
+    expect(src).toMatch(/import \{[^}]*\bcheckRequest\b[^}]*\} from '\.\/request-guard'/)
   })
 
   it('(e) no app code imports server code', () => {

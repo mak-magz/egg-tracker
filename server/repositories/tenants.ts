@@ -6,9 +6,9 @@ type TenantRow = Database['public']['Tables']['tenants']['Row']
 type SizeRow = Database['public']['Tables']['sizes']['Row']
 
 /** The tenants columns + embedded sizes every FarmSummary query selects (one round trip, feature 01 D10). */
-export const FARM_SUMMARY_COLUMNS = 'id, name, eggs_per_tray, sizes ( id, name, sort_order, color_slot, archived_at )'
+export const FARM_SUMMARY_COLUMNS = 'id, name, eggs_per_tray, currency, sizes ( id, name, sort_order, color_slot, archived_at )'
 
-export type FarmSummaryRow = Pick<TenantRow, 'id' | 'name' | 'eggs_per_tray'> & {
+export type FarmSummaryRow = Pick<TenantRow, 'id' | 'name' | 'eggs_per_tray' | 'currency'> & {
   sizes: SizeRowForFarm[] | null
 }
 
@@ -32,7 +32,9 @@ export function toFarmSizes(rows: readonly SizeRowForFarm[] | null): FarmSize[] 
 }
 
 export function toFarmSummary(row: FarmSummaryRow): FarmSummary {
-  return { id: row.id, name: row.name, eggsPerTray: row.eggs_per_tray, sizes: toFarmSizes(row.sizes) }
+  // `currency` is the farm's own data (`tenants.currency`, an ISO code, default PHP). Any three capital letters may
+  // arrive; the UI's shared price rule treats an unknown code as PHP (AC36).
+  return { id: row.id, name: row.name, eggsPerTray: row.eggs_per_tray, currency: row.currency, sizes: toFarmSizes(row.sizes) }
 }
 
 /** The signed-in user's farm. `tenants` is the root table, so it is scoped by `id`, not `tenant_id`. */
