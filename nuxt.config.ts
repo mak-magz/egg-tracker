@@ -1,5 +1,33 @@
 // https://nuxt.com/docs/api/configuration/nuxt-config
 // Design: docs/features/00-project-scaffold.md §3.1 (setup), §3.5 (auth), §3.9 (env).
+
+// Security headers (audit M1, docs/features/03-clients.md §4), sent on every response: pages, /api
+// and static assets. Cache-Control is NOT set here: server/plugins/no-store.ts and handlers.ts own
+// it, and Nitro's own `/_nuxt/**` immutable rule keeps hashed assets cacheable. Never add
+// `swr`/`isr`/`cache` route rules for authenticated pages: the SSR payload holds the session.
+const isProd = process.env.NODE_ENV === 'production'
+
+const securityHeaders: Record<string, string> = {
+  // Nobody may frame the app (clickjacking: one tap marks a client inactive). The CSP carries
+  // frame-ancestors ONLY for now; a script-src/default-src policy is a follow-up (feature doc).
+  // `nuxt dev` is fine with this: Nuxt DevTools' iframe is served by Vite, outside Nitro.
+  'X-Frame-Options': 'DENY',
+  'Content-Security-Policy': `frame-ancestors 'none'`,
+  'X-Content-Type-Options': 'nosniff',
+  'Referrer-Policy': 'strict-origin-when-cross-origin',
+  // The app uses none of these features; deny them so an injected script cannot either.
+  'Permissions-Policy': [
+    'accelerometer', 'bluetooth', 'browsing-topics', 'camera', 'display-capture', 'geolocation',
+    'gyroscope', 'hid', 'magnetometer', 'microphone', 'midi', 'payment', 'serial', 'usb',
+  ].map(feature => `${feature}=()`).join(', '),
+  // Sign-in is email + password/OTP in the same tab (no popups, no OAuth window), so nothing
+  // needs window.opener across origins.
+  'Cross-Origin-Opener-Policy': 'same-origin',
+  // Production only, and browsers ignore it over plain http anyway. No includeSubDomains or
+  // preload until the custom domain is known (see the M1 follow-ups in the feature doc).
+  ...(isProd ? { 'Strict-Transport-Security': 'max-age=31536000' } : {}),
+}
+
 export default defineNuxtConfig({
   // @nuxt/ui registers @nuxt/fonts, @nuxt/icon and @nuxtjs/color-mode itself.
   // Don't add them here; configure them through `fonts`, `icon` and `colorMode`.
@@ -33,6 +61,10 @@ export default defineNuxtConfig({
   // v1 does not use the secret key at app runtime (D8); only `bun run provision` reads it from .env.
   // Never set it in Vercel and never prefix it with NUXT_PUBLIC_. See .env.example.
   runtimeConfig: {},
+
+  routeRules: {
+    '/**': { headers: securityHeaders },
+  },
 
   compatibilityDate: '2026-09-01',
 
