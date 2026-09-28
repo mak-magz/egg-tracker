@@ -56,6 +56,8 @@ export function useMe() {
     // Clients are personal data (feature 03 AC31): the list and any other `clients:*` state go with the session,
     // so the next farm on this device never sees them, even for a moment.
     clearNuxtState(key => key.startsWith('clients:'))
+    // Sales point at clients (feature 04 AC61): the list, and the on-hand cache, go with the session too.
+    clearNuxtState(key => key.startsWith('sales:') || key.startsWith('on-hand:'))
   }
 
   /**
