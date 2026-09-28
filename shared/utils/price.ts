@@ -124,6 +124,32 @@ export function formatPriceInput(n: number): string {
 }
 
 /**
+ * A sale line's total (docs/features/04-sales.md AC22): price per tray x eggs / eggs per tray, rounded to the
+ * nearest centavo, HALF UP, using exact integer (BigInt) arithmetic -- never a float division, so it agrees with
+ * `app.sale_line_total` (the SQL twin, `round(price * eggs / eggs_per_tray, 2)`) for every input. `pricePerTray`
+ * must already have at most 2 decimals (checkPriceNumber / the database CHECK enforce this before a line is ever
+ * saved); Math.round on `pricePerTray * 100` only guards against the last bit of float noise on an exact value.
+ * The *stored* total always comes from the server response (AC55) -- this is for the form's LIVE preview only.
+ */
+export function computeLineTotal(pricePerTray: number, eggs: number, eggsPerTray: number): number {
+  if (!Number.isFinite(pricePerTray) || pricePerTray <= 0) {
+    throw new RangeError(`pricePerTray must be a positive finite number: ${pricePerTray}`)
+  }
+  if (!Number.isInteger(eggs) || eggs < 0) throw new RangeError(`eggs must be a whole number of at least 0: ${eggs}`)
+  if (!Number.isInteger(eggsPerTray) || eggsPerTray < 1) {
+    throw new RangeError(`eggsPerTray must be a whole number of at least 1: ${eggsPerTray}`)
+  }
+  const priceCents = BigInt(Math.round(pricePerTray * 100))
+  const numerator = priceCents * BigInt(eggs)
+  const denominator = BigInt(eggsPerTray)
+  const quotient = numerator / denominator
+  const remainder = numerator % denominator
+  // Half up (both operands are always non-negative here): a remainder of exactly half rounds away from zero.
+  const totalCents = remainder * 2n >= denominator ? quotient + 1n : quotient
+  return Number(totalCents) / 100
+}
+
+/**
  * The field message for a price problem (UX "Copy"). `too_large` quotes the limit through `formatPrice`, so it
  * follows the farm's currency ("The most you can enter is ₱9,999.99."). Never repeats the typed value (AC29).
  */

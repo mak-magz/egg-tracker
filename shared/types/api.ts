@@ -4,8 +4,11 @@
 // 'conflict' (409) is new in feature 02 (docs/features/02-farm-settings.md §3.3).
 export type ApiErrorCode = 'unauthenticated' | 'no_farm' | 'validation_failed' | 'not_found' | 'conflict' | 'internal'
 
-/** Why a 'conflict' (409) happened. The UI has copy for each (feature 02 §2.5 "Copy"). */
-export type ApiErrorReason = 'name_taken' | 'last_active_size' | 'sizes_changed' | 'client_limit' | 'client_changed'
+/** Why a 'conflict' (409) happened. The UI has copy for each (feature 02 §2.5 "Copy"; feature 04 §3.3 for the sales reasons). */
+export type ApiErrorReason
+  = | 'name_taken' | 'last_active_size' | 'sizes_changed' | 'client_limit' | 'client_changed'
+  // Feature 04 (docs/features/04-sales.md §3.3).
+    | 'sale_changed' | 'stock_short' | 'not_pending' | 'not_complete' | 'voided'
 
 /**
  * The row that already has the name being saved (sizes, feature 02 AC4; clients, feature 03 AC11).
@@ -14,6 +17,9 @@ export type ApiErrorReason = 'name_taken' | 'last_active_size' | 'sizes_changed'
 export interface NameMatch { id: string, name: string, archived: boolean }
 /** Kept so feature 02 code still imports it. */
 export type SizeNameMatch = NameMatch
+
+/** A size short of stock (feature 04 AC26, AC35, AC42): what's on hand now and what this save needs. */
+export interface ShortfallLine { sizeId: string, onHandEggs: number, neededEggs: number }
 
 /**
  * The `data` payload of every error our server routes throw:
@@ -32,6 +38,10 @@ export interface ApiErrorData {
   sizes?: FarmSize[]
   /** With reason 'client_changed' (feature 03 AC19): the client as it is NOW, so the row updates with no second request. Absent if that read failed. */
   client?: Client
+  /** With reason 'sale_changed' (feature 04 AC43): the sale as it is NOW. Absent if that read failed. */
+  sale?: Sale
+  /** With reason 'stock_short' (feature 04 AC26, AC35, AC42): only the SHORT sizes, farm order. Never empty when reason is 'stock_short'. */
+  shortfall?: ShortfallLine[]
 }
 
 /**
@@ -168,3 +178,77 @@ export interface AddClientResponse {
 export interface UpdateClientRequest { version: number, name: string, phone: string | null, defaultPrice: number | null }
 /** PUT, archive and restore: `changed` is false when there was nothing to do (already in that state, or the same values). */
 export interface ClientChangeResponse { client: Client, changed: boolean }
+
+// ---- Sales (docs/features/04-sales.md §3.3) ----
+export type SaleType = 'delivery' | 'on_site'
+export type SaleStatus = 'pending' | 'complete'
+
+/** One line: a size, its eggs, its price PER TRAY, and its FROZEN total (never recomputed once saved, AC55). */
+export interface SaleLine { sizeId: string, eggs: number, pricePerTray: number, lineTotal: number }
+/** A line as sent in a request: no lineTotal (the server computes and freezes it). */
+export interface SaleLineInput { sizeId: string, eggs: number, pricePerTray: number }
+
+export interface Sale {
+  id: string
+  saleNumber: number
+  type: SaleType
+  status: SaleStatus
+  clientId: string | null
+  saleDate: IsoDate
+  deliveredDate: IsoDate | null
+  lines: SaleLine[]
+  /** Sum of lines[].lineTotal. Never stored; always agrees with the lines shown (AC22). */
+  saleTotal: number
+  /** Changes on every real edit or status change. Send it back with an edit (AC43). */
+  version: number
+  /** Set once, never cleared (AC67, owner correction 2026-09-27). Independent of `status`, which stays 'complete'
+   * on a voided sale. Non-null means this sale no longer counts toward on-hand and accepts no further change. */
+  voidedAt: IsoDate | null
+}
+
+/** GET /api/sales?from&to&status&type&clientId&limit&offset&includeVoided (all optional; includeVoided default false, AC68) */
+export interface SalesListResponse {
+  /** Whether the farm has ANY sale at all, ignoring every filter (AC46 vs AC10). */
+  hasAny: boolean
+  /** Total matches for the filters, ignoring limit/offset ("Showing x of n"). */
+  total: number
+  sales: Sale[]
+}
+export interface SaleResponse { sale: Sale }
+
+/** POST /api/sales. `deliveredDate` present -> created Complete ("Already delivered", AC24); omitted/null -> Pending.
+ * Ignored (and forced to equal saleDate) when type is 'on_site' (AC24, AC65). */
+export interface CreateSaleRequest {
+  submissionId: string
+  type: SaleType
+  saleDate: IsoDate
+  clientId?: string | null
+  deliveredDate?: IsoDate | null
+  lines: SaleLineInput[]
+  /** true = "Record anyway" after a 409 stock_short (AC26). */
+  confirmShortfall?: boolean
+}
+export interface CreateSaleResponse { sale: Sale, replayed: boolean }
+
+/** PUT /api/sales/:id. Replaces the WHOLE sale (header + every line) -- the whole sale is always sent (AC40, AC64-66). */
+export interface UpdateSaleRequest {
+  version: number
+  type: SaleType
+  saleDate: IsoDate
+  clientId?: string | null
+  deliveredDate?: IsoDate | null
+  lines: SaleLineInput[]
+  confirmShortfall?: boolean
+}
+export interface MarkSaleDeliveredRequest { deliveredDate: IsoDate, confirmShortfall?: boolean }
+/** `changed` false = nothing to do (already in that state / already matches what was asked, AC37, AC40, AC67). */
+export interface SaleChangeResponse { sale: Sale, changed: boolean }
+/** POST /api/sales/:id/void (AC67, AC68 -- owner correction, 2026-09-27). Complete only; one-way; never a shortfall check. */
+export interface VoidSaleRequest { version: number }
+export type VoidSaleResponse = SaleChangeResponse
+/** DELETE /api/sales/:id. Pending only -- refused (409 not_pending) on a complete or voided sale (AC44). */
+export interface DeleteSaleResponse { saleId: string, saleNumber: number }
+
+export interface OnHandLine { sizeId: string, eggs: number }
+/** GET /api/sales/on-hand?sizeId=...&sizeId=... (repeated) -- omit to get every size of the farm. */
+export interface OnHandResponse { onHand: OnHandLine[] }

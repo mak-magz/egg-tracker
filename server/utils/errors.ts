@@ -13,13 +13,13 @@ const STATUS_MESSAGES: Record<ApiErrorCode, string> = {
   internal: 'Internal Server Error',
 }
 
-/** Optional extras on an error body (feature 02 §3.3, feature 03 §3.3): why a 409 happened, the clashing row, the current sizes, the current client. */
-export type ApiErrorExtra = Pick<ApiErrorData, 'reason' | 'existing' | 'sizes' | 'client'>
+/** Optional extras on an error body (feature 02 §3.3, feature 03 §3.3, feature 04 §3.3): why a 409 happened, the clashing row, the current sizes, the current client, the current sale, the stock shortfall. */
+export type ApiErrorExtra = Pick<ApiErrorData, 'reason' | 'existing' | 'sizes' | 'client' | 'sale' | 'shortfall'>
 
 /**
  * The one way server code raises an API error. The body is `{ statusCode, statusMessage, data: ApiErrorData }`,
- * so the client reads the code from `FetchError.data.data.code`. `extra` carries `reason`, `existing`, `sizes` and
- * `client`; only keys that are set end up in the body.
+ * so the client reads the code from `FetchError.data.data.code`. `extra` carries `reason`, `existing`, `sizes`,
+ * `client`, `sale` and `shortfall`; only keys that are set end up in the body.
  */
 export function apiError(
   statusCode: number,
@@ -33,6 +33,8 @@ export function apiError(
   if (extra?.existing !== undefined) data.existing = extra.existing
   if (extra?.sizes !== undefined) data.sizes = extra.sizes
   if (extra?.client !== undefined) data.client = extra.client
+  if (extra?.sale !== undefined) data.sale = extra.sale
+  if (extra?.shortfall !== undefined) data.shortfall = extra.shortfall
   return createError<ApiErrorData>({ statusCode, statusMessage: STATUS_MESSAGES[code], data })
 }
 
