@@ -49,10 +49,12 @@ function onChangedElsewhere() {
   emit('changed-elsewhere')
 }
 
-function onOpenAutoFocus(event: Event) {
-  if (props.mode === 'add') return // phones: no keypad on open; desktop: the Client field takes focus itself
-  if (!window.matchMedia('(min-width: 1024px)').matches) return
-  event.preventDefault()
+function onOpenAutoFocus(_event: Event) {
+  // Always let the modal auto-focus its first focusable field. Edit-on-desktop used to call
+  // event.preventDefault() here on the assumption that "the Client field takes focus itself" — nothing
+  // actually did, so focus stayed on the row menu's (now aria-hidden) trigger button when opened from a
+  // row's ⋮ menu, which is exactly the "Blocked aria-hidden on an element because its descendant retained
+  // focus" browser warning. Add and mobile-Edit never suppressed this and never hit the bug.
 }
 
 function onCloseAutoFocus(event: Event) {
