@@ -53,6 +53,16 @@ describe('server guards', () => {
       'server/api/clients/[id].put.ts',
       'server/api/clients/[id]/archive.post.ts',
       'server/api/clients/[id]/restore.post.ts',
+      // Feature 04: rules (a), (b2) and (d) demonstrably run over the sales routes.
+      'server/api/sales/index.get.ts',
+      'server/api/sales/index.post.ts',
+      'server/api/sales/[id].get.ts',
+      'server/api/sales/[id].put.ts',
+      'server/api/sales/[id].delete.ts',
+      'server/api/sales/[id]/mark-delivered.post.ts',
+      'server/api/sales/[id]/mark-pending.post.ts',
+      'server/api/sales/[id]/void.post.ts',
+      'server/api/sales/on-hand.get.ts',
     ]))
   })
 
