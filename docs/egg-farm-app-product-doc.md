@@ -46,7 +46,7 @@ Large industrial operations needing flock-health/feed/mortality/breeding managem
 5. **Trust the numbers** — the data should be consistent (inventory reconciles with production and sales) and historically accurate (past sales don't change when prices or tray sizes do).
 
 ### Non-goals (v1)
-- Not an accounting/invoicing/AR system (records sale prices, but doesn't manage what customers owe over time).
+- Not an accounting or accounts-receivable system: no payment status, balances, statements or reminders. A printable invoice for a single sale is planned (feature 05).
 - Not a flock-management or animal-husbandry tool (no feed, mortality, health, breeding).
 - Not a logistics tool (no delivery routing or scheduling).
 - Not a multi-user/team product yet (single owner; no roles).
@@ -70,7 +70,7 @@ Auth (single owner) · Dashboard/metrics (fixed small set) · Production trackin
 ### Deliberately out of v1 (with reasons)
 | Deferred | Why deferred |
 |---|---|
-| Customer invoicing / AR | Large domain; sale price captured is enough for v1. Different from SaaS billing. |
+| Accounts-receivable (balances, statements, payment status) | Large domain; sale price captured is enough for v1. Different from SaaS billing. A printable invoice for one sale is not deferred — see feature 05. |
 | Delivery routing/scheduling | Logistics rabbit hole; not core to the tracking loop. |
 | Offline support | Considered twice; drops in favor of a coherent online web app. Costly to add well; would reopen the architecture. `updated_at` kept as a cheap hedge. |
 | Realtime dashboards | Daily data is low-frequency; refresh/polling suffices. Clear later path exists. |

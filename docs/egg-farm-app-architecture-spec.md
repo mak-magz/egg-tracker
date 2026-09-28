@@ -92,6 +92,7 @@ Nuxt **4.5** (the `app/` directory layout, with `server/` and `shared/`) · Nuxt
   - **Error contract additions.** `ApiErrorReason` gains `client_limit` and `client_changed`; `ApiErrorData.existing` is the general `NameMatch { id, name, archived }` (sizes' `SizeNameMatch` is an alias) and `ApiErrorData.client` carries the current row on a stale edit. SQLSTATEs continue after `TM016`: `TM017` name, `TM018` phone, `TM019` price (the `hint` names the reason), `TM020` name taken, `TM021` 500 clients, `TM022` client changed, `TM023` not this farm's client (404, identical for "not yours" and "unknown"), `TM024` submission reused with another payload, `TM025` immutable column, `TM026` ledger cap.
   - **Text rules in the database too.** A name or phone with a control or invisible character (zero-width space/joiner, bidi marks, soft hyphen, tag characters) is refused by the trigger and a CHECK, not only by zod; raw input over 200 characters is refused before it is normalised (feature 02 audit M-1, M-2, L-1, L-3 applied up front). A name or phone must also hold at least one letter, number, symbol or punctuation character (Unicode L, N, S, P, except U+FFFC), so a lone combining mark, private-use or unassigned code point is refused with the same "hidden character" message (`app.client_text_visible`, explicit ranges from Unicode 17.0 because Postgres regexes have no property classes; parity-tested against `hasVisibleClientTextChar` over every code point). A cap on combining marks is not done. Widening any refused set once data exists needs a data migration first: the CHECK constraints re-run on every update of a row, so a legacy row would fail even on archive or restore.
   - **Currency.** `tenants.currency` (ISO code, `^[A-Z]{3}$`, default `PHP`) rides on `/api/me` (`FarmSummary.currency`); owners can't write it. One helper, `shared/utils/price.ts`, formats every price (fixed `en-US` locale, symbol first, 2 decimals, thousands separator, unknown or missing code falls back to `PHP`).
+- **Sales: header + lines, sale numbers, and the one place on-hand is computed *(feature 04, designed 2026-09-27)*.** `sales` + `sale_lines` follow the sizes/clients write pattern (owner column grants including a real `delete` grant on `sales`/`sale_lines`, matching `production`'s precedent rather than clients'/sizes' "never deleted"; `security invoker` functions; a per-farm advisory lock, `app.lock_tenant_sales`, that also serialises sale-number assignment and the stock-shortfall check for that farm). See `docs/features/04-sales.md` §3 for the full table shapes, the `create_sale` / `update_sale` / `mark_sale_delivered` / `mark_sale_pending` / `delete_sale` functions, the SQLSTATEs (continuing after `TM026`), and the sale-number counter table (`sale_counters`, one row per tenant, incremented under the per-farm lock — not a Postgres `SEQUENCE`, which would need one per tenant and breaks the shared-tables model). `app.on_hand_json` is the one place on-hand-by-size is computed; both Sales (the per-line hint and the shortfall check) and the future Inventory screen (feature 06) call it.
 - **RLS policy template for every tenant-owned table:**
   ```sql
   alter table public.<t> enable row level security;
@@ -170,27 +171,33 @@ Shape: **`(produced_on, size_id, quality, eggs)`** + `tenant_id` (as built in fe
 - Only **good** production counts; rejects excluded.
 - **On-hand = physically present right now.** Inventory subtracts **at delivery/completion**, not at order time (a pending delivery hasn't left yet). If "available to promise" is ever needed, that's a separate computed notion (on-hand minus pending) — not in v1.
 
-### Sales (absorbs Deliveries)
-The tracked entity is a **sale**; **delivery is one fulfillment method**, not a separate concept. Some sales are delivered to a client; some are on-site/home sales with no delivery.
+### Sales (absorbs Deliveries; header + lines, designed 2026-09-27, feature 04)
+The tracked entity is a **sale**; **delivery is one fulfillment method**, not a separate concept. Some sales are delivered to a client; some are on-site/home sales with no delivery. **Owner decision (2026-09-27, feature 04 Q1): a sale is an order — one header plus 1 to 20 lines** (one per egg size), because the owner plans to print an invoice from one sale. This replaces the single-row planning shape below it (the old shape assumed one size per sale; the actual build is `sales` + `sale_lines`, `docs/features/04-sales.md` §3.1).
 
-Shape (roughly): **`(date_ordered, date_delivered, status, size, quantity, price, fulfillment_type, client_id, tenant_id)`**
-- **date_ordered** — when agreed/created. Always set.
-- **date_delivered** — **nullable**; null until fulfilled, then stamped. Doubles as the "outstanding" signal.
-- **status** — `pending` / `complete`. **Lifecycle only.**
-- **size_id** — the egg size sold (sales are always sized), from the same per-farm `sizes` list, with the same composite `(tenant_id, size_id)` FK as production.
-- **quantity** — stored in **individual eggs** (frontend accepts trays/loose, converts).
-- **price** — **snapshotted onto the sale** at sale time. A client's default price may *pre-fill* the form but is **not** authoritative for historical sales.
-- **fulfillment_type** — `delivery` / `on_site` (extensible: `pickup`).
-- **client_id** — **nullable**; delivered sales reference a client, on-site sales may have none (no fake "walk-in" record needed).
+**Header (`sales`), roughly:** `(id, tenant_id, sale_number, client_id, type, status, sale_date, delivered_date, version, created_at, updated_at)`
+- **sale_number** — a whole number, unique per farm, assigned by the database when the sale is logged (never by the client), in the order sales are logged (not by `sale_date`), never reused after a delete. It becomes the invoice number in feature 05.
+- **sale_date** — when the sale was agreed/created (a delivery's "ordered" date, an on-site sale's own date). Always set, never in the future.
+- **delivered_date** — **nullable**; null until fulfilled, then stamped. Doubles as the "outstanding" signal. Equal to `sale_date` for an on-site sale.
+- **status** — `pending` / `complete`. **Lifecycle only**, `= (delivered_date is not null)`.
+- **type** — `delivery` / `on_site`. **Editable after logging** (feature 04 AC64–AC66; the planning note below about being "born complete" no longer means fixed at birth): switching type recomputes status and stock the same way logging does, and the sale number and lines don't change. `pickup` is **not** planned; on-site covers it.
+- **client_id** — **nullable**, composite FK `(tenant_id, client_id) → clients (tenant_id, id)`; required for a delivery, optional for an on-site sale (no fake "walk-in" record needed).
+- **version** — the stale-edit marker (as `clients.version`).
+
+**Lines (`sale_lines`), roughly:** `(tenant_id, sale_id, size_id, eggs, price_per_tray, line_total, created_at, updated_at)`, primary key `(tenant_id, sale_id, size_id)` (so a size can't appear twice in one sale; a sale's own lines are always looked up as a set, never by a separate line id).
+- **size_id** — the egg size sold (sales are always sized; rejects never sold), from the same per-farm `sizes` list, with the same composite `(tenant_id, size_id)` FK as production.
+- **eggs** — stored in **individual eggs** (frontend accepts trays/loose, converts).
+- **price_per_tray**, **line_total** — **both snapshotted onto the line** at save time (feature 04 AC55/SL2): `line_total` is computed once, from the price, the eggs and the farm's `eggs_per_tray` *at that moment*, and frozen — a later change to the farm's tray size or currency never changes a saved line's total (it only changes how a farm's *current* prices are entered). A client's default price may *pre-fill* the form but is **not** authoritative for historical sales. The sale total is the sum of the lines' `line_total` (never stored, computed at read time — a sale has at most 20 lines).
 
 **Derived views (no separate tables/screens):**
-- "Deliveries" = `WHERE fulfillment_type = 'delivery'`.
-- "Outstanding/pending" = `WHERE status = 'pending'` (≡ `date_delivered IS NULL`).
-- The label "sold" shown for a completed on-site sale is computed from status + fulfillment_type, not stored.
+- "Deliveries" = `WHERE type = 'delivery'`.
+- "Outstanding/pending" = `WHERE status = 'pending'` (≡ `delivered_date IS NULL`).
+- The label "sold" shown for a completed on-site sale is computed from status + type, not stored.
 
-**The single completion event.** For a delivery, `status` flips `pending → complete` at fulfillment. That one event simultaneously (1) sets `status = complete`, (2) stamps `date_delivered`, (3) decrements inventory. Implement as **one update**, not three things to keep in sync. On-site sales are **born `complete`** (`date_ordered` = `date_delivered` = now).
+**The single completion event.** For a delivery, `status` flips `pending → complete` at fulfillment. That one event simultaneously (1) sets `status = complete`, (2) stamps `delivered_date`, (3) decrements inventory for every line. Implemented as **one update** (the `mark_sale_delivered` function), not three things to keep in sync. On-site sales are **born `complete`** (`sale_date` = `delivered_date`), and stay complete through any later edit that doesn't change the type.
 
 **Why one status field (not two).** A second `fulfillment_status` was considered and rejected for v1: for a delivery, "delivered" and "complete" are the same event, so the second field would only echo the first. Two axes earn their place only when they can disagree — e.g. paid-but-not-yet-delivered — which requires payment tracking, out of v1 scope. When payment is added later, introduce a second axis named for what it tracks (e.g. `payment_status`).
+
+**On-hand, shared with the future Inventory feature (feature 06).** One `security invoker` function (`app.on_hand_json`, `docs/features/04-sales.md` §3.1) computes good production minus completed sales' eggs, grouped by size — the one place this is calculated, called by Sales' per-line hint and shortfall check now, and by Inventory's screen later. A printable invoice of one sale (no payment status) is feature 05; Inventory (per-size stock, "for delivery") is feature 06.
 
 ### Clients (built in feature 03, designed 2026-09-26)
 - A simple **per-tenant list of the farm's customers** (shops/restaurants/individuals). NOT the SaaS's tenants. First table with real-world PII → first isolation-test target (reads **and** writes).
@@ -250,7 +257,7 @@ The data model (the expensive-to-reverse part) is settled. Remaining work is mec
 - **Connect via Supabase connection pooler** (serverless + Postgres).
 - **Canonical unit = eggs**; trays are display/input only; **eggs-per-tray is a per-tenant setting** (defaulted, not hardcoded).
 - **Inventory = physically on-hand**; subtract **at delivery/completion**.
-- **Price snapshot on sales** — store on the sale, not a live client lookup. (The client's *name* is not snapshotted: a rename shows on past sales.)
+- **Price snapshot on sales** — store on the sale **line**, not a live client lookup, and freeze the computed `line_total` too so a later tray-size or currency change never changes a saved total (feature 04 AC55). (The client's *name* is not snapshotted: a rename shows on past sales.)
 - **Prices are plain numbers shown in a per-farm currency** (`tenants.currency`, default `PHP`), formatted by the one `formatPrice` helper; a currency change relabels stored prices and never converts them. Never type a currency symbol into a screen.
 - **Nullables are meaningful:** `size_id` null (rejects), `client_id` null (on-site sales), `date_delivered` null (pending).
 - **Categories as data** (size, quality, fulfillment_type are values, not columns). **Sizes are per-farm rows** in `sizes`, referenced by `size_id` with a composite `(tenant_id, size_id)` FK; never hardcode the list. **Rejects are always unsized.**

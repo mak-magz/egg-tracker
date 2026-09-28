@@ -126,6 +126,8 @@ Derived from the product context (single owner-operator, responsive web, fast da
 
 ## 5. Screen: Sales (includes Deliveries)
 
+> **Superseded by `docs/features/04-sales.md` §2.5 and §3 (designed 2026-09-27).** A sale is a header plus 1–20 lines (one per size), not the single-size row this section assumes; it has a sale number, a detail view, an edit form and a delete confirmation, none of which are drawn here. This section is kept for the original planning intent (fulfillment type, status lifecycle, filters); read the feature doc for what's actually built. The invoice/print view is **feature 05**; Inventory is **feature 06** (not 04/05 as this doc's numbering-free prose might suggest).
+
 **Purpose:** log sales (delivered or on-site) and manage delivery status. This is where "deliveries" live, as a fulfillment type of a sale.
 
 ### 5a. Sales list (default view)
@@ -177,6 +179,8 @@ Derived from the product context (single owner-operator, responsive web, fast da
 ---
 
 ## 6. Screen: Inventory
+
+> **This is feature 06** (not 04/05 as earlier drafts numbered it; feature 04 is Sales, feature 05 is the invoice/print view). Not yet designed; when it is, it reuses the on-hand-by-size calculation `docs/features/04-sales.md` §3 already built for Sales' per-line hint (`app.on_hand_json`), so the two screens can never disagree.
 
 **Purpose:** show current sellable eggs on hand, by size. Read-only (computed) in v1 — there's no manual inventory editing, since it's derived from production − sales.
 
