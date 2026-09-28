@@ -5,8 +5,14 @@ import type { TenantDb } from '../utils/db'
 type TenantRow = Database['public']['Tables']['tenants']['Row']
 type SizeRow = Database['public']['Tables']['sizes']['Row']
 
-/** The tenants columns + embedded sizes every FarmSummary query selects (one round trip, feature 01 D10). */
-export const FARM_SUMMARY_COLUMNS = 'id, name, eggs_per_tray, currency, sizes ( id, name, sort_order, color_slot, archived_at )'
+/**
+ * The tenants columns + embedded sizes every FarmSummary query selects (one round trip, feature 01 D10).
+ * The FK hint (`sizes!sizes_tenant_id_fkey`) is required as of feature 04: `sale_lines` added a second FK path
+ * from `tenants` to `sizes` (tenant_id, then sale_lines' composite FK to sizes), so PostgREST can no longer
+ * infer a single embed relationship for a bare `sizes ( ... )` and errors with PGRST201 ("more than one
+ * relationship was found"). Pin the direct one explicitly; do the same for any future `tenants`-embeds-`sizes`.
+ */
+export const FARM_SUMMARY_COLUMNS = 'id, name, eggs_per_tray, currency, sizes!sizes_tenant_id_fkey ( id, name, sort_order, color_slot, archived_at )'
 
 export type FarmSummaryRow = Pick<TenantRow, 'id' | 'name' | 'eggs_per_tray' | 'currency'> & {
   sizes: SizeRowForFarm[] | null

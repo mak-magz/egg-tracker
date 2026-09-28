@@ -12,6 +12,11 @@ export interface MembershipWithFarm {
  * The only query that runs BEFORE the tenant is known. Scoped by user_id (and by RLS:
  * memberships_select_own / tenants_select_own), and embeds the farm in one round trip.
  * Returns null when the user has no membership (AC12). Throws on DB errors.
+ *
+ * The `sizes!sizes_tenant_id_fkey` FK hint is required as of feature 04: `sale_lines` added a second FK path
+ * from `tenants` to `sizes`, so PostgREST can no longer infer a single relationship for a bare `sizes ( ... )`
+ * embed (PGRST201, "more than one relationship was found") — this query runs on every sign-in, so the
+ * ambiguity broke login. See `tenants.ts`'s `FARM_SUMMARY_COLUMNS` for the same fix.
  */
 export async function findMembershipWithFarm(
   client: SupabaseClient<Database>,
@@ -19,7 +24,7 @@ export async function findMembershipWithFarm(
 ): Promise<MembershipWithFarm | null> {
   const { data, error } = await client
     .from('memberships')
-    .select('tenant_id, tenants ( id, name, eggs_per_tray, currency, sizes ( id, name, sort_order, color_slot, archived_at ) )')
+    .select('tenant_id, tenants ( id, name, eggs_per_tray, currency, sizes!sizes_tenant_id_fkey ( id, name, sort_order, color_slot, archived_at ) )')
     .eq('user_id', userId)
     .maybeSingle()
 
