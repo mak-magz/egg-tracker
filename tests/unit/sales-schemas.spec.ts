@@ -2,7 +2,6 @@ import { describe, expect, expectTypeOf, it } from 'vitest'
 import { SALE_MESSAGES } from '../../shared/constants/sales'
 import {
   createSaleBodySchema,
-  markSaleDeliveredBodySchema,
   onHandQuerySchema,
   saleIdParamsSchema,
   saleLineInputSchema,
@@ -96,15 +95,10 @@ describe('createSaleBodySchema', () => {
     expect(createSaleBodySchema.safeParse({ ...base, saleDate: '2026-13-40' }).success).toBe(false)
   })
 
-  it('accepts an optional deliveredDate and confirmShortfall', () => {
+  it('accepts an optional confirmShortfall, and strips a deliveredDate (feature 05: a sale has one date)', () => {
     const result = createSaleBodySchema.safeParse({ ...base, type: 'delivery', clientId: CLIENT_A, deliveredDate: TODAY, confirmShortfall: true })
     expect(result.success).toBe(true)
-  })
-
-  it('rejects a future deliveredDate (AC24, AC33)', () => {
-    const future = new Date(Date.now() + 5 * 86_400_000).toISOString().slice(0, 10)
-    const result = createSaleBodySchema.safeParse({ ...base, type: 'delivery', clientId: CLIENT_A, deliveredDate: future })
-    expect(messages(result).deliveredDate).toBe(SALE_MESSAGES.deliveredDateFuture)
+    expect(result.success && 'deliveredDate' in result.data).toBe(false)
   })
 
   it('strips unknown keys (tenantId, saleNumber, id, lineTotal, voidedAt)', () => {
@@ -145,15 +139,6 @@ describe('updateSaleBodySchema', () => {
   })
 })
 
-describe('markSaleDeliveredBodySchema', () => {
-  it('requires a deliveredDate, rejects a future one', () => {
-    expect(markSaleDeliveredBodySchema.safeParse({}).success).toBe(false)
-    expect(markSaleDeliveredBodySchema.safeParse({ deliveredDate: TODAY }).success).toBe(true)
-    const future = new Date(Date.now() + 5 * 86_400_000).toISOString().slice(0, 10)
-    expect(messages(markSaleDeliveredBodySchema.safeParse({ deliveredDate: future })).deliveredDate).toBe(SALE_MESSAGES.deliveredDateFuture)
-  })
-})
-
 describe('voidSaleBodySchema', () => {
   it('requires a positive integer version', () => {
     expect(voidSaleBodySchema.safeParse({ version: 1 }).success).toBe(true)
@@ -181,9 +166,9 @@ describe('salesListQuerySchema', () => {
     expect(salesListQuerySchema.parse({ from: '', to: '' })).toEqual({ limit: 25, offset: 0, includeVoided: false })
   })
 
-  it('accepts status, type, clientId and a date range', () => {
+  it('accepts type, clientId and a date range, and strips a status', () => {
     const parsed = salesListQuerySchema.parse({ from: '2026-09-01', to: '2026-09-27', status: 'pending', type: 'delivery', clientId: CLIENT_A, limit: '10', offset: '5' })
-    expect(parsed).toEqual({ from: '2026-09-01', to: '2026-09-27', status: 'pending', type: 'delivery', clientId: CLIENT_A, limit: 10, offset: 5, includeVoided: false })
+    expect(parsed).toEqual({ from: '2026-09-01', to: '2026-09-27', type: 'delivery', clientId: CLIENT_A, limit: 10, offset: 5, includeVoided: false })
   })
 
   it('rejects an end date before the start date', () => {
@@ -198,8 +183,7 @@ describe('salesListQuerySchema', () => {
     expect(salesListQuerySchema.parse({ includeVoided: 'no' }).includeVoided).toBe(false)
   })
 
-  it('rejects an unknown status or type', () => {
-    expect(salesListQuerySchema.safeParse({ status: 'voided' }).success).toBe(false)
+  it('rejects an unknown type', () => {
     expect(salesListQuerySchema.safeParse({ type: 'pickup' }).success).toBe(false)
   })
 })

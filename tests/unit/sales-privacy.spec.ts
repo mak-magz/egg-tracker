@@ -40,7 +40,7 @@ const serverSalesFiles = [
 // The sales screen: its page, components, composables and helpers (whichever exist). Includes the reusable
 // pickers/dialogs the sale form owns even though they aren't named `Sale*` (mirrors clients' own file list).
 const appSalesFiles = [
-  ...walk(join(ROOT, 'app', 'components')).filter(f => /\/(Sale[A-Za-z]*|ClientPicker|SizeChipPicker|MarkDeliveredDialog|StockShortfallDialog)\.vue$/.test(rel(f))),
+  ...walk(join(ROOT, 'app', 'components')).filter(f => /\/(Sale[A-Za-z]*|ClientPicker|SizeChipPicker|StockShortfallDialog)\.vue$/.test(rel(f))),
   ...walk(join(ROOT, 'app', 'composables')).filter(f => /\/use(Sale[A-Za-z]*|OnHand)\.ts$/.test(rel(f))),
   ...walk(join(ROOT, 'app', 'utils')).filter(f => /\/sale-[a-z-]+\.ts$/.test(rel(f))),
   join(ROOT, 'app', 'pages', 'sales.vue'),
@@ -56,11 +56,8 @@ const appSalesFiles = [
 describe('sales server code', () => {
   it('finds the sales server sources', () => {
     expect(serverSalesFiles.map(rel).sort()).toEqual([
-      'server/api/sales/[id].delete.ts',
       'server/api/sales/[id].get.ts',
       'server/api/sales/[id].put.ts',
-      'server/api/sales/[id]/mark-delivered.post.ts',
-      'server/api/sales/[id]/mark-pending.post.ts',
       'server/api/sales/[id]/void.post.ts',
       'server/api/sales/index.get.ts',
       'server/api/sales/index.post.ts',

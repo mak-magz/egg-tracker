@@ -22,10 +22,10 @@ const saleRow = {
   id: SALE_ID,
   saleNumber: 1042,
   type: 'delivery',
-  status: 'pending',
   clientId: CLIENT_A,
   saleDate: '2026-09-27',
-  deliveredDate: null,
+  orderId: null,
+  orderNumber: null,
   version: 1,
   voidedAt: null,
   lines: [{ sizeId: SIZE_A, eggs: 241, pricePerTray: 6.75, lineTotal: 54.23 }],
@@ -36,10 +36,10 @@ const sale = {
   id: SALE_ID,
   saleNumber: 1042,
   type: 'delivery' as const,
-  status: 'pending' as const,
   clientId: CLIENT_A,
   saleDate: '2026-09-27',
-  deliveredDate: null,
+  orderId: null,
+  orderNumber: null,
   version: 1,
   voidedAt: null,
   lines: [{ sizeId: SIZE_A, eggs: 241, pricePerTray: 6.75, lineTotal: 54.23 }],
@@ -110,22 +110,20 @@ describe('sales repository: create / update', () => {
       p_tenant_id: TENANT,
     }]])
     expect(calls[0]![1]).not.toHaveProperty('p_client_id')
-    expect(calls[0]![1]).not.toHaveProperty('p_delivered_date')
     expect(calls[0]![1]).not.toHaveProperty('p_confirm_shortfall')
   })
 
-  it('createSale sends clientId, deliveredDate and confirmShortfall when set', async () => {
+  it('createSale sends clientId and confirmShortfall when set', async () => {
     const { db, calls } = fakeDb({ create_sale: { data: { sale: saleRow, replayed: false }, error: null } })
     await repo.createSale(db, {
       submissionId: SUBMISSION,
       type: 'delivery',
       saleDate: '2026-09-27',
       clientId: CLIENT_A,
-      deliveredDate: '2026-09-27',
       lines: [{ sizeId: SIZE_A, eggs: 30, pricePerTray: 6.5 }],
       confirmShortfall: true,
     })
-    expect(calls[0]![1]).toMatchObject({ p_client_id: CLIENT_A, p_delivered_date: '2026-09-27', p_confirm_shortfall: true })
+    expect(calls[0]![1]).toMatchObject({ p_client_id: CLIENT_A, p_confirm_shortfall: true })
   })
 
   it('a replayed create returns the first sale with replayed: true', async () => {
@@ -163,31 +161,24 @@ describe('sales repository: create / update', () => {
   })
 })
 
-describe('sales repository: status changes and delete/void', () => {
-  it('markSaleDelivered sends the id, date and optional confirmShortfall', async () => {
-    const { db, calls } = fakeDb({ mark_sale_delivered: { data: { sale: saleRow, changed: true }, error: null } })
-    await repo.markSaleDelivered(db, SALE_ID, { deliveredDate: '2026-09-27', confirmShortfall: true })
-    expect(calls[0]).toEqual(['mark_sale_delivered', { p_sale_id: SALE_ID, p_delivered_date: '2026-09-27', p_confirm_shortfall: true, p_tenant_id: TENANT }])
-  })
-
-  it('markSalePending sends just the id', async () => {
-    const { db, calls } = fakeDb({ mark_sale_pending: { data: { sale: saleRow, changed: true }, error: null } })
-    await repo.markSalePending(db, SALE_ID)
-    expect(calls[0]).toEqual(['mark_sale_pending', { p_sale_id: SALE_ID, p_tenant_id: TENANT }])
-  })
-
-  it('deleteSale returns saleId and saleNumber', async () => {
-    const { db, calls } = fakeDb({ delete_sale: { data: { saleId: SALE_ID, saleNumber: 1042 }, error: null } })
-    expect(await repo.deleteSale(db, SALE_ID)).toEqual({ saleId: SALE_ID, saleNumber: 1042 })
-    expect(calls[0]).toEqual(['delete_sale', { p_sale_id: SALE_ID, p_tenant_id: TENANT }])
-  })
-
-  it('voidSale sends the id and version, and reports changed', async () => {
-    const { db, calls } = fakeDb({ void_sale: { data: { sale: { ...saleRow, voidedAt: '2026-09-27' }, changed: true }, error: null } })
+describe('sales repository: void', () => {
+  it('voidSale sends the id and version, reports changed and carries no order for a direct sale', async () => {
+    const { db, calls } = fakeDb({ void_sale: { data: { sale: { ...saleRow, voidedAt: '2026-09-27' }, changed: true, order: null }, error: null } })
     const res = await repo.voidSale(db, SALE_ID, { version: 2 })
     expect(res.changed).toBe(true)
     expect(res.sale.voidedAt).toBe('2026-09-27')
+    expect(res.order).toBeNull()
     expect(calls[0]).toEqual(['void_sale', { p_sale_id: SALE_ID, p_version: 2, p_tenant_id: TENANT }])
+  })
+
+  it('voidSale of a delivery returns the recomputed order (AC35)', async () => {
+    const order = {
+      id: SALE_ID, orderNumber: 12, clientId: CLIENT_A, orderDate: '2026-09-25', wantedBy: null, status: 'ready', closedShortAt: null, cancelledAt: null,
+      convertedFromSaleNumber: null, lines: [], orderTotal: 0, deliveryCount: 0, voidedDeliveryCount: 1, version: 5, deliveries: [],
+    }
+    const { db } = fakeDb({ void_sale: { data: { sale: { ...saleRow, voidedAt: '2026-09-27' }, changed: true, order }, error: null } })
+    const res = await repo.voidSale(db, SALE_ID, { version: 2 })
+    expect(res.order).toMatchObject({ orderNumber: 12, status: 'ready', deliveries: [] })
   })
 })
 
@@ -201,10 +192,10 @@ describe('sales repository: reads', () => {
 
   it('listSales passes every filter and maps every sale', async () => {
     const { db, calls } = fakeDb({ list_sales: { data: { hasAny: true, total: 1, sales: [saleRow] }, error: null } })
-    const res = await repo.listSales(db, { from: '2026-09-01', to: '2026-09-27', status: 'pending', type: 'delivery', clientId: CLIENT_A, limit: 25, offset: 0, includeVoided: true })
+    const res = await repo.listSales(db, { from: '2026-09-01', to: '2026-09-27', type: 'delivery', clientId: CLIENT_A, limit: 25, offset: 0, includeVoided: true })
     expect(res).toEqual({ hasAny: true, total: 1, sales: [sale] })
     expect(calls[0]).toEqual(['list_sales', {
-      p_from: '2026-09-01', p_to: '2026-09-27', p_status: 'pending', p_type: 'delivery', p_client_id: CLIENT_A,
+      p_from: '2026-09-01', p_to: '2026-09-27', p_type: 'delivery', p_client_id: CLIENT_A,
       p_limit: 25, p_offset: 0, p_include_voided: true, p_tenant_id: TENANT,
     }])
   })
@@ -227,14 +218,12 @@ describe('mapSaleDbError: every SQLSTATE of the §3.3 table', () => {
     const a = await map(pgError('TM002', { hint: 'sale_date' }))
     expect(a.statusCode).toBe(400)
     expect(a.data).toEqual({ code: 'validation_failed', fields: { [SALE_FIELDS.saleDate]: SALE_MESSAGES.saleDateFuture } })
-    const b = await map(pgError('TM002', { hint: 'delivered_date' }))
-    expect(b.data).toEqual({ code: 'validation_failed', fields: { [SALE_FIELDS.deliveredDate]: SALE_MESSAGES.deliveredDateFuture } })
   })
 
   it('TM005 lands on the field of the operation', async () => {
     expect((await map(pgError('TM005'), 'create')).data.fields).toEqual({ submissionId: SALE_MESSAGES.saleChanged })
     expect((await map(pgError('TM005'), 'update')).data.fields).toEqual({ version: SALE_MESSAGES.saleChanged })
-    expect((await map(pgError('TM005'), 'delete')).data.fields).toEqual({ id: SALE_MESSAGES.saleChanged })
+    expect((await map(pgError('TM005'), 'get')).data.fields).toEqual({ id: SALE_MESSAGES.saleChanged })
   })
 
   it('TM027 (unknown or another farm\'s sale) is a plain 404', async () => {
@@ -260,9 +249,9 @@ describe('mapSaleDbError: every SQLSTATE of the §3.3 table', () => {
     expect((await map(pgError('TM032', { hint: 'invalid' }))).data.fields).toEqual({ clientId: SALE_MESSAGES.clientInvalid })
   })
 
-  it('TM034 is a 400 on deliveredDate', async () => {
-    const e = await map(pgError('TM034'))
-    expect(e.data).toEqual({ code: 'validation_failed', fields: { deliveredDate: SALE_MESSAGES.deliveredDateBeforeSale } })
+  it('TM055 (sale date before the order date) is a 400 on saleDate', async () => {
+    const e = await map(pgError('TM055', { hint: 'sale_date' }))
+    expect(e.data).toEqual({ code: 'validation_failed', fields: { saleDate: SALE_MESSAGES.saleDateBeforeOrder } })
   })
 
   it('TM038 is a 400 on submissionId', async () => {
@@ -284,16 +273,11 @@ describe('mapSaleDbError: every SQLSTATE of the §3.3 table', () => {
     expect((await map(pgError('TM036'), 'update')).data).toEqual({ code: 'conflict', reason: 'sale_changed' })
   })
 
-  it('TM041 (delete: not pending) is a 409 not_pending with the current sale', async () => {
+  it('TM053 (a delivery from an order changed more than its date) is a 409 sale_locked with the current sale', async () => {
     const { db } = fakeDb({}, { data: { sale: saleRow }, error: null })
-    const e = await repo.mapSaleDbError(db, pgError('TM041'), 'delete', SALE_ID)
-    expect(e.data).toEqual({ code: 'conflict', reason: 'not_pending', sale })
-  })
-
-  it('TM042 (void: not complete) is a 409 not_complete with the current sale', async () => {
-    const { db } = fakeDb({}, { data: { sale: saleRow }, error: null })
-    const e = await repo.mapSaleDbError(db, pgError('TM042'), 'void', SALE_ID)
-    expect(e.data).toEqual({ code: 'conflict', reason: 'not_complete', sale })
+    const e = await repo.mapSaleDbError(db, pgError('TM053'), 'update', SALE_ID)
+    expect(e.statusCode).toBe(409)
+    expect(e.data).toEqual({ code: 'conflict', reason: 'sale_locked', sale })
   })
 
   it('TM043 (already voided) is a 409 voided with the current sale', async () => {
@@ -316,16 +300,15 @@ describe('mapSaleDbError: every SQLSTATE of the §3.3 table', () => {
     }
   })
 
-  it('TM006, TM039, TM040 and the 23505/23514 backstops are a bare 500 that logs only the code', async () => {
+  it('TM006, TM040 and the 23505/23514 backstops are a bare 500 that logs only the code', async () => {
     const spies = consoleSpies()
-    for (const code of ['TM006', 'TM039', 'TM040', '23505', '23514', 'XX000']) {
+    for (const code of ['TM006', 'TM040', '23505', '23514', 'XX000']) {
       const e = await map(pgError(code))
       expect(e.statusCode, code).toBe(500)
       expect(e.data).toEqual({ code: 'internal' })
     }
     expect(spies[0]!.mock.calls.map(c => c[0])).toEqual([
       '[sales] database error TM006',
-      '[sales] database error TM039',
       '[sales] database error TM040',
       '[sales] database error 23505',
       '[sales] database error 23514',

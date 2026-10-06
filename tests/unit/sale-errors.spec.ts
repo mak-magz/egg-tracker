@@ -17,10 +17,10 @@ const sale = (id: string, version = 1): Sale => ({
   id,
   saleNumber: 1,
   type: 'delivery',
-  status: 'pending',
   clientId: null,
   saleDate: '2026-09-27',
-  deliveredDate: null,
+  orderId: null,
+  orderNumber: null,
   lines: [],
   saleTotal: 0,
   version,
@@ -52,12 +52,16 @@ describe('mapSaleError', () => {
     expect(mapSaleError(fetchError(409, { data: { code: 'conflict', reason: 'stock_short', shortfall } }))).toEqual({ kind: 'stock_short', shortfall })
   })
 
-  it('maps 409 sale_changed / not_pending / not_complete / voided, each with the current sale when sent', () => {
+  it('maps 409 sale_changed / sale_locked / voided, each with the current sale when sent', () => {
     const current = sale('s1', 5)
     expect(mapSaleError(fetchError(409, { data: { code: 'conflict', reason: 'sale_changed', sale: current } }))).toEqual({ kind: 'sale_changed', sale: current })
-    expect(mapSaleError(fetchError(409, { data: { code: 'conflict', reason: 'not_pending', sale: current } }))).toEqual({ kind: 'not_pending', sale: current })
-    expect(mapSaleError(fetchError(409, { data: { code: 'conflict', reason: 'not_complete', sale: current } }))).toEqual({ kind: 'not_complete', sale: current })
+    expect(mapSaleError(fetchError(409, { data: { code: 'conflict', reason: 'sale_locked', sale: current } }))).toEqual({ kind: 'sale_locked', sale: current })
     expect(mapSaleError(fetchError(409, { data: { code: 'conflict', reason: 'voided', sale: current } }))).toEqual({ kind: 'voided', sale: current })
+  })
+
+  it('the retired pending reasons are now just unknown', () => {
+    expect(mapSaleError(fetchError(409, { data: { code: 'conflict', reason: 'not_pending' } }))).toEqual({ kind: 'unknown' })
+    expect(mapSaleError(fetchError(409, { data: { code: 'conflict', reason: 'not_complete' } }))).toEqual({ kind: 'unknown' })
   })
 
   it('an unrecognised conflict or a 500 is unknown', () => {

@@ -8,7 +8,7 @@ describe('sales field keys', () => {
     expect(SALE_FIELDS.type).toBe('type')
     expect(SALE_FIELDS.clientId).toBe('clientId')
     expect(SALE_FIELDS.saleDate).toBe('saleDate')
-    expect(SALE_FIELDS.deliveredDate).toBe('deliveredDate')
+    expect('deliveredDate' in SALE_FIELDS).toBe(false)
     expect(SALE_FIELDS.lines).toBe('lines')
     expect(SALE_FIELDS.submissionId).toBe('submissionId')
     expect(SALE_FIELDS.version).toBe('version')

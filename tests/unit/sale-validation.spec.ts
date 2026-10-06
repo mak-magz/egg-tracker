@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
-  checkDeliveredDate,
   checkLinePrice,
   checkLineQuantity,
+  checkLinkedSaleDate,
   checkSaleClient,
   checkSaleDate,
 } from '../../app/utils/sale-validation'
@@ -83,24 +83,31 @@ describe('checkSaleClient (AC13)', () => {
   })
 })
 
-describe('checkSaleDate / checkDeliveredDate (AC23, AC24, AC33)', () => {
+describe('checkSaleDate (AC23, feature 05 AC38: the one date)', () => {
   it('rejects a future sale date', () => {
     expect(checkSaleDate('2026-09-28', '2026-09-27').ok).toBe(false)
     expect(checkSaleDate('2026-09-27', '2026-09-27')).toEqual({ ok: true, value: '2026-09-27' })
     expect(checkSaleDate('2026-09-20', '2026-09-27')).toEqual({ ok: true, value: '2026-09-20' })
   })
 
-  it('a delivered date cannot be before the sale date', () => {
-    const result = checkDeliveredDate('2026-09-19', '2026-09-20', '2026-09-27')
+  it('needs a date', () => {
+    expect(checkSaleDate('', '2026-09-27').ok).toBe(false)
+  })
+})
+
+describe('checkLinkedSaleDate (feature 05 AC36, G7: a delivery made from an order)', () => {
+  it('cannot be before the order date', () => {
+    const result = checkLinkedSaleDate('2026-09-19', '2026-09-20', '2026-09-27')
     expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.message).toContain('Sep 20')
   })
 
-  it('a delivered date cannot be in the future', () => {
-    expect(checkDeliveredDate('2026-09-28', '2026-09-20', '2026-09-27').ok).toBe(false)
+  it('cannot be in the future', () => {
+    expect(checkLinkedSaleDate('2026-09-28', '2026-09-20', '2026-09-27').ok).toBe(false)
   })
 
-  it('accepts a delivered date on or after the sale date and not in the future', () => {
-    expect(checkDeliveredDate('2026-09-20', '2026-09-20', '2026-09-27')).toEqual({ ok: true, value: '2026-09-20' })
-    expect(checkDeliveredDate('2026-09-27', '2026-09-20', '2026-09-27')).toEqual({ ok: true, value: '2026-09-27' })
+  it('accepts the order date itself, today and anything between', () => {
+    expect(checkLinkedSaleDate('2026-09-20', '2026-09-20', '2026-09-27')).toEqual({ ok: true, value: '2026-09-20' })
+    expect(checkLinkedSaleDate('2026-09-27', '2026-09-20', '2026-09-27')).toEqual({ ok: true, value: '2026-09-27' })
   })
 })

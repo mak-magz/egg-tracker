@@ -6,16 +6,16 @@ import {
   SALE_WRITE_TIMEOUT_MS,
 } from '../../app/utils/sale-mutations'
 import type { SaleApi, SaleInput } from '../../app/utils/sale-mutations'
-import type { Sale } from '../../shared/types/api'
+import type { OrderDetail, Sale } from '../../shared/types/api'
 
 const sale = (id: string, saleNumber: number, version = 1, over: Partial<Sale> = {}): Sale => ({
   id,
   saleNumber,
   type: 'delivery',
-  status: 'pending',
   clientId: 'c1',
   saleDate: '2026-09-27',
-  deliveredDate: null,
+  orderId: null,
+  orderNumber: null,
   lines: [{ sizeId: 'sz-large', eggs: 240, pricePerTray: 6.5, lineTotal: 52 }],
   saleTotal: 52,
   version,
@@ -23,11 +23,29 @@ const sale = (id: string, saleNumber: number, version = 1, over: Partial<Sale> =
   ...over,
 })
 
+const order = (over: Partial<OrderDetail> = {}): OrderDetail => ({
+  id: 'o1',
+  orderNumber: 12,
+  clientId: 'c1',
+  orderDate: '2026-09-20',
+  wantedBy: null,
+  status: 'ready',
+  closedShortAt: null,
+  cancelledAt: null,
+  convertedFromSaleNumber: null,
+  lines: [{ sizeId: 'sz-large', orderedEggs: 300, deliveredEggs: 0, remainingEggs: 300, droppedEggs: 0, pricePerTray: 6.5, lineTotal: 65 }],
+  orderTotal: 65,
+  deliveryCount: 0,
+  voidedDeliveryCount: 1,
+  version: 4,
+  deliveries: [],
+  ...over,
+})
+
 const input = (over: Partial<SaleInput> = {}): SaleInput => ({
   type: 'delivery',
   saleDate: '2026-09-27',
   clientId: 'c1',
-  deliveredDate: null,
   lines: [{ sizeId: 'sz-large', eggs: 240, pricePerTray: 6.5 }],
   ...over,
 })
@@ -52,11 +70,12 @@ function deferredApi() {
 
 function build(api: SaleApi, ids: string[] = ['id-1', 'id-2', 'id-3', 'id-4']) {
   const upsert = vi.fn()
-  const removeFromList = vi.fn()
+  const patchOrder = vi.fn()
+  const refreshOrders = vi.fn()
   const reload = vi.fn(async () => 'ok' as const)
   let n = 0
-  const mutations = createSaleMutations({ api, upsert, removeFromList, reload, newId: () => ids[n++] ?? `id-extra-${n}` })
-  return { mutations, upsert, removeFromList, reload }
+  const mutations = createSaleMutations({ api, upsert, patchOrder, refreshOrders, reload, newId: () => ids[n++] ?? `id-extra-${n}` })
+  return { mutations, upsert, patchOrder, refreshOrders, reload }
 }
 
 describe('createSaleSubmissionTracker (AC30)', () => {
@@ -103,6 +122,15 @@ describe('createSaleMutations: create and update (one in-flight guard)', () => {
     expect(await p).toEqual({ ok: true, data: reply })
     expect(upsert).toHaveBeenCalledWith(reply.sale)
     expect(mutations.saving.value).toBe(false)
+  })
+
+  it('create never sends a delivered date or a status (feature 05 AC37, AC38)', async () => {
+    const { api, calls } = deferredApi()
+    const { mutations } = build(api)
+    void mutations.create(input())
+    const body = calls[0]!.opts!.body as Record<string, unknown>
+    expect(Object.keys(body).sort()).toEqual(['clientId', 'confirmShortfall', 'lines', 'saleDate', 'submissionId', 'type'])
+    calls[0]!.resolve({ sale: sale('s1', 1), replayed: false })
   })
 
   it('create with confirmShortfall = true sends it through', async () => {
@@ -154,7 +182,7 @@ describe('createSaleMutations: create and update (one in-flight guard)', () => {
   it('a stale edit (sale_changed) upserts the returned sale and reloads (AC43)', async () => {
     const { api, calls } = deferredApi()
     const { mutations, upsert, reload } = build(api)
-    const current = sale('s1', 1042, 9, { status: 'complete', deliveredDate: '2026-09-28' })
+    const current = sale('s1', 1042, 9, { saleDate: '2026-09-28' })
     const p = mutations.update(sale('s1', 1042, 4), input())
     calls[0]!.reject(fetchError(409, { data: { code: 'conflict', reason: 'sale_changed', sale: current } }))
     expect(await p).toMatchObject({ ok: false, error: { kind: 'sale_changed', sale: current } })
@@ -182,87 +210,90 @@ describe('createSaleMutations: create and update (one in-flight guard)', () => {
     expect(upsert).not.toHaveBeenCalled()
     expect(reload).not.toHaveBeenCalled()
   })
-})
 
-describe('createSaleMutations: markDelivered / markPending / voidSale / remove (guarded per sale id)', () => {
-  it('markDelivered POSTs the delivered date and confirmShortfall', async () => {
+  it('editing the date of a delivery made from an order quietly refreshes the Orders list (its version moved, AC36)', async () => {
+    const { api, calls } = deferredApi()
+    const { mutations, refreshOrders } = build(api)
+    const linked = sale('s1', 52, 2, { orderId: 'o1', orderNumber: 12 })
+    const p = mutations.update(sale('s1', 52, 1, { orderId: 'o1', orderNumber: 12 }), input())
+    calls[0]!.resolve({ sale: linked, changed: true })
+    await p
+    expect(refreshOrders).toHaveBeenCalledTimes(1)
+  })
+
+  it('a direct sale edit does not touch the Orders list', async () => {
+    const { api, calls } = deferredApi()
+    const { mutations, refreshOrders } = build(api)
+    const p = mutations.update(sale('s1', 1, 1), input())
+    calls[0]!.resolve({ sale: sale('s1', 1, 2), changed: true })
+    await p
+    expect(refreshOrders).not.toHaveBeenCalled()
+  })
+
+  it('a refused edit of a linked delivery (sale_locked) upserts the current sale', async () => {
     const { api, calls } = deferredApi()
     const { mutations, upsert } = build(api)
-    const p = mutations.markDelivered('s1', '2026-09-27', true)
-    expect(calls[0]).toMatchObject({
-      url: '/api/sales/s1/mark-delivered',
-      opts: { method: 'POST', body: { deliveredDate: '2026-09-27', confirmShortfall: true } },
-    })
-    const reply = { sale: sale('s1', 1, 2, { status: 'complete', deliveredDate: '2026-09-27' }), changed: true }
+    const current = sale('s1', 52, 3, { orderId: 'o1', orderNumber: 12 })
+    const p = mutations.update(sale('s1', 52, 3), input())
+    calls[0]!.reject(fetchError(409, { data: { code: 'conflict', reason: 'sale_locked', sale: current } }))
+    expect(await p).toMatchObject({ ok: false, error: { kind: 'sale_locked', sale: current } })
+    expect(upsert).toHaveBeenCalledWith(current)
+  })
+})
+
+describe('createSaleMutations: voidSale (guarded per sale id; sales are void-only, feature 05 AC40)', () => {
+  it('has no mark-delivered, mark-pending or delete', () => {
+    const { api } = deferredApi()
+    const { mutations } = build(api)
+    expect(Object.keys(mutations).sort()).toEqual(['create', 'pendingIds', 'resetCreate', 'saving', 'update', 'voidSale'])
+  })
+
+  it('voidSale POSTs the version and upserts the sale', async () => {
+    const { api, calls } = deferredApi()
+    const { mutations, upsert, patchOrder } = build(api)
+    const p = mutations.voidSale(sale('s1', 1, 3))
+    expect(calls[0]).toMatchObject({ url: '/api/sales/s1/void', opts: { method: 'POST', body: { version: 3 } } })
+    const reply = { sale: sale('s1', 1, 4, { voidedAt: '2026-09-27' }), changed: true, order: null }
     calls[0]!.resolve(reply)
     expect(await p).toEqual({ ok: true, data: reply })
     expect(upsert).toHaveBeenCalledWith(reply.sale)
+    expect(patchOrder).not.toHaveBeenCalled() // a direct sale has no order
   })
 
-  it('markPending POSTs with no body', async () => {
+  it('voiding a delivery patches the order the server recomputed into the Orders list (AC35)', async () => {
     const { api, calls } = deferredApi()
-    const { mutations } = build(api)
-    const p = mutations.markPending('s1')
-    expect(calls[0]).toMatchObject({ url: '/api/sales/s1/mark-pending', opts: { method: 'POST' } })
-    expect(calls[0]!.opts!.body).toBeUndefined()
-    calls[0]!.resolve({ sale: sale('s1', 1), changed: true })
+    const { mutations, patchOrder } = build(api)
+    const p = mutations.voidSale(sale('s52', 52, 1, { orderId: 'o1', orderNumber: 12 }))
+    const reopened = order({ status: 'ready' })
+    calls[0]!.resolve({ sale: sale('s52', 52, 2, { orderId: 'o1', orderNumber: 12, voidedAt: '2026-09-27' }), changed: true, order: reopened })
     await p
-  })
-
-  it('voidSale POSTs the version', async () => {
-    const { api, calls } = deferredApi()
-    const { mutations } = build(api)
-    const p = mutations.voidSale(sale('s1', 1, 3))
-    expect(calls[0]).toMatchObject({ url: '/api/sales/s1/void', opts: { method: 'POST', body: { version: 3 } } })
-    calls[0]!.resolve({ sale: sale('s1', 1, 4, { voidedAt: '2026-09-27' }), changed: true })
-    await p
-  })
-
-  it('remove DELETEs and removes the sale from the list, not upserts it', async () => {
-    const { api, calls } = deferredApi()
-    const { mutations, upsert, removeFromList } = build(api)
-    const p = mutations.remove('s1')
-    expect(calls[0]).toMatchObject({ url: '/api/sales/s1', opts: { method: 'DELETE' } })
-    calls[0]!.resolve({ saleId: 's1', saleNumber: 1042 })
-    expect(await p).toEqual({ ok: true, data: { saleId: 's1', saleNumber: 1042 } })
-    expect(removeFromList).toHaveBeenCalledWith('s1')
-    expect(upsert).not.toHaveBeenCalled()
-  })
-
-  it('remove treats a 404 (already gone elsewhere) as no special reload, just an error the caller decides how to treat', async () => {
-    const { api, calls } = deferredApi()
-    const { mutations, reload } = build(api)
-    const p = mutations.remove('s1')
-    calls[0]!.reject(fetchError(404, { data: { code: 'not_found' } }))
-    expect(await p).toEqual({ ok: false, error: { kind: 'not_found' } })
-    expect(reload).not.toHaveBeenCalled()
+    expect(patchOrder).toHaveBeenCalledWith(reopened)
   })
 
   it('a second tap on the same sale resolves to null; another sale runs at once (UX R1)', async () => {
     const { api, calls } = deferredApi()
     const { mutations } = build(api)
-    const first = mutations.markDelivered('s1', '2026-09-27')
+    const first = mutations.voidSale(sale('s1', 1))
     expect(mutations.pendingIds.value).toEqual(['s1'])
-    expect(await mutations.markDelivered('s1', '2026-09-27')).toBeNull()
-    expect(await mutations.remove('s1')).toBeNull()
-    const other = mutations.markPending('s2')
+    expect(await mutations.voidSale(sale('s1', 1))).toBeNull()
+    const other = mutations.voidSale(sale('s2', 2))
     expect(calls).toHaveLength(2)
     expect(mutations.pendingIds.value).toEqual(['s1', 's2'])
-    calls[1]!.resolve({ sale: sale('s2', 2), changed: true })
+    calls[1]!.resolve({ sale: sale('s2', 2, 2, { voidedAt: '2026-09-27' }), changed: true, order: null })
     await other
     expect(mutations.pendingIds.value).toEqual(['s1'])
-    calls[0]!.resolve({ sale: sale('s1', 1, 2, { status: 'complete' }), changed: true })
+    calls[0]!.resolve({ sale: sale('s1', 1, 2, { voidedAt: '2026-09-27' }), changed: true, order: null })
     await first
     expect(mutations.pendingIds.value).toEqual([])
   })
 
-  it('not_pending / not_complete / voided errors upsert the attached current sale', async () => {
+  it('a voided / sale_changed error upserts the attached current sale', async () => {
     const { api, calls } = deferredApi()
     const { mutations, upsert } = build(api)
-    const current = sale('s1', 1, 6, { status: 'complete' })
-    const p = mutations.remove('s1')
-    calls[0]!.reject(fetchError(409, { data: { code: 'conflict', reason: 'not_pending', sale: current } }))
-    expect(await p).toMatchObject({ ok: false, error: { kind: 'not_pending', sale: current } })
+    const current = sale('s1', 1, 6, { voidedAt: '2026-09-26' })
+    const p = mutations.voidSale(sale('s1', 1, 5))
+    calls[0]!.reject(fetchError(409, { data: { code: 'conflict', reason: 'voided', sale: current } }))
+    expect(await p).toMatchObject({ ok: false, error: { kind: 'voided', sale: current } })
     expect(upsert).toHaveBeenCalledWith(current)
   })
 })

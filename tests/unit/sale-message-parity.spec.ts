@@ -19,18 +19,15 @@ describe('SALE_COPY reuses SALE_MESSAGES, never a second hand-typed literal, for
     ['priceTooManyDecimals', 'priceTooManyDecimals'],
     ['saleDateFuture', 'saleDateFuture'],
     ['dateEmpty', 'saleDateRequired'],
-    ['deliveredDateFuture', 'deliveredDateFuture'],
     ['saveFailed', 'saveFailed'],
     ['addSizeLimitReached', 'linesMax'],
     ['serverTooManySizes', 'linesMax'],
     ['serverDuplicateSize', 'linesDuplicateSize'],
     ['serverSizesChanged', 'linesSizesChanged'],
     ['serverClientInactive', 'clientInvalid'],
-    ['serverNotPending', 'notPending'],
-    ['serverNotComplete', 'notComplete'],
     ['serverVoided', 'voided'],
+    ['serverSaleLocked', 'saleLocked'],
     ['changedElsewhere', 'saleChanged'],
-    ['deleteFailed', 'deleteFailed'],
     ['voidFailed', 'voidFailed'],
   ]
 
@@ -48,16 +45,11 @@ describe('SALE_MESSAGES matches §2.5\'s Copy table verbatim (the ones the FE de
     expect(SALE_MESSAGES.saleDateFuture).toBe('The sale date can\'t be in the future. Pick today or earlier.')
   })
 
-  it('delivered date: future', () => {
-    expect(SALE_MESSAGES.deliveredDateFuture).toBe('The delivered date can\'t be in the future. Pick today or earlier.')
-  })
-
-  it('sale not Pending (AC44)', () => {
-    expect(SALE_MESSAGES.notPending).toBe('This sale is no longer pending. Void it instead.')
-  })
-
-  it('sale not Complete (AC67)', () => {
-    expect(SALE_MESSAGES.notComplete).toBe('This sale isn\'t complete anymore. The list is up to date now.')
+  it('there is no Pending-era message left (feature 05 AC37)', () => {
+    const keys = Object.keys(SALE_MESSAGES)
+    for (const gone of ['deliveredDateFuture', 'deliveredDateBeforeSale', 'notPending', 'notComplete', 'deleteFailed', 'markDeliveredFailed']) {
+      expect(keys).not.toContain(gone)
+    }
   })
 
   it('sale is voided (AC67, AC68)', () => {
@@ -74,15 +66,15 @@ describe('SALE_MESSAGES matches §2.5\'s Copy table verbatim (the ones the FE de
 describe('SaleForm.vue and sale-errors.ts read ApiErrorData.fields through SALE_FIELDS, not a hand-typed literal', () => {
   const readSrc = (relPath: string) => readFileSync(join(__dirname, '..', '..', relPath), 'utf8')
 
-  it('SaleForm.vue imports SALE_FIELDS and applyServerFields indexes fields[] by it, not a literal .saleDate/.clientId/.deliveredDate/.lines', () => {
+  it('SaleForm.vue imports SALE_FIELDS and applyServerFields indexes fields[] by it, not a literal .saleDate/.clientId/.lines', () => {
     const src = readSrc('app/components/SaleForm.vue')
     expect(src).toMatch(/import\s*\{[^}]*SALE_FIELDS[^}]*\}\s*from\s*['"]#shared\/constants\/sales['"]/)
     const fnStart = src.indexOf('function applyServerFields')
     expect(fnStart).toBeGreaterThan(-1)
     const fnEnd = src.indexOf('\n}', fnStart)
     const fn = src.slice(fnStart, fnEnd)
-    expect(fn).not.toMatch(/fields\.(type|clientId|saleDate|deliveredDate|lines)\b/)
-    for (const key of ['type', 'clientId', 'saleDate', 'deliveredDate', 'lines']) {
+    expect(fn).not.toMatch(/fields\.(type|clientId|saleDate|lines)\b/)
+    for (const key of ['type', 'clientId', 'saleDate', 'lines']) {
       expect(fn).toContain(`SALE_FIELDS.${key}`)
     }
   })

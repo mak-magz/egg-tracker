@@ -58,12 +58,23 @@ describe('server guards', () => {
       'server/api/sales/index.post.ts',
       'server/api/sales/[id].get.ts',
       'server/api/sales/[id].put.ts',
-      'server/api/sales/[id].delete.ts',
-      'server/api/sales/[id]/mark-delivered.post.ts',
-      'server/api/sales/[id]/mark-pending.post.ts',
       'server/api/sales/[id]/void.post.ts',
       'server/api/sales/on-hand.get.ts',
+      // Feature 05: the eight order routes.
+      'server/api/orders/index.get.ts',
+      'server/api/orders/index.post.ts',
+      'server/api/orders/[id].get.ts',
+      'server/api/orders/[id].put.ts',
+      'server/api/orders/[id]/status.post.ts',
+      'server/api/orders/[id]/cancel.post.ts',
+      'server/api/orders/[id]/close.post.ts',
+      'server/api/orders/[id]/deliver.post.ts',
     ]))
+  })
+
+  it('has no DELETE route for sales or orders (sales are void-only, orders are never deleted: AC23, AC40)', () => {
+    const deletes = apiFiles.map(rel).filter(f => (f.startsWith('server/api/sales/') || f.startsWith('server/api/orders/')) && f.endsWith('.delete.ts'))
+    expect(deletes).toEqual([])
   })
 
   it('(a) every server/api route is wrapped in defineAuthedHandler or defineTenantHandler', () => {
