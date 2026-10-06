@@ -804,6 +804,7 @@ export type Database = {
         }
         Returns: Json
       }
+      get_inventory: { Args: { p_tenant_id: string }; Returns: Json }
       get_on_hand: {
         Args: { p_size_ids?: string[]; p_tenant_id: string }
         Returns: Json
