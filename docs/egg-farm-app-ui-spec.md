@@ -180,7 +180,7 @@ Derived from the product context (single owner-operator, responsive web, fast da
 
 ## 6. Screen: Inventory
 
-> **This is feature 06** (not 04/05 as earlier drafts numbered it; feature 04 is Sales, feature 05 is the invoice/print view). Not yet designed; when it is, it reuses the on-hand-by-size calculation `docs/features/04-sales.md` §3 already built for Sales' per-line hint (`app.on_hand_json`), so the two screens can never disagree.
+> **This is feature 06** (`docs/features/06-inventory.md`, designed 2026-10-07). It reuses `app.on_hand_json`, so it can never disagree with Sales' per-line hint. Where this section differs from the feature doc, the feature doc wins: there is **no "Sellable" figure** (orders reserve nothing), the summary shows Total on hand plus "Owed on open orders" (information only, not subtracted), a negative on-hand shows its true value with a note, and archived sizes appear only while they hold eggs or are owed.
 
 **Purpose:** show current sellable eggs on hand, by size. Read-only (computed) in v1 — there's no manual inventory editing, since it's derived from production − sales.
 
