@@ -152,6 +152,195 @@ export type Database = {
           },
         ]
       }
+      order_counters: {
+        Row: {
+          next_number: number
+          tenant_id: string
+          updated_at: string
+        }
+        Insert: {
+          next_number?: number
+          tenant_id: string
+          updated_at?: string
+        }
+        Update: {
+          next_number?: number
+          tenant_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "order_counters_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: true
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      order_lines: {
+        Row: {
+          created_at: string
+          dropped_eggs: number
+          eggs: number
+          line_total: number
+          order_id: string
+          price_per_tray: number
+          size_id: string
+          tenant_id: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          dropped_eggs?: number
+          eggs: number
+          line_total: number
+          order_id: string
+          price_per_tray: number
+          size_id: string
+          tenant_id: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          dropped_eggs?: number
+          eggs?: number
+          line_total?: number
+          order_id?: string
+          price_per_tray?: number
+          size_id?: string
+          tenant_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "order_lines_order_fk"
+            columns: ["tenant_id", "order_id"]
+            isOneToOne: false
+            referencedRelation: "orders"
+            referencedColumns: ["tenant_id", "id"]
+          },
+          {
+            foreignKeyName: "order_lines_size_fk"
+            columns: ["tenant_id", "size_id"]
+            isOneToOne: false
+            referencedRelation: "sizes"
+            referencedColumns: ["tenant_id", "id"]
+          },
+          {
+            foreignKeyName: "order_lines_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      order_submissions: {
+        Row: {
+          created_at: string
+          id: string
+          order_id: string
+          payload_hash: string
+          tenant_id: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          id: string
+          order_id: string
+          payload_hash: string
+          tenant_id: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          order_id?: string
+          payload_hash?: string
+          tenant_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "order_submissions_order_fk"
+            columns: ["tenant_id", "order_id"]
+            isOneToOne: false
+            referencedRelation: "orders"
+            referencedColumns: ["tenant_id", "id"]
+          },
+          {
+            foreignKeyName: "order_submissions_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      orders: {
+        Row: {
+          cancelled_at: string | null
+          client_id: string
+          closed_short_at: string | null
+          converted_from_sale_number: number | null
+          created_at: string
+          id: string
+          order_date: string
+          order_number: number
+          status: string
+          tenant_id: string
+          updated_at: string
+          version: number
+          wanted_by: string | null
+        }
+        Insert: {
+          cancelled_at?: string | null
+          client_id: string
+          closed_short_at?: string | null
+          converted_from_sale_number?: number | null
+          created_at?: string
+          id?: string
+          order_date: string
+          order_number: number
+          status?: string
+          tenant_id: string
+          updated_at?: string
+          version?: number
+          wanted_by?: string | null
+        }
+        Update: {
+          cancelled_at?: string | null
+          client_id?: string
+          closed_short_at?: string | null
+          converted_from_sale_number?: number | null
+          created_at?: string
+          id?: string
+          order_date?: string
+          order_number?: number
+          status?: string
+          tenant_id?: string
+          updated_at?: string
+          version?: number
+          wanted_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "orders_client_fk"
+            columns: ["tenant_id", "client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["tenant_id", "id"]
+          },
+          {
+            foreignKeyName: "orders_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       production: {
         Row: {
           created_at: string
@@ -364,9 +553,9 @@ export type Database = {
           created_at: string
           delivered_date: string | null
           id: string
+          order_id: string | null
           sale_date: string
           sale_number: number
-          status: string
           tenant_id: string
           type: string
           updated_at: string
@@ -378,9 +567,9 @@ export type Database = {
           created_at?: string
           delivered_date?: string | null
           id?: string
+          order_id?: string | null
           sale_date: string
           sale_number: number
-          status: string
           tenant_id: string
           type: string
           updated_at?: string
@@ -392,9 +581,9 @@ export type Database = {
           created_at?: string
           delivered_date?: string | null
           id?: string
+          order_id?: string | null
           sale_date?: string
           sale_number?: number
-          status?: string
           tenant_id?: string
           type?: string
           updated_at?: string
@@ -407,6 +596,13 @@ export type Database = {
             columns: ["tenant_id", "client_id"]
             isOneToOne: false
             referencedRelation: "clients"
+            referencedColumns: ["tenant_id", "id"]
+          },
+          {
+            foreignKeyName: "sales_order_fk"
+            columns: ["tenant_id", "order_id"]
+            isOneToOne: false
+            referencedRelation: "orders"
             referencedColumns: ["tenant_id", "id"]
           },
           {
@@ -557,11 +753,31 @@ export type Database = {
         Args: { p_size_id: string; p_tenant_id: string }
         Returns: Json
       }
+      cancel_order: {
+        Args: { p_order_id: string; p_tenant_id: string }
+        Returns: Json
+      }
+      close_order: {
+        Args: { p_order_id: string; p_tenant_id: string; p_version: number }
+        Returns: Json
+      }
+      create_order: {
+        Args: {
+          p_client_id: string
+          p_eggs: number[]
+          p_order_date: string
+          p_prices: number[]
+          p_size_ids: string[]
+          p_submission_id: string
+          p_tenant_id: string
+          p_wanted_by?: string
+        }
+        Returns: Json
+      }
       create_sale: {
         Args: {
           p_client_id?: string
           p_confirm_shortfall?: boolean
-          p_delivered_date?: string
           p_eggs: number[]
           p_prices: number[]
           p_sale_date: string
@@ -576,16 +792,40 @@ export type Database = {
         Args: { p_day: string; p_tenant_id: string }
         Returns: Json
       }
-      delete_sale: {
-        Args: { p_sale_id: string; p_tenant_id: string }
+      deliver_order: {
+        Args: {
+          p_confirm_shortfall?: boolean
+          p_delivered_date: string
+          p_eggs: number[]
+          p_order_id: string
+          p_size_ids: string[]
+          p_submission_id: string
+          p_tenant_id: string
+        }
         Returns: Json
       }
       get_on_hand: {
         Args: { p_size_ids?: string[]; p_tenant_id: string }
         Returns: Json
       }
+      get_order: {
+        Args: { p_order_id: string; p_tenant_id: string }
+        Returns: Json
+      }
       get_sale: {
         Args: { p_sale_id: string; p_tenant_id: string }
+        Returns: Json
+      }
+      list_orders: {
+        Args: {
+          p_client_id?: string
+          p_from?: string
+          p_limit?: number
+          p_offset?: number
+          p_tenant_id: string
+          p_to?: string
+          p_view?: string
+        }
         Returns: Json
       }
       list_sales: {
@@ -595,7 +835,6 @@ export type Database = {
           p_include_voided?: boolean
           p_limit?: number
           p_offset?: number
-          p_status?: string
           p_tenant_id: string
           p_to?: string
           p_type?: string
@@ -611,19 +850,6 @@ export type Database = {
           p_submission_id: string
           p_tenant_id: string
         }
-        Returns: Json
-      }
-      mark_sale_delivered: {
-        Args: {
-          p_confirm_shortfall?: boolean
-          p_delivered_date: string
-          p_sale_id: string
-          p_tenant_id: string
-        }
-        Returns: Json
-      }
-      mark_sale_pending: {
-        Args: { p_sale_id: string; p_tenant_id: string }
         Returns: Json
       }
       production_days: {
@@ -670,6 +896,10 @@ export type Database = {
         Args: { p_size_id: string; p_tenant_id: string }
         Returns: Json
       }
+      set_order_status: {
+        Args: { p_order_id: string; p_status: string; p_tenant_id: string }
+        Returns: Json
+      }
       update_client: {
         Args: {
           p_client_id: string
@@ -681,11 +911,24 @@ export type Database = {
         }
         Returns: Json
       }
+      update_order: {
+        Args: {
+          p_client_id: string
+          p_eggs: number[]
+          p_order_date: string
+          p_order_id: string
+          p_prices: number[]
+          p_size_ids: string[]
+          p_tenant_id: string
+          p_version: number
+          p_wanted_by?: string
+        }
+        Returns: Json
+      }
       update_sale: {
         Args: {
           p_client_id?: string
           p_confirm_shortfall?: boolean
-          p_delivered_date?: string
           p_eggs: number[]
           p_prices: number[]
           p_sale_date: string

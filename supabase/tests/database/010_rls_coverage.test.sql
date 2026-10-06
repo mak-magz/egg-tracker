@@ -1,7 +1,7 @@
 -- 010_rls_coverage: meta-guards over the whole `public` schema (docs/features/00-project-scaffold.md §3.7).
 -- A new table that forgets RLS, updated_at, tenant_id, its index, or its isolation-registry row fails here.
 begin;
-select plan(47);
+select plan(57);
 
 -- Ordinary + partitioned tables in public.
 create temp view _public_tables as
@@ -391,6 +391,94 @@ select is(
 
 select ok(has_column_privilege('authenticated', 'public.tenants', 'currency', 'select'),
   'authenticated can read tenants.currency (through its own farm''s row)');
+
+-- Feature 05: the order RPCs are security INVOKER, authenticated-only. Orders are never deleted and sales are void-only,
+-- so what an owner can NOT do is pinned down at the privilege level, not only in the functions.
+create temp view _order_rpcs as
+  select f from unnest(array[
+    'public.create_order(uuid,uuid,uuid,date,uuid[],integer[],numeric[],date)'::regprocedure,
+    'public.update_order(uuid,uuid,bigint,uuid,date,uuid[],integer[],numeric[],date)'::regprocedure,
+    'public.set_order_status(uuid,uuid,text)'::regprocedure,
+    'public.cancel_order(uuid,uuid)'::regprocedure,
+    'public.close_order(uuid,uuid,bigint)'::regprocedure,
+    'public.deliver_order(uuid,uuid,uuid,date,uuid[],integer[],boolean)'::regprocedure,
+    'public.get_order(uuid,uuid)'::regprocedure,
+    'public.list_orders(uuid,text,uuid,date,date,int,int)'::regprocedure]) f;
+
+select is(
+  array(select r.f::text from _order_rpcs r join pg_proc p on p.oid = r.f where p.prosecdef order by 1),
+  '{}'::text[],
+  'the order RPCs are security invoker');
+
+select is(
+  array(select r.f::text from _order_rpcs r where has_function_privilege('anon', r.f, 'execute') order by 1),
+  '{}'::text[],
+  'anon cannot execute the order RPCs');
+
+select is(
+  array(select r.f::text from _order_rpcs r where not has_function_privilege('authenticated', r.f, 'execute') order by 1),
+  '{}'::text[],
+  'authenticated can execute the order RPCs');
+
+select is(
+  array(select f::text from unnest(array[
+          'app.order_delivered_eggs(uuid,uuid)'::regprocedure,
+          'app.order_status_for(uuid,uuid)'::regprocedure,
+          'app.recompute_order_status(uuid,uuid,boolean)'::regprocedure,
+          'app.order_payload_hash(uuid,date,date,uuid[],integer[],numeric[])'::regprocedure,
+          'app.deliver_payload_hash(uuid,date,uuid[],integer[])'::regprocedure,
+          'app.order_json(uuid,uuid,boolean)'::regprocedure,
+          'app.list_orders_json(uuid,text,uuid,date,date,int,int)'::regprocedure,
+          'app.validate_order_lines(uuid,uuid[],integer[],numeric[],uuid[])'::regprocedure,
+          'app.orders_write_guard()'::regprocedure,
+          'app.order_lines_write_guard()'::regprocedure,
+          'app.order_lines_bounds()'::regprocedure,
+          'app.sale_lines_linked_guard()'::regprocedure,
+          'app.sales_void_sync_order()'::regprocedure,
+          'app.seed_order_counter(uuid)'::regprocedure]) f
+        where has_function_privilege('anon', f, 'execute') order by 1),
+  '{}'::text[],
+  'the app.* order helpers and trigger functions are not executable by anon');
+
+select is(
+  array(select t || ':' || p from unnest(array['public.orders', 'public.order_lines', 'public.order_counters', 'public.order_submissions', 'public.sales']) t,
+                                   unnest(array['delete', 'truncate', 'references', 'trigger']) p
+        where has_table_privilege('authenticated', t, p) and not (t = 'public.order_lines' and p = 'delete') order by 1),
+  '{}'::text[],
+  'authenticated has no delete, truncate, references or trigger privilege on orders, order_counters, order_submissions or sales (AC23, AC40); order_lines keeps delete for update_order');
+
+select is(
+  array(select p.polrelid::regclass::text || ':' || p.polname::text from pg_policy p
+        where p.polrelid in ('public.orders'::regclass, 'public.order_counters'::regclass, 'public.order_submissions'::regclass, 'public.sales'::regclass)
+          and p.polcmd in ('d', '*') order by 1),
+  '{}'::text[],
+  'orders, order_counters, order_submissions and sales have no delete policy');
+
+select is(
+  array(select c from unnest(array['id', 'created_at', 'converted_from_sale_number', 'cancelled_at', 'closed_short_at', 'version']) c
+        where has_column_privilege('authenticated', 'public.orders', c, 'insert') order by 1),
+  '{}'::text[],
+  'authenticated cannot insert id, created_at, converted_from_sale_number, cancelled_at, closed_short_at or version into orders (an order is born open)');
+
+select is(
+  array(select c from unnest(array['id', 'tenant_id', 'order_number', 'converted_from_sale_number', 'created_at']) c
+        where has_column_privilege('authenticated', 'public.orders', c, 'update') order by 1),
+  '{}'::text[],
+  'authenticated cannot update id, tenant_id, order_number, converted_from_sale_number or created_at on orders');
+
+select is(
+  array(select c from unnest(array['delivered_date', 'id', 'created_at']) c
+        where has_column_privilege('authenticated', 'public.sales', c, 'insert') or has_column_privilege('authenticated', 'public.sales', c, 'update')
+        order by 1),
+  '{}'::text[],
+  'authenticated can neither insert nor update a sale''s id, created_at or generated delivered_date, (feature 05)');
+
+select ok(
+  has_column_privilege('authenticated', 'public.sales', 'order_id', 'insert')
+  and not has_column_privilege('authenticated', 'public.sales', 'order_id', 'update')
+  and not has_column_privilege('authenticated', 'public.order_lines', 'size_id', 'update')
+  and not exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'sales' and column_name in ('status')),
+  'order_id is insertable but never updatable on sales; an order line''s size can not be updated; sales has no status column');
 
 select * from finish();
 rollback;

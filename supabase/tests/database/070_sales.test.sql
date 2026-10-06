@@ -1,14 +1,16 @@
--- 070_sales: sale rules (M15) and the nine functions (M16). docs/features/04-sales.md §3.1, §3.6.
+-- 070_sales: sale rules (M15) and the sale functions (M16, reworked by M19 of feature 05: no pending, no delete, one date).
+-- docs/features/04-sales.md §3.1, §3.6; docs/features/05-orders.md AC37-AC42.
 -- Functions run as the farm owner, exactly as the server calls them. Concurrency (two phones creating a sale at
--- once, two marking the last stock delivered at once) can't be tested in one session: the manual recipe is in §4.
+-- once) can't be tested in one session: the manual recipe is in §4.
 begin;
 select plan(84);
 
-select tests.create_farm('Farm R', 'r');   -- sale numbers, delete (pending only), delete vs void
+select tests.create_farm('Farm R', 'r');   -- sale numbers, void-only
 select tests.create_farm('Farm S', 's');   -- lines and client validation
-select tests.create_farm('Farm T', 't');   -- status derivation and frozen totals
+select tests.create_farm('Farm T', 't');   -- dates, stale edits and frozen totals
 select tests.create_farm('Farm U', 'u');   -- stock, shortfall, on-hand
-select tests.create_farm('Farm V', 'v');   -- idempotency and idempotent status/version
+select tests.create_farm('Farm V', 'v');   -- idempotency
+select tests.create_farm('Farm W', 'w');   -- on-hand example and type change
 
 -- ---------------------------------------------------------------------------------------------
 -- Helpers
@@ -116,102 +118,72 @@ create temp table _r_sale3 as
     (select tr from _r_ids), pg_temp.szid('r', 'Small'), (select cid from _r_ids))) -> 'sale') as sale;
 select is((select sale ->> 'saleNumber' from _r_sale3), '3', 'AC5: the third sale is 3');
 
--- Delete sale 2 (it is pending, so Delete applies).
+-- Sales are void-only (AC40): no delete function, no delete grant, no delete policy.
+select ok(to_regprocedure('public.delete_sale(uuid,uuid)') is null, 'AC40: there is no delete_sale function any more');
+select ok(to_regprocedure('public.mark_sale_delivered(uuid,uuid,date,boolean)') is null
+      and to_regprocedure('public.mark_sale_pending(uuid,uuid)') is null, 'AC37: there is no mark-delivered or mark-pending function any more');
 select is(
-  pg_temp.rpc_as('r', format('select public.delete_sale(%L, %L)', (select tr from _r_ids), (select (sale ->> 'id')::uuid from _r_sale2))) ->> 'saleNumber',
-  '2', 'AC44: sale 2 (pending) is deleted');
-select is(pg_temp.n_sales('r'), 2::bigint, 'AC5: farm R now has 2 sales (1 and 3)');
+  tests.try_as('r', format('delete from public.sales where id = %L', (select (sale ->> 'id')::uuid from _r_sale2))),
+  '42501', 'AC40: a direct delete of a sale is denied by privilege, for the owner of the farm too');
+select is(pg_temp.n_sales('r'), 3::bigint, 'AC40: all three sales are still there');
 
 create temp table _r_sale4 as
   select (pg_temp.rpc_as('r', format(
     'select public.create_sale(%L, gen_random_uuid(), ''delivery'', current_date, array[%L]::uuid[], array[30], array[6.5], %L)',
     (select tr from _r_ids), pg_temp.szid('r', 'Small'), (select cid from _r_ids))) -> 'sale') as sale;
-select is((select sale ->> 'saleNumber' from _r_sale4), '4', 'AC5: a fourth sale is 4, not 2 -- the deleted number is never reused');
-select is(
-  (select count(*) from public.sales where tenant_id = (select tr from _r_ids) and sale_number = 2),
-  0::bigint, 'AC5: sale number 2 never appears again');
+select is((select sale ->> 'saleNumber' from _r_sale4), '4', 'AC5: a fourth sale is 4');
+select ok(not ((select sale from _r_sale4) ? 'status') and not ((select sale from _r_sale4) ? 'deliveredDate'),
+  'AC37: a sale has no status and no deliveredDate in its JSON');
+select is((select sale ->> 'orderId' from _r_sale4), null, 'a direct sale has no orderId');
+select is((select sale ->> 'orderNumber' from _r_sale4), null, 'a direct sale has no orderNumber');
 
 -- ---------------------------------------------------------------------------------------------
--- B. Delete (pending only) vs Void (complete only, one-way) (AC44, AC67, AC68, AC53, AC54).
+-- B. Void (one-way, AC40, AC67, AC68, AC53, AC54).
 -- ---------------------------------------------------------------------------------------------
--- Sale 1 (still pending) -> mark delivered -> complete.
-select is(
-  (pg_temp.rpc_as('r', format('select public.mark_sale_delivered(%L, %L, current_date)', (select tr from _r_ids), (select (sale ->> 'id')::uuid from _r_sales))) -> 'sale') ->> 'status',
-  'complete', 'sale 1 marked delivered is complete');
-
-select is(
-  pg_temp.try_detail('r', format('select public.delete_sale(%L, %L)', (select tr from _r_ids), (select (sale ->> 'id')::uuid from _r_sales))),
-  'TM041||', 'AC44: a complete sale cannot be deleted (TM041)');
-
--- The delete_sale REFUSAL wrote nothing: the sale is still there, still complete.
-select is(
-  (select status from public.sales where id = (select (sale ->> 'id')::uuid from _r_sales)),
-  'complete', 'AC45: the refused delete left the sale untouched');
-
--- The direct-write backstop trigger (sales_delete_guard) refuses the same delete outside the function too.
-select is(
-  tests.try_as('r', format('delete from public.sales where id = %L', (select (sale ->> 'id')::uuid from _r_sales))),
-  'TM041', 'AC44: a direct delete of a complete sale is refused by the sales_delete_guard trigger too');
-
--- Void it instead. mark_sale_delivered already bumped the version from 1 to 2.
 create temp table _r_void1 as
-  select pg_temp.rpc_as('r', format('select public.void_sale(%L, %L, 2)', (select tr from _r_ids), (select (sale ->> 'id')::uuid from _r_sales))) as r;
-select is((select r -> 'sale' ->> 'status' from _r_void1), 'complete', 'AC67: status stays complete forever on a voided sale');
+  select pg_temp.rpc_as('r', format('select public.void_sale(%L, %L, 1)', (select tr from _r_ids), (select (sale ->> 'id')::uuid from _r_sales))) as r;
 select isnt((select r -> 'sale' ->> 'voidedAt' from _r_void1), null, 'AC67: voidedAt is now set');
 select is((select r ->> 'changed' from _r_void1), 'true', 'AC67: voiding changed the sale');
+select is((select r -> 'order' from _r_void1), 'null'::jsonb, 'AC35: voiding a direct sale returns order: null');
 
 -- Voiding again is a no-op (idempotent, AC68): changed: false, no error, no version bump, whatever version is passed.
 create temp table _r_void1b as
-  select pg_temp.rpc_as('r', format('select public.void_sale(%L, %L, 1)', (select tr from _r_ids), (select (sale ->> 'id')::uuid from _r_sales))) as r;
+  select pg_temp.rpc_as('r', format('select public.void_sale(%L, %L, 99)', (select tr from _r_ids), (select (sale ->> 'id')::uuid from _r_sales))) as r;
 select is((select r ->> 'changed' from _r_void1b), 'false', 'AC68: voiding an already-voided sale is changed: false');
 select is((select r -> 'sale' ->> 'version' from _r_void1b), (select r -> 'sale' ->> 'version' from _r_void1), 'AC68: the second void does not bump the version');
 
--- A voided sale accepts no further change of any kind (AC68): TM043 on every mutating call.
+-- A stale version on a live sale: TM036.
+select is(
+  pg_temp.try_detail('r', format('select public.void_sale(%L, %L, 99)', (select tr from _r_ids), (select (sale ->> 'id')::uuid from _r_sale4))),
+  'TM036||', 'AC43: voiding with a stale version is refused (TM036)');
+
+-- A voided sale accepts no further change of any kind (AC68): TM043.
 select is(
   pg_temp.try_detail('r', format('select public.update_sale(%L, %L, 2, ''delivery'', current_date, array[%L]::uuid[], array[30], array[6.5], %L)',
     (select tr from _r_ids), (select (sale ->> 'id')::uuid from _r_sales), pg_temp.szid('r', 'Small'), (select cid from _r_ids))),
   'TM043||', 'AC68: update_sale on a voided sale is refused (TM043)');
-select is(
-  pg_temp.try_detail('r', format('select public.mark_sale_pending(%L, %L)', (select tr from _r_ids), (select (sale ->> 'id')::uuid from _r_sales))),
-  'TM043||', 'AC68: mark_sale_pending on a voided sale is refused (TM043)');
-select is(
-  pg_temp.try_detail('r', format('select public.mark_sale_delivered(%L, %L, current_date)', (select tr from _r_ids), (select (sale ->> 'id')::uuid from _r_sales))),
-  'TM043||', 'AC68: mark_sale_delivered on a voided sale is refused (TM043)');
-select is(
-  pg_temp.try_detail('r', format('select public.delete_sale(%L, %L)', (select tr from _r_ids), (select (sale ->> 'id')::uuid from _r_sales))),
-  'TM041||', 'AC44: a voided sale still cannot be deleted (TM041, the same message as a plain complete sale)');
 
--- voided_at is one-way even through a DIRECT write (the sales_write_guard backstop, not just void_sale itself):
--- an owner cannot clear it, or move it to a different instant, via a hand-built PostgREST update.
+-- voided_at is one-way even through a DIRECT write (the sales_write_guard backstop, not just void_sale itself).
 select is(
   tests.try_as('r', format('update public.sales set voided_at = null where id = %L', (select (sale ->> 'id')::uuid from _r_sales))),
   'TM040', 'AC67/AC68: a direct write can never clear voided_at once set (TM040)');
--- A literal, different instant (not now(): within one test-file transaction, now() is pinned to the transaction
--- start, so it would equal the value void_sale already wrote earlier in this same transaction).
+-- A literal, different instant (not now(): within one test-file transaction, now() is pinned to the transaction start).
 select is(
   tests.try_as('r', format('update public.sales set voided_at = ''2030-01-01T00:00:00Z'' where id = %L', (select (sale ->> 'id')::uuid from _r_sales))),
   'TM040', 'AC67/AC68: a direct write can never move voided_at to a different instant either (TM040)');
 
--- A pending sale is never voided (AC67).
+-- Voided sales are excluded from list_sales by default, included with include_voided.
 select is(
-  pg_temp.try_detail('r', format('select public.void_sale(%L, %L, 1)', (select tr from _r_ids), (select (sale ->> 'id')::uuid from _r_sale4))),
-  'TM042||', 'AC67: voiding a pending sale is refused (TM042)');
-
--- Voided sales are excluded from list_sales by default, included (and marked) with include_voided.
+  (pg_temp.rpc_as('r', format('select public.list_sales(%L, null, null, null, null, 100, 0, false)', (select tr from _r_ids))) ->> 'total')::int,
+  3, 'AC68: list_sales without includeVoided counts 3 (the voided sale 1 is hidden)');
 select is(
-  (pg_temp.rpc_as('r', format('select public.list_sales(%L, null, null, null, null, null, 100, 0, false)', (select tr from _r_ids))) ->> 'total')::int,
-  2, 'AC68: list_sales without includeVoided counts 2 (sale 3 and sale 4; the voided sale 1 is hidden)');
-select is(
-  (pg_temp.rpc_as('r', format('select public.list_sales(%L, null, null, null, null, null, 100, 0, true)', (select tr from _r_ids))) ->> 'total')::int,
-  3, 'AC68: list_sales with includeVoided counts all 3');
+  (pg_temp.rpc_as('r', format('select public.list_sales(%L, null, null, null, null, 100, 0, true)', (select tr from _r_ids))) ->> 'total')::int,
+  4, 'AC68: list_sales with includeVoided counts all 4');
 select ok(
-  (pg_temp.rpc_as('r', format('select public.list_sales(%L, null, null, null, null, null, 100, 0, false)', (select tr from _r_ids))) ->> 'hasAny')::boolean,
+  (pg_temp.rpc_as('r', format('select public.list_sales(%L, null, null, null, null, 100, 0, false)', (select tr from _r_ids))) ->> 'hasAny')::boolean,
   'AC46/AC68: hasAny ignores includeVoided/every filter');
 
--- delete_sale / void_sale on a foreign or already-gone id: TM027.
-select is(
-  pg_temp.try_detail('r', format('select public.delete_sale(%L, gen_random_uuid())', (select tr from _r_ids))),
-  'TM027||', 'a delete of an unknown sale id is TM027');
+-- void_sale on an unknown id: TM027.
 select is(
   pg_temp.try_detail('r', format('select public.void_sale(%L, gen_random_uuid(), 1)', (select tr from _r_ids))),
   'TM027||', 'a void of an unknown sale id is TM027');
@@ -329,70 +301,56 @@ select is(
   'true', 'AC38/AC41: an edit that keeps a since-archived size''s line (just changing eggs) succeeds');
 
 -- ---------------------------------------------------------------------------------------------
--- D. Status derivation (AC23, AC24, AC34, AC64-AC66) and stale-edit / idempotent-status behaviour (AC37, AC40, AC43).
+-- D. One date (AC38, decision U1), stale-edit and unchanged behaviour (AC40, AC43).
 -- ---------------------------------------------------------------------------------------------
 create temp table _t_ids as
   select tests.tenant_id_of('t') as tt, pg_temp.add_client('t', 'T Client') as cid, pg_temp.szid('t', 'Small') as small, pg_temp.szid('t', 'Medium') as medium;
 grant select on _t_ids to authenticated;
--- Enough stock for the complete/on-site sales in this section (not testing shortfalls here).
+-- Enough stock for the sales in this section (not testing shortfalls here).
 select pg_temp.produce('t', 'Small', 10000);
 select pg_temp.produce('t', 'Medium', 10000);
 
--- Delivery, no delivered date -> pending, delivered_date null.
-create temp table _t_pending as
-  select (pg_temp.rpc_as('t', format('select public.create_sale(%L, gen_random_uuid(), ''delivery'', current_date, array[%L]::uuid[], array[30], array[6.5], %L)', (select tt from _t_ids), (select small from _t_ids), (select cid from _t_ids))) -> 'sale') as sale;
-select is((select sale ->> 'status' from _t_pending), 'pending', 'AC23: a delivery with no delivered date is created pending');
-select is((select sale ->> 'deliveredDate' from _t_pending), null, 'AC23: ... with no delivered date');
-
--- Delivery, "Already delivered" -> complete with that date.
-create temp table _t_delivered as
-  select (pg_temp.rpc_as('t', format('select public.create_sale(%L, gen_random_uuid(), ''delivery'', current_date, array[%L]::uuid[], array[30], array[6.5], %L, current_date)', (select tt from _t_ids), (select small from _t_ids), (select cid from _t_ids))) -> 'sale') as sale;
-select is((select sale ->> 'status' from _t_delivered), 'complete', 'AC24: "Already delivered" creates the sale complete');
-select is((select sale ->> 'deliveredDate' from _t_delivered), to_char(current_date, 'YYYY-MM-DD'), 'AC24: ... with that delivered date');
-
--- On-site is ALWAYS complete, delivered_date = sale_date, regardless of a passed delivered_date argument.
-create temp table _t_onsite as
-  select (pg_temp.rpc_as('t', format('select public.create_sale(%L, gen_random_uuid(), ''on_site'', current_date, array[%L]::uuid[], array[30], array[6.5], null, current_date - 5)', (select tt from _t_ids), (select small from _t_ids))) -> 'sale') as sale;
-select is((select sale ->> 'status' from _t_onsite), 'complete', 'AC24: on-site is always complete');
-select is((select sale ->> 'deliveredDate' from _t_onsite), to_char(current_date, 'YYYY-MM-DD'), 'AC24: ... delivered date forced to the sale date, ignoring the argument');
-
--- Delivered date before the sale date: TM034. Either date in the future: TM002 with the right hint.
+create temp table _t_delivery as
+  select (pg_temp.rpc_as('t', format('select public.create_sale(%L, gen_random_uuid(), ''delivery'', current_date - 3, array[%L]::uuid[], array[30], array[6.5], %L)', (select tt from _t_ids), (select small from _t_ids), (select cid from _t_ids))) -> 'sale') as sale;
+select is((select sale ->> 'saleDate' from _t_delivery), to_char(current_date - 3, 'YYYY-MM-DD'), 'AC38: a sale has one date, the day the eggs left (a past date is allowed)');
 select is(
-  pg_temp.try_detail('t', format('select public.create_sale(%L, gen_random_uuid(), ''delivery'', current_date, array[%L]::uuid[], array[30], array[6.5], %L, current_date - 1)', (select tt from _t_ids), (select small from _t_ids), (select cid from _t_ids))),
-  'TM034||', 'AC33: a delivered date before the sale date is refused (TM034)');
+  (select to_char(delivered_date, 'YYYY-MM-DD') from public.sales where id = (select (sale ->> 'id')::uuid from _t_delivery)),
+  to_char(current_date - 3, 'YYYY-MM-DD'), 'decision U3: delivered_date is a generated copy of sale_date');
+select is(
+  tests.try_as('t', format('insert into public.sales (tenant_id, sale_number, type, sale_date, delivered_date) values (%L, 998, ''on_site'', current_date, current_date)', (select tt from _t_ids))),
+  '428C9', 'decision U3: an owner cannot write delivered_date (generated column)');
+select is(
+  tests.try_as('t', format('update public.sales set delivered_date = current_date where id = %L', (select (sale ->> 'id')::uuid from _t_delivery))),
+  '428C9', 'decision U3: ... or update it');
+
+-- The sale date in the future: TM002.
 select is(
   pg_temp.try_detail('t', format('select public.create_sale(%L, gen_random_uuid(), ''delivery'', current_date + 2, array[%L]::uuid[], array[30], array[6.5], %L)', (select tt from _t_ids), (select small from _t_ids), (select cid from _t_ids))),
   'TM002|sale_date|', 'AC23: a sale date more than 1 day in the future is refused (TM002 sale_date)');
-select is(
-  pg_temp.try_detail('t', format('select public.create_sale(%L, gen_random_uuid(), ''delivery'', current_date, array[%L]::uuid[], array[30], array[6.5], %L, current_date + 2)', (select tt from _t_ids), (select small from _t_ids), (select cid from _t_ids))),
-  'TM002|delivered_date|', 'AC33: a delivered date more than 1 day in the future is refused (TM002 delivered_date)');
-
--- mark_sale_delivered on an already-complete sale: changed false, no re-check of the date, no error (AC37).
-create temp table _t_before as select version from public.sales where id = (select (sale ->> 'id')::uuid from _t_delivered);
-select is(
-  pg_temp.rpc_as('t', format('select public.mark_sale_delivered(%L, %L, current_date - 100)', (select tt from _t_ids), (select (sale ->> 'id')::uuid from _t_delivered))) ->> 'changed',
-  'false', 'AC37: mark_sale_delivered on an already-complete sale is changed: false (no date re-check)');
-select is(
-  (select version from public.sales where id = (select (sale ->> 'id')::uuid from _t_delivered)),
-  (select version from _t_before), 'AC37: ... and the version does not move');
 
 -- update_sale with a STALE version whose RESULT matches what's stored: changed false, no error (D6).
 select is(
-  pg_temp.rpc_as('t', format('select public.update_sale(%L, %L, 999, ''delivery'', current_date, array[%L]::uuid[], array[30], array[6.5], %L, current_date)',
-    (select tt from _t_ids), (select (sale ->> 'id')::uuid from _t_delivered), (select small from _t_ids), (select cid from _t_ids))) ->> 'changed',
+  pg_temp.rpc_as('t', format('select public.update_sale(%L, %L, 999, ''delivery'', current_date - 3, array[%L]::uuid[], array[30], array[6.5], %L)',
+    (select tt from _t_ids), (select (sale ->> 'id')::uuid from _t_delivery), (select small from _t_ids), (select cid from _t_ids))) ->> 'changed',
   'false', 'AC43/D6: a stale version whose result matches what''s stored still succeeds as changed: false');
 
 -- A genuinely stale, DIFFERENT edit: TM036.
 select is(
-  pg_temp.try_detail('t', format('select public.update_sale(%L, %L, 999, ''delivery'', current_date, array[%L]::uuid[], array[10], array[6.5], %L, current_date)',
-    (select tt from _t_ids), (select (sale ->> 'id')::uuid from _t_delivered), (select small from _t_ids), (select cid from _t_ids))),
+  pg_temp.try_detail('t', format('select public.update_sale(%L, %L, 999, ''delivery'', current_date - 3, array[%L]::uuid[], array[10], array[6.5], %L)',
+    (select tt from _t_ids), (select (sale ->> 'id')::uuid from _t_delivery), (select small from _t_ids), (select cid from _t_ids))),
   'TM036||', 'AC43: a genuinely stale, different edit is refused (TM036)');
 
 -- Saving with nothing changed (correct version): changed false, no version bump either.
 select is(
-  pg_temp.rpc_as('t', format('select public.update_sale(%L, %L, 1, ''delivery'', current_date, array[%L]::uuid[], array[30], array[6.5], %L, current_date)',
-    (select tt from _t_ids), (select (sale ->> 'id')::uuid from _t_delivered), (select small from _t_ids), (select cid from _t_ids))) ->> 'changed',
+  pg_temp.rpc_as('t', format('select public.update_sale(%L, %L, 1, ''delivery'', current_date - 3, array[%L]::uuid[], array[30], array[6.5], %L)',
+    (select tt from _t_ids), (select (sale ->> 'id')::uuid from _t_delivery), (select small from _t_ids), (select cid from _t_ids))) ->> 'changed',
   'false', 'AC40: saving with nothing changed is changed: false (server-side backstop)');
+
+-- Changing the date alone is a plain edit and bumps the version.
+select is(
+  pg_temp.rpc_as('t', format('select public.update_sale(%L, %L, 1, ''delivery'', current_date - 2, array[%L]::uuid[], array[30], array[6.5], %L)',
+    (select tt from _t_ids), (select (sale ->> 'id')::uuid from _t_delivery), (select small from _t_ids), (select cid from _t_ids))) -> 'sale' ->> 'version',
+  '2', 'a date-only edit bumps the version');
 
 -- ---------------------------------------------------------------------------------------------
 -- E. Frozen totals (AC22, AC55): a line's price and total, once saved, never move because of another line's
@@ -439,59 +397,53 @@ create temp table _u_ids as
   select tests.tenant_id_of('u') as tu, pg_temp.add_client('u', 'U Client') as cid, pg_temp.szid('u', 'Large') as large, pg_temp.szid('u', 'Small') as small, pg_temp.szid('u', 'Jumbo') as jumbo;
 grant select on _u_ids to authenticated;
 
--- AC25 worked example: 600 produced (20 trays), a complete 240-line, a pending 150-line -> on-hand 360 (12 trays).
+-- AC41 worked example (no pending sale any more): 600 produced (20 trays), ONE sale of 240 -> on hand 360 (12 trays).
 select pg_temp.produce('u', 'Large', 600);
 create temp table _u_complete as
   select (pg_temp.rpc_as('u', format('select public.create_sale(%L, gen_random_uuid(), ''on_site'', current_date, array[%L]::uuid[], array[240], array[6.5])', (select tu from _u_ids), (select large from _u_ids))) -> 'sale') as sale;
-create temp table _u_pending as
+select is(
+  (pg_temp.rpc_as('u', format('select public.get_on_hand(%L, array[%L]::uuid[])', (select tu from _u_ids), (select large from _u_ids))) -> 'onHand' -> 0 ->> 'eggs')::int,
+  360, 'AC41: on hand is 600 - 240 = 360');
+
+-- Every sale takes stock now, delivery included (there is no pending to ignore).
+create temp table _u_delivery as
   select (pg_temp.rpc_as('u', format('select public.create_sale(%L, gen_random_uuid(), ''delivery'', current_date, array[%L]::uuid[], array[150], array[6.5], %L)', (select tu from _u_ids), (select large from _u_ids), (select cid from _u_ids))) -> 'sale') as sale;
-
 select is(
   (pg_temp.rpc_as('u', format('select public.get_on_hand(%L, array[%L]::uuid[])', (select tu from _u_ids), (select large from _u_ids))) -> 'onHand' -> 0 ->> 'eggs')::int,
-  360, 'AC25: on hand is 600 - 240 (complete) = 360; the 150-egg PENDING delivery is not subtracted');
+  210, 'AC37: a delivery sale lowers on hand at once, to 210');
 
--- Completing the pending delivery drops on-hand to 210 (AC36).
-select pg_temp.rpc_as('u', format('select public.mark_sale_delivered(%L, %L, current_date)', (select tu from _u_ids), (select (sale ->> 'id')::uuid from _u_pending)));
-select is(
-  (pg_temp.rpc_as('u', format('select public.get_on_hand(%L, array[%L]::uuid[])', (select tu from _u_ids), (select large from _u_ids))) -> 'onHand' -> 0 ->> 'eggs')::int,
-  210, 'AC36: completing the pending delivery lowers on hand to 210 (once per line)');
-
--- Marking it back to pending puts the eggs back on hand (AC39, the reverse of AC36).
-select pg_temp.rpc_as('u', format('select public.mark_sale_pending(%L, %L)', (select tu from _u_ids), (select (sale ->> 'id')::uuid from _u_pending)));
-select is(
-  (pg_temp.rpc_as('u', format('select public.get_on_hand(%L, array[%L]::uuid[])', (select tu from _u_ids), (select large from _u_ids))) -> 'onHand' -> 0 ->> 'eggs')::int,
-  360, 'AC39: mark_sale_pending puts the eggs back on hand');
--- ... and re-completing it drops it again (no shortfall problem: back to the AC25/AC36 scenario).
-select pg_temp.rpc_as('u', format('select public.mark_sale_delivered(%L, %L, current_date)', (select tu from _u_ids), (select (sale ->> 'id')::uuid from _u_pending)));
-
--- An on-site sale that would take a size below 0: TM037 with the shortfall detail, naming only the short size.
+-- A sale that would take a size below 0: TM037 with the shortfall detail, for EVERY new sale (AC38).
 select is(
   split_part(pg_temp.try_detail('u', format('select public.create_sale(%L, gen_random_uuid(), ''on_site'', current_date, array[%L]::uuid[], array[300], array[6.5])', (select tu from _u_ids), (select large from _u_ids))), '|', 1),
   'TM037', 'AC26: an on-site sale of 300 (on hand is 210) shortfalls (TM037)');
+select is(
+  split_part(pg_temp.try_detail('u', format('select public.create_sale(%L, gen_random_uuid(), ''delivery'', current_date, array[%L]::uuid[], array[300], array[6.5], %L)', (select tu from _u_ids), (select large from _u_ids), (select cid from _u_ids))), '|', 1),
+  'TM037', 'AC38: a delivery sale of 300 shortfalls too -- the warning applies to every new sale');
 select is(
   (pg_temp.try_shortfall('u', format('select public.create_sale(%L, gen_random_uuid(), ''on_site'', current_date, array[%L]::uuid[], array[300], array[6.5])', (select tu from _u_ids), (select large from _u_ids))) -> 'shortfall' -> 0 ->> 'onHandEggs')::int,
   210, 'AC26: the shortfall detail names the live on-hand figure (210), not a stale one');
 
 -- The SAME call with confirm_shortfall succeeds (Record anyway).
 create temp table _u_confirmed as
-  select (pg_temp.rpc_as('u', format('select public.create_sale(%L, gen_random_uuid(), ''on_site'', current_date, array[%L]::uuid[], array[300], array[6.5], null, null, true)', (select tu from _u_ids), (select large from _u_ids))) -> 'sale') as sale;
-select is((select sale ->> 'status' from _u_confirmed), 'complete', 'AC26: "Record anyway" (confirmShortfall) saves the sale despite the shortfall');
+  select (pg_temp.rpc_as('u', format('select public.create_sale(%L, gen_random_uuid(), ''on_site'', current_date, array[%L]::uuid[], array[300], array[6.5], null, true)', (select tu from _u_ids), (select large from _u_ids))) -> 'sale') as sale;
+select is((select sale ->> 'saleNumber' from _u_confirmed), '3', 'AC26: "Record anyway" (confirmShortfall) saves the sale despite the shortfall');
 
--- Editing a complete line DOWN never shortfalls (AC42); editing it UP past on-hand shortfalls, only for that size.
+-- Editing a line DOWN never shortfalls (AC42); editing it UP past on-hand shortfalls, only for that size.
 select is(
   (pg_temp.rpc_as('u', format('select public.update_sale(%L, %L, 1, ''on_site'', current_date, array[%L]::uuid[], array[50], array[6.5])', (select tu from _u_ids), (select (sale ->> 'id')::uuid from _u_confirmed), (select large from _u_ids))) ->> 'changed'),
-  'true', 'AC42: reducing a complete line''s eggs never shortfalls');
+  'true', 'AC42: reducing a line''s eggs never shortfalls');
 select is(
   split_part(pg_temp.try_detail('u', format('select public.update_sale(%L, %L, 2, ''on_site'', current_date, array[%L]::uuid[], array[100000], array[6.5])', (select tu from _u_ids), (select (sale ->> 'id')::uuid from _u_confirmed), (select large from _u_ids))), '|', 1),
   'TM037', 'AC42: increasing that line past on hand shortfalls');
 
--- mark_sale_pending never checks shortfall (reversing only gives eggs back) -- covered above (AC39 test); confirm
--- once more on a fresh delivery to be explicit about "never asks".
-create temp table _u_bigdelivery as
-  select (pg_temp.rpc_as('u', format('select public.create_sale(%L, gen_random_uuid(), ''delivery'', current_date, array[%L]::uuid[], array[5], array[6.5], %L, current_date, true)', (select tu from _u_ids), (select large from _u_ids), (select cid from _u_ids))) -> 'sale') as sale;
+-- Voiding gives the eggs back: on hand 600 - 240 - 150 - 50 = 160; void the 240-sale -> 400. Never asks about stock.
 select is(
-  (pg_temp.rpc_as('u', format('select public.mark_sale_pending(%L, %L)', (select tu from _u_ids), (select (sale ->> 'id')::uuid from _u_bigdelivery))) ->> 'changed'),
-  'true', 'AC39: mark_sale_pending succeeds with no shortfall check, whatever the size''s on hand is');
+  (pg_temp.rpc_as('u', format('select public.get_on_hand(%L, array[%L]::uuid[])', (select tu from _u_ids), (select large from _u_ids))) -> 'onHand' -> 0 ->> 'eggs')::int,
+  160, 'on-hand: 600 produced - 240 - 150 - 50 = 160');
+select pg_temp.rpc_as('u', format('select public.void_sale(%L, %L, 1)', (select tu from _u_ids), (select (sale ->> 'id')::uuid from _u_complete)));
+select is(
+  (pg_temp.rpc_as('u', format('select public.get_on_hand(%L, array[%L]::uuid[])', (select tu from _u_ids), (select large from _u_ids))) -> 'onHand' -> 0 ->> 'eggs')::int,
+  400, 'AC41: voiding the 240-egg sale gives its eggs back (160 -> 400)');
 
 -- On-hand matches a hand-computed sum for several sizes, including one with zero production and one archived.
 select pg_temp.produce('u', 'Small', 90);
@@ -541,8 +493,48 @@ select is(
   (select count(*) from public.sale_submissions where id = (select sid from _v_sub2)), 0::bigint,
   'AC30/D8: the failed attempt left no ledger row');
 create temp table _v_retry as
-  select (pg_temp.rpc_as('v', format('select public.create_sale(%L, %L, ''on_site'', current_date, array[%L]::uuid[], array[99999], array[6.5], null, null, true)', (select tv from _v_ids), (select sid from _v_sub2), (select small from _v_ids)))) as r;
+  select (pg_temp.rpc_as('v', format('select public.create_sale(%L, %L, ''on_site'', current_date, array[%L]::uuid[], array[99999], array[6.5], null, true)', (select tv from _v_ids), (select sid from _v_sub2), (select small from _v_ids)))) as r;
 select is((select r ->> 'replayed' from _v_retry), 'false', 'D8: retrying with confirmShortfall under the SAME id is not treated as a replay of a different payload');
+
+-- ---------------------------------------------------------------------------------------------
+-- H. AC41 as written (600, one sale of 240 -> 12 trays; void -> 20 trays) and the type change (AC42): a plain
+-- edit that moves no stock and never warns, even when on hand is exactly 0.
+-- ---------------------------------------------------------------------------------------------
+create temp table _w_ids as
+  select tests.tenant_id_of('w') as tw, pg_temp.add_client('w', 'W Client') as cid, pg_temp.szid('w', 'Large') as large, pg_temp.szid('w', 'Small') as small;
+grant select on _w_ids to authenticated;
+select pg_temp.produce('w', 'Large', 600);
+create temp table _w_sale as
+  select (pg_temp.rpc_as('w', format('select public.create_sale(%L, gen_random_uuid(), ''on_site'', current_date, array[%L]::uuid[], array[240], array[6.5])', (select tw from _w_ids), (select large from _w_ids))) -> 'sale') as sale;
+select is(
+  (pg_temp.rpc_as('w', format('select public.get_on_hand(%L, array[%L]::uuid[])', (select tw from _w_ids), (select large from _w_ids))) -> 'onHand' -> 0 ->> 'eggs')::int / 30,
+  12, 'AC41: with one sale of 240 the hint shows 12 trays (360)');
+select pg_temp.rpc_as('w', format('select public.void_sale(%L, %L, 1)', (select tw from _w_ids), (select (sale ->> 'id')::uuid from _w_sale)));
+select is(
+  (pg_temp.rpc_as('w', format('select public.get_on_hand(%L, array[%L]::uuid[])', (select tw from _w_ids), (select large from _w_ids))) -> 'onHand' -> 0 ->> 'eggs')::int / 30,
+  20, 'AC41: voiding that sale shows 20 trays (600)');
+
+-- Small: 30 eggs produced, a delivery sale of all 30 takes on hand to exactly 0.
+select pg_temp.produce('w', 'Small', 30);
+create temp table _w_tc as
+  select (pg_temp.rpc_as('w', format('select public.create_sale(%L, gen_random_uuid(), ''delivery'', current_date, array[%L]::uuid[], array[30], array[6.5], %L)', (select tw from _w_ids), (select small from _w_ids), (select cid from _w_ids))) -> 'sale') as sale;
+create temp table _w_tc2 as
+  select pg_temp.rpc_as('w', format('select public.update_sale(%L, %L, 1, ''on_site'', current_date, array[%L]::uuid[], array[30], array[6.5])',
+    (select tw from _w_ids), (select (sale ->> 'id')::uuid from _w_tc), (select small from _w_ids))) as r;
+select is((select r ->> 'changed' from _w_tc2), 'true', 'AC42: Delivery -> On-site is a plain edit: no shortfall warning with on hand at 0');
+select is((select r -> 'sale' ->> 'type' from _w_tc2), 'on_site', 'AC42: ... the type changed');
+select is((select r -> 'sale' ->> 'saleNumber' from _w_tc2), (select sale ->> 'saleNumber' from _w_tc), 'AC42: ... and the sale number is unchanged');
+select is(
+  (pg_temp.rpc_as('w', format('select public.get_on_hand(%L, array[%L]::uuid[])', (select tw from _w_ids), (select small from _w_ids))) -> 'onHand' -> 0 ->> 'eggs')::int,
+  0, 'AC42: ... and stock did not move');
+select is(
+  pg_temp.try_detail('w', format('select public.update_sale(%L, %L, 2, ''delivery'', current_date, array[%L]::uuid[], array[30], array[6.5])',
+    (select tw from _w_ids), (select (sale ->> 'id')::uuid from _w_tc), (select small from _w_ids))),
+  'TM032|required|', 'AC42: On-site -> Delivery needs a client');
+select is(
+  pg_temp.rpc_as('w', format('select public.update_sale(%L, %L, 2, ''delivery'', current_date, array[%L]::uuid[], array[30], array[6.5], %L)',
+    (select tw from _w_ids), (select (sale ->> 'id')::uuid from _w_tc), (select small from _w_ids), (select cid from _w_ids))) -> 'sale' ->> 'type',
+  'delivery', 'AC42: ... and works with a client, with no stock warning');
 
 select * from finish();
 rollback;

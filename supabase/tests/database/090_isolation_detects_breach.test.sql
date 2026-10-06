@@ -4,7 +4,7 @@
 -- subtransaction and always rolls it back (DDL is transactional in Postgres), and the whole file is
 -- wrapped in begin/rollback as a second guarantee. The last assertions prove everything was restored.
 begin;
-select plan(30);
+select plan(34);
 
 select tests.create_farm('Farm A', 'a');
 select tests.create_farm('Farm B', 'b');
@@ -176,8 +176,8 @@ $m$, 'a', 'b'), 'm20b not a breach: with only its guard trigger disabled the cli
 
 -- m21 (feature 04): sales insert policy without a tenant WITH CHECK. Unlike clients/sizes, sales has no
 -- write-guard trigger refusing another farm's tenant_id on insert (there is nothing to normalise or cap), so a
--- weak policy alone IS a reachable breach: as A, `insert into sales (tenant_id, sale_number, type, status,
--- sale_date, delivered_date) values (<B>, ...)`.
+-- weak policy alone IS a reachable breach: as A, `insert into sales (tenant_id, sale_number, type,
+-- sale_date) values (<B>, ...)`.
 select ok(tests.mutation_detected($m$
   drop policy sales_insert on public.sales;
   create policy sales_insert on public.sales for insert to authenticated with check (true);
@@ -191,13 +191,13 @@ select ok(tests.mutation_detected($m$
   create policy sales_update on public.sales for update to authenticated using (true) with check (true);
 $m$, 'a', 'b'), 'm22 detected: sales_update replaced with using (true) with check (true)');
 
--- m23 (feature 04): sales delete policy with no tenant filter. Sales HAS a real delete grant (mirroring
--- production), so a permissive delete policy is a reachable breach: as A, `delete from sales where true` removes
--- B's rows too (check 9).
+-- m23 (feature 04, reworked by feature 05): sales are void-only, so there is no delete policy. A delete grant plus a
+-- permissive delete policy is the breach to detect: as A, `delete from sales where true` would remove B's rows too
+-- (checks 5 and 9), and the "no delete on sales" rule (AC40) would be gone.
 select ok(tests.mutation_detected($m$
-  drop policy sales_delete on public.sales;
-  create policy sales_delete on public.sales for delete to authenticated using (true);
-$m$, 'a', 'b'), 'm23 detected: sales_delete replaced with using (true)');
+  grant delete on public.sales to authenticated;
+  create policy sales_delete_any on public.sales for delete to authenticated using (true);
+$m$, 'a', 'b'), 'm23 detected: delete grant + permissive delete policy on sales');
 
 -- m24 (feature 04): sale_lines insert policy without a tenant WITH CHECK (same reasoning as m21: no write-guard
 -- trigger on sale_lines either).
@@ -205,6 +205,33 @@ select ok(tests.mutation_detected($m$
   drop policy sale_lines_insert on public.sale_lines;
   create policy sale_lines_insert on public.sale_lines for insert to authenticated with check (true);
 $m$, 'a', 'b'), 'm24 detected: sale_lines_insert replaced with with check (true)');
+
+-- m25 (feature 05): orders insert policy without a tenant WITH CHECK. orders_write_guard does not look at tenant_id on
+-- insert, so a weak policy alone IS a reachable breach: as A, `insert into orders (tenant_id, ...) values (<B>, ...)`.
+select ok(tests.mutation_detected($m$
+  drop policy orders_insert on public.orders;
+  create policy orders_insert on public.orders for insert to authenticated with check (true);
+$m$, 'a', 'b'), 'm25 detected: orders_insert replaced with with check (true)');
+
+-- m26 (feature 05): orders update policy with no tenant filter at all. Owners have no privilege on orders.tenant_id, so
+-- checks 8/10 only see the column-grant 42501; check 11 (set updated_at = now() where true) catches this.
+select ok(tests.mutation_detected($m$
+  drop policy orders_update on public.orders;
+  create policy orders_update on public.orders for update to authenticated using (true) with check (true);
+$m$, 'a', 'b'), 'm26 detected: orders_update replaced with using (true) with check (true)');
+
+-- m27 (feature 05): order_lines insert policy without a tenant WITH CHECK (no write-guard trigger refuses another
+-- farm's tenant_id on insert).
+select ok(tests.mutation_detected($m$
+  drop policy order_lines_insert on public.order_lines;
+  create policy order_lines_insert on public.order_lines for insert to authenticated with check (true);
+$m$, 'a', 'b'), 'm27 detected: order_lines_insert replaced with with check (true)');
+
+-- m28 (feature 05, AC23): a delete grant and a permissive delete policy on orders (no owner can delete an order).
+select ok(tests.mutation_detected($m$
+  grant delete on public.orders to authenticated;
+  create policy orders_delete_any on public.orders for delete to authenticated using (true);
+$m$, 'a', 'b'), 'm28 detected: delete grant + permissive delete policy on orders');
 
 -- Everything was restored by the mutation helper (not just by the final rollback).
 select ok(not exists (select 1 from tests.isolation_checks('a', 'b') c where not c.passed),
@@ -216,15 +243,22 @@ select is(
                              'public.size_submissions'::regclass, 'public.clients'::regclass,
                              'public.client_submissions'::regclass, 'public.sales'::regclass,
                              'public.sale_lines'::regclass, 'public.sale_submissions'::regclass,
-                             'public.sale_counters'::regclass)
+                             'public.sale_counters'::regclass, 'public.orders'::regclass,
+                             'public.order_lines'::regclass, 'public.order_submissions'::regclass,
+                             'public.order_counters'::regclass)
         order by p.polname::text collate "C"),
   array['client_submissions_insert', 'client_submissions_select', 'clients_insert', 'clients_select', 'clients_update',
-        'memberships_select_own', 'production_delete', 'production_insert', 'production_select',
+        'memberships_select_own',
+        'order_counters_select', 'order_counters_update',
+        'order_lines_delete', 'order_lines_insert', 'order_lines_select', 'order_lines_update',
+        'order_submissions_insert', 'order_submissions_select',
+        'orders_insert', 'orders_select', 'orders_update',
+        'production_delete', 'production_insert', 'production_select',
         'production_submissions_insert', 'production_submissions_select', 'production_update',
         'sale_counters_select', 'sale_counters_update',
         'sale_lines_delete', 'sale_lines_insert', 'sale_lines_select', 'sale_lines_update',
         'sale_submissions_insert', 'sale_submissions_select',
-        'sales_delete', 'sales_insert', 'sales_select', 'sales_update',
+        'sales_insert', 'sales_select', 'sales_update',
         'size_submissions_insert', 'size_submissions_select', 'sizes_insert', 'sizes_select', 'sizes_update',
         'tenants_select_own'],
   'after all mutations: only the original policies exist, RLS grants unchanged')

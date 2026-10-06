@@ -3,7 +3,7 @@
 -- later feature only adds a registry row in 000_helpers.sql. The named cases below spell out AC24.
 begin;
 
-select plan(2 * tests.isolation_check_count() + 30 + 30 + 1 + 6 + 30 + 1 + 5 + 2 + 4 + 60);
+select plan(2 * tests.isolation_check_count() + 30 + 30 + 1 + 6 + 30 + 1 + 5 + 2 + 4 + 113);
 
 select tests.create_farm('Farm A', 'a');
 select tests.create_farm('Farm B', 'b');
@@ -296,13 +296,20 @@ select is(tests.try_as('a', 'select 1 from public.tenants where currency = ''PHP
 select is(tests.try_as('b', 'select 1 from public.tenants where currency = ''USD'''), 'ok:1', 'AC35: B reads USD for itself');
 
 -- ---------------------------------------------------------------------------------------------
--- Feature 04 (AC58): sales and their lines, both directions, reads AND writes. The registry rows (000_helpers)
--- already run the 11 generic checks for sales, sale_lines, sale_submissions and sale_counters.
+-- Features 04 and 05 (AC58, AC52): sales, orders and their lines, both directions, reads AND writes. The registry
+-- rows (000_helpers) already run the 11 generic checks for sales, sale_lines, sale_submissions, sale_counters,
+-- orders, order_lines, order_submissions and order_counters. Sales are void-only and orders are never deleted, so
+-- a direct delete of either is denied outright (42501); order_lines keeps a delete grant, so RLS answers 0 rows.
 -- ---------------------------------------------------------------------------------------------
-insert into public.sales (tenant_id, sale_number, type, status, sale_date, delivered_date)
-values (tests.tenant_id_of('a'), 501, 'on_site', 'complete', current_date, current_date);
-insert into public.sales (tenant_id, sale_number, type, status, sale_date, delivered_date)
-values (tests.tenant_id_of('b'), 501, 'on_site', 'complete', current_date, current_date);
+insert into public.sales (tenant_id, sale_number, type, sale_date)
+values (tests.tenant_id_of('a'), 501, 'on_site', current_date);
+insert into public.sales (tenant_id, sale_number, type, sale_date)
+values (tests.tenant_id_of('b'), 501, 'on_site', current_date);
+
+insert into public.orders (tenant_id, order_number, client_id, order_date, status)
+select tests.tenant_id_of('a'), 501, (select id from public.clients where tenant_id = tests.tenant_id_of('a') order by created_at, id limit 1), current_date, 'requested';
+insert into public.orders (tenant_id, order_number, client_id, order_date, status)
+select tests.tenant_id_of('b'), 501, (select id from public.clients where tenant_id = tests.tenant_id_of('b') order by created_at, id limit 1), current_date, 'requested';
 
 create temp table _sl_ids as
   select tests.tenant_id_of('a') as ta, tests.tenant_id_of('b') as tb,
@@ -311,76 +318,128 @@ create temp table _sl_ids as
          (select id from public.sizes where tenant_id = tests.tenant_id_of('a') and name = 'Large') as a_large,
          (select id from public.sizes where tenant_id = tests.tenant_id_of('b') and name = 'Large') as b_large,
          (select id from public.clients where tenant_id = tests.tenant_id_of('a') order by created_at, id limit 1) as a_client,
-         (select id from public.clients where tenant_id = tests.tenant_id_of('b') order by created_at, id limit 1) as b_client;
+         (select id from public.clients where tenant_id = tests.tenant_id_of('b') order by created_at, id limit 1) as b_client,
+         (select id from public.orders where tenant_id = tests.tenant_id_of('a') and order_number = 501) as a_order,
+         (select id from public.orders where tenant_id = tests.tenant_id_of('b') and order_number = 501) as b_order;
 grant select on _sl_ids to authenticated, anon;
 
 insert into public.sale_lines (tenant_id, sale_id, size_id, eggs, price_per_tray, line_total)
 select ta, a_sale, a_large, 30, 6.5, 6.5 from _sl_ids;
 insert into public.sale_lines (tenant_id, sale_id, size_id, eggs, price_per_tray, line_total)
 select tb, b_sale, b_large, 30, 6.5, 6.5 from _sl_ids;
+insert into public.order_lines (tenant_id, order_id, size_id, eggs, price_per_tray, line_total)
+select ta, a_order, a_large, 60, 6.5, 13 from _sl_ids;
+insert into public.order_lines (tenant_id, order_id, size_id, eggs, price_per_tray, line_total)
+select tb, b_order, b_large, 60, 6.5, 13 from _sl_ids;
 
 create temp table _sl_dir as
   select * from (values
-    ('a', (select ta from _sl_ids), (select tb from _sl_ids), (select a_sale from _sl_ids), (select b_sale from _sl_ids), (select a_large from _sl_ids), (select b_large from _sl_ids), (select a_client from _sl_ids), (select b_client from _sl_ids)),
-    ('b', (select tb from _sl_ids), (select ta from _sl_ids), (select b_sale from _sl_ids), (select a_sale from _sl_ids), (select b_large from _sl_ids), (select a_large from _sl_ids), (select b_client from _sl_ids), (select a_client from _sl_ids))
-  ) v(who, own, victim, own_sale, victim_sale, own_size, victim_size, own_client, victim_client);
+    ('a', (select ta from _sl_ids), (select tb from _sl_ids), (select a_sale from _sl_ids), (select b_sale from _sl_ids), (select a_large from _sl_ids), (select b_large from _sl_ids), (select a_client from _sl_ids), (select b_client from _sl_ids), (select a_order from _sl_ids), (select b_order from _sl_ids)),
+    ('b', (select tb from _sl_ids), (select ta from _sl_ids), (select b_sale from _sl_ids), (select a_sale from _sl_ids), (select b_large from _sl_ids), (select a_large from _sl_ids), (select b_client from _sl_ids), (select a_client from _sl_ids), (select b_order from _sl_ids), (select a_order from _sl_ids))
+  ) v(who, own, victim, own_sale, victim_sale, own_size, victim_size, own_client, victim_client, own_order, victim_order);
 grant select on _sl_dir to authenticated, anon;
 
 -- Templates: %1$L victim tenant, %2$L victim sale id, %3$L own tenant, %4$L own sale id, %5$L fresh uuid,
--- %6$L victim size id, %7$L own size id, %8$L victim client id, %9$L own client id.
+-- %6$L victim size id, %7$L own size id, %8$L victim client id, %9$L own client id, %10$L victim order id,
+-- %11$L own order id.
 create temp table _sl_cases as
   select * from (values
     ('create_sale with the other farm''s tenant id', 'select public.create_sale(%1$L, gen_random_uuid(), ''on_site'', current_date, array[%7$L]::uuid[], array[30], array[6.5])', 'TM006'),
     ('update_sale with the other farm''s tenant id', 'select public.update_sale(%1$L, %2$L, 1, ''on_site'', current_date, array[%6$L]::uuid[], array[30], array[6.5])', 'TM006'),
-    ('mark_sale_delivered with the other farm''s tenant id', 'select public.mark_sale_delivered(%1$L, %2$L, current_date)', 'TM006'),
-    ('mark_sale_pending with the other farm''s tenant id', 'select public.mark_sale_pending(%1$L, %2$L)', 'TM006'),
-    ('delete_sale with the other farm''s tenant id', 'select public.delete_sale(%1$L, %2$L)', 'TM006'),
     ('void_sale with the other farm''s tenant id', 'select public.void_sale(%1$L, %2$L, 1)', 'TM006'),
     ('get_sale with the other farm''s tenant id', 'select public.get_sale(%1$L, %2$L)', 'TM006'),
     ('list_sales with the other farm''s tenant id', 'select public.list_sales(%1$L)', 'TM006'),
     ('get_on_hand with the other farm''s tenant id', 'select public.get_on_hand(%1$L)', 'TM006'),
     ('update_sale on the other farm''s sale id', 'select public.update_sale(%3$L, %2$L, 1, ''on_site'', current_date, array[%7$L]::uuid[], array[30], array[6.5])', 'TM027'),
-    ('mark_sale_delivered on the other farm''s sale id', 'select public.mark_sale_delivered(%3$L, %2$L, current_date)', 'TM027'),
-    ('mark_sale_pending on the other farm''s sale id', 'select public.mark_sale_pending(%3$L, %2$L)', 'TM027'),
-    ('delete_sale on the other farm''s sale id', 'select public.delete_sale(%3$L, %2$L)', 'TM027'),
     ('void_sale on the other farm''s sale id', 'select public.void_sale(%3$L, %2$L, 1)', 'TM027'),
     ('create_sale naming the other farm''s size on a line', 'select public.create_sale(%3$L, gen_random_uuid(), ''on_site'', current_date, array[%6$L]::uuid[], array[30], array[6.5])', 'TM033'),
     ('create_sale naming the other farm''s client on a delivery', 'select public.create_sale(%3$L, gen_random_uuid(), ''delivery'', current_date, array[%7$L]::uuid[], array[30], array[6.5], %8$L)', 'TM032'),
-    ('a direct update of the other farm''s sale status', 'update public.sales set status = ''pending'', delivered_date = null where tenant_id = %1$L', 'ok:0'),
-    ('a direct insert of a sale into the other farm', 'insert into public.sales (tenant_id, sale_number, type, status, sale_date, delivered_date) values (%1$L, 999999, ''on_site'', ''complete'', current_date, current_date)', '42501'),
-    -- sales HAS a real delete grant (mirroring production): RLS filters the victim's rows to 0, not a privilege error.
-    ('a direct delete of the other farm''s sales', 'delete from public.sales where tenant_id = %1$L', 'ok:0'),
+    ('a direct update of the other farm''s sales', 'update public.sales set updated_at = now() where tenant_id = %1$L', 'ok:0'),
+    ('a direct insert of a sale into the other farm', 'insert into public.sales (tenant_id, sale_number, type, sale_date) values (%1$L, 999999, ''on_site'', current_date)', '42501'),
+    -- Sales are void-only: there is no delete grant at all, so even a delete naming the other farm answers 42501.
+    ('a direct delete of the other farm''s sales', 'delete from public.sales where tenant_id = %1$L', '42501'),
     ('a direct read of the other farm''s sales', 'select 1 from public.sales where tenant_id = %1$L', 'ok:0'),
     ('a direct read of the other farm''s sale lines', 'select 1 from public.sale_lines where tenant_id = %1$L', 'ok:0'),
     ('a direct insert of a sale line into the other farm', 'insert into public.sale_lines (tenant_id, sale_id, size_id, eggs, price_per_tray, line_total) values (%1$L, %2$L, %6$L, 30, 6.5, 6.5)', '42501'),
     ('a direct insert of a ledger row into the other farm', 'insert into public.sale_submissions (tenant_id, id, sale_id, payload_hash) values (%1$L, %5$L, %2$L, repeat(''0'', 64))', '42501'),
-    ('a direct ledger row for own farm pointing at the other farm''s sale', 'insert into public.sale_submissions (tenant_id, id, sale_id, payload_hash) values (%3$L, %5$L, %2$L, repeat(''0'', 64))', '23503')
+    ('a direct ledger row for own farm pointing at the other farm''s sale', 'insert into public.sale_submissions (tenant_id, id, sale_id, payload_hash) values (%3$L, %5$L, %2$L, repeat(''0'', 64))', '23503'),
+    -- Feature 05: every order function with the other farm's tenant id (TM006) ...
+    ('create_order with the other farm''s tenant id', 'select public.create_order(%1$L, gen_random_uuid(), %9$L, current_date, array[%7$L]::uuid[], array[30], array[6.5])', 'TM006'),
+    ('update_order with the other farm''s tenant id', 'select public.update_order(%1$L, %10$L, 1, %8$L, current_date, array[%6$L]::uuid[], array[30], array[6.5])', 'TM006'),
+    ('set_order_status with the other farm''s tenant id', 'select public.set_order_status(%1$L, %10$L, ''ready'')', 'TM006'),
+    ('cancel_order with the other farm''s tenant id', 'select public.cancel_order(%1$L, %10$L)', 'TM006'),
+    ('close_order with the other farm''s tenant id', 'select public.close_order(%1$L, %10$L, 1)', 'TM006'),
+    ('deliver_order with the other farm''s tenant id', 'select public.deliver_order(%1$L, gen_random_uuid(), %10$L, current_date, array[%6$L]::uuid[], array[1])', 'TM006'),
+    ('get_order with the other farm''s tenant id', 'select public.get_order(%1$L, %10$L)', 'TM006'),
+    ('list_orders with the other farm''s tenant id', 'select public.list_orders(%1$L)', 'TM006'),
+    -- ... and with the other farm's order id on the caller's own tenant (TM044) ...
+    ('update_order on the other farm''s order id', 'select public.update_order(%3$L, %10$L, 1, %9$L, current_date, array[%7$L]::uuid[], array[30], array[6.5])', 'TM044'),
+    ('set_order_status on the other farm''s order id', 'select public.set_order_status(%3$L, %10$L, ''ready'')', 'TM044'),
+    ('cancel_order on the other farm''s order id', 'select public.cancel_order(%3$L, %10$L)', 'TM044'),
+    ('close_order on the other farm''s order id', 'select public.close_order(%3$L, %10$L, 1)', 'TM044'),
+    ('deliver_order on the other farm''s order id', 'select public.deliver_order(%3$L, gen_random_uuid(), %10$L, current_date, array[%7$L]::uuid[], array[1])', 'TM044'),
+    -- ... and naming the other farm's client, size or order inside the caller's own order.
+    ('create_order naming the other farm''s client', 'select public.create_order(%3$L, gen_random_uuid(), %8$L, current_date, array[%7$L]::uuid[], array[30], array[6.5])', 'TM032'),
+    ('create_order naming the other farm''s size on a line', 'select public.create_order(%3$L, gen_random_uuid(), %9$L, current_date, array[%6$L]::uuid[], array[30], array[6.5])', 'TM033'),
+    ('deliver_order naming the other farm''s size on its own order', 'select public.deliver_order(%3$L, gen_random_uuid(), %11$L, current_date, array[%6$L]::uuid[], array[1])', 'TM052'),
+    ('a direct update of the other farm''s orders', 'update public.orders set updated_at = now() where tenant_id = %1$L', 'ok:0'),
+    ('a direct insert of an order into the other farm', 'insert into public.orders (tenant_id, order_number, client_id, order_date, status) values (%1$L, 999999, %8$L, current_date, ''requested'')', '42501'),
+    -- Orders are never deleted: no delete grant, so 42501 (not 0 rows).
+    ('a direct delete of the other farm''s orders', 'delete from public.orders where tenant_id = %1$L', '42501'),
+    ('a direct read of the other farm''s orders', 'select 1 from public.orders where tenant_id = %1$L', 'ok:0'),
+    ('a direct read of the other farm''s order lines', 'select 1 from public.order_lines where tenant_id = %1$L', 'ok:0'),
+    ('a direct update of the other farm''s order lines', 'update public.order_lines set eggs = 1 where tenant_id = %1$L', 'ok:0'),
+    ('a direct delete of the other farm''s order lines', 'delete from public.order_lines where tenant_id = %1$L', 'ok:0'),
+    ('a direct insert of an order line into the other farm', 'insert into public.order_lines (tenant_id, order_id, size_id, eggs, price_per_tray, line_total) values (%1$L, %10$L, %6$L, 30, 6.5, 6.5)', '42501'),
+    ('a direct insert of an order ledger row into the other farm', 'insert into public.order_submissions (tenant_id, id, order_id, payload_hash) values (%1$L, %5$L, %10$L, repeat(''0'', 64))', '42501'),
+    ('a direct update of the other farm''s order counter', 'update public.order_counters set next_number = 1 where tenant_id = %1$L', 'ok:0'),
+    -- A delivery that links the caller's own sale to the other farm's order (FK failure), or the other farm's own.
+    ('a direct sale in own farm linked to the other farm''s order', 'insert into public.sales (tenant_id, sale_number, client_id, type, sale_date, order_id) values (%3$L, 999998, %9$L, ''delivery'', current_date, %10$L)', 'TM053'),
+    ('a direct sale in the other farm linked to its order', 'insert into public.sales (tenant_id, sale_number, client_id, type, sale_date, order_id) values (%1$L, 999997, %8$L, ''delivery'', current_date, %10$L)', 'TM053')
   ) c(descr, tpl, expected);
 
 create temp table _sl_before as
-  select id, tenant_id, sale_number, status, voided_at, version from public.sales
+  select id, tenant_id, sale_number, voided_at, version from public.sales
+  where tenant_id in ((select ta from _sl_ids), (select tb from _sl_ids));
+create temp table _or_before as
+  select id, tenant_id, order_number, status, version, (select count(*) from public.order_lines l where l.order_id = o.id) as n_lines
+  from public.orders o
   where tenant_id in ((select ta from _sl_ids), (select tb from _sl_ids));
 
 select is(
-  tests.try_as(d.who, format(c.tpl, d.victim, d.victim_sale, d.own, d.own_sale, gen_random_uuid(), d.victim_size, d.own_size, d.victim_client, d.own_client)),
+  tests.try_as(d.who, format(c.tpl, d.victim, d.victim_sale, d.own, d.own_sale, gen_random_uuid(), d.victim_size, d.own_size, d.victim_client, d.own_client, d.victim_order, d.own_order)),
   c.expected,
   format('%s: %s (%s)', d.who, c.descr, c.expected))
 from _sl_dir d cross join _sl_cases c;
 
 select is(
-  array(select row(s.id, s.tenant_id, s.sale_number, s.status, s.voided_at, s.version)::text
+  array(select row(s.id, s.tenant_id, s.sale_number, s.voided_at, s.version)::text
         from public.sales s where s.tenant_id in ((select ta from _sl_ids), (select tb from _sl_ids)) order by s.id),
-  array(select row(b.id, b.tenant_id, b.sale_number, b.status, b.voided_at, b.version)::text
+  array(select row(b.id, b.tenant_id, b.sale_number, b.voided_at, b.version)::text
         from _sl_before b order by b.id),
   'both farms'' sales are unchanged after every attempt (re-read as postgres)');
 
--- get_sale on the other farm's id returns { sale: null }, never the victim's sale (not an error, so it isn't in
+select is(
+  array(select row(o.id, o.tenant_id, o.order_number, o.status, o.version, (select count(*) from public.order_lines l where l.order_id = o.id))::text
+        from public.orders o where o.tenant_id in ((select ta from _sl_ids), (select tb from _sl_ids)) order by o.id),
+  array(select row(b.id, b.tenant_id, b.order_number, b.status, b.version, b.n_lines)::text from _or_before b order by b.id),
+  'AC52: both farms'' orders (status, version, lines) are unchanged after every attempt (re-read as postgres)');
+
+-- get_sale / get_order on the other farm's id return null, never the victim's row (not an error, so they aren't in
 -- the table above).
 select tests.authenticate_as('a');
 select is(
   (public.get_sale((select ta from _sl_ids), (select b_sale from _sl_ids)) -> 'sale')::text,
   'null',
   'AC58: A''s get_sale on B''s sale id returns sale: null, not B''s sale');
+select is(
+  (public.get_order((select ta from _sl_ids), (select b_order from _sl_ids)) -> 'order')::text,
+  'null',
+  'AC52: A''s get_order on B''s order id returns order: null, not B''s order');
+-- list_orders for farm A never contains B's order, even in the uncapped open view.
+select is(
+  (public.list_orders((select ta from _sl_ids)) ->> 'total')::int, 2,
+  'AC52: A''s open order list holds exactly A''s own two orders (the registry seed and 501), never B''s');
 select tests.clear_authentication();
 
 select is(
@@ -389,15 +448,6 @@ select is(
 select is(
   tests.try_as('anon', format('select public.update_sale(%L, %L, 1, ''on_site'', current_date, array[%L]::uuid[], array[30], array[6.5])', (select ta from _sl_ids), (select a_sale from _sl_ids), (select a_large from _sl_ids))),
   '42501', 'anon cannot execute update_sale');
-select is(
-  tests.try_as('anon', format('select public.mark_sale_delivered(%L, %L, current_date)', (select ta from _sl_ids), (select a_sale from _sl_ids))),
-  '42501', 'anon cannot execute mark_sale_delivered');
-select is(
-  tests.try_as('anon', format('select public.mark_sale_pending(%L, %L)', (select ta from _sl_ids), (select a_sale from _sl_ids))),
-  '42501', 'anon cannot execute mark_sale_pending');
-select is(
-  tests.try_as('anon', format('select public.delete_sale(%L, %L)', (select ta from _sl_ids), (select a_sale from _sl_ids))),
-  '42501', 'anon cannot execute delete_sale');
 select is(
   tests.try_as('anon', format('select public.void_sale(%L, %L, 1)', (select ta from _sl_ids), (select a_sale from _sl_ids))),
   '42501', 'anon cannot execute void_sale');
@@ -410,8 +460,36 @@ select is(
 select is(
   tests.try_as('anon', format('select public.get_on_hand(%L)', (select ta from _sl_ids))),
   '42501', 'anon cannot execute get_on_hand');
-select is(tests.try_as('anon', 'insert into public.sales (tenant_id, sale_number, type, status, sale_date, delivered_date) values (gen_random_uuid(), 1, ''on_site'', ''complete'', current_date, current_date)'), '42501',
+select is(tests.try_as('anon', 'insert into public.sales (tenant_id, sale_number, type, sale_date) values (gen_random_uuid(), 1, ''on_site'', current_date)'), '42501',
   'anon cannot insert a sale');
+
+-- Feature 05: anon can execute none of the eight order functions, and cannot insert an order.
+select is(
+  tests.try_as('anon', format('select public.create_order(%L, gen_random_uuid(), %L, current_date, array[%L]::uuid[], array[30], array[6.5])', (select ta from _sl_ids), (select a_client from _sl_ids), (select a_large from _sl_ids))),
+  '42501', 'anon cannot execute create_order');
+select is(
+  tests.try_as('anon', format('select public.update_order(%L, %L, 1, %L, current_date, array[%L]::uuid[], array[30], array[6.5])', (select ta from _sl_ids), (select a_order from _sl_ids), (select a_client from _sl_ids), (select a_large from _sl_ids))),
+  '42501', 'anon cannot execute update_order');
+select is(
+  tests.try_as('anon', format('select public.set_order_status(%L, %L, ''ready'')', (select ta from _sl_ids), (select a_order from _sl_ids))),
+  '42501', 'anon cannot execute set_order_status');
+select is(
+  tests.try_as('anon', format('select public.cancel_order(%L, %L)', (select ta from _sl_ids), (select a_order from _sl_ids))),
+  '42501', 'anon cannot execute cancel_order');
+select is(
+  tests.try_as('anon', format('select public.close_order(%L, %L, 1)', (select ta from _sl_ids), (select a_order from _sl_ids))),
+  '42501', 'anon cannot execute close_order');
+select is(
+  tests.try_as('anon', format('select public.deliver_order(%L, gen_random_uuid(), %L, current_date, array[%L]::uuid[], array[1])', (select ta from _sl_ids), (select a_order from _sl_ids), (select a_large from _sl_ids))),
+  '42501', 'anon cannot execute deliver_order');
+select is(
+  tests.try_as('anon', format('select public.get_order(%L, %L)', (select ta from _sl_ids), (select a_order from _sl_ids))),
+  '42501', 'anon cannot execute get_order');
+select is(
+  tests.try_as('anon', format('select public.list_orders(%L)', (select ta from _sl_ids))),
+  '42501', 'anon cannot execute list_orders');
+select is(tests.try_as('anon', format('insert into public.orders (tenant_id, order_number, client_id, order_date, status) values (%L, 1, %L, current_date, ''requested'')', (select ta from _sl_ids), (select a_client from _sl_ids))), '42501',
+  'anon cannot insert an order');
 
 select * from finish();
 rollback;

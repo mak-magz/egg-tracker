@@ -230,14 +230,13 @@ create or replace function tests.tenant_table_registry()
     -- itself (42501) rather than by a policy -- still the right check to run.
     ('public.sale_counters'::regclass, 'tenant_id', null::text,
        'insert into public.sale_counters (tenant_id) values (%1$L)'),
-    -- sales: owners can insert only (tenant_id, sale_number, client_id, type, status, sale_date, delivered_date)
-    -- (column grants), so the attack names only those. Seeded PENDING (not complete): a pending sale can be
-    -- deleted directly (checks 5, 9), so the seed row never trips the sales_delete_guard trigger (TM041) when the
-    -- checker's own delete probes run against the attacker's OWN rows. It needs a client (clients is seeded first,
-    -- earlier in this list, so the farm already has one by the time this row runs).
+    -- sales: owners can insert only (tenant_id, sale_number, client_id, type, sale_date, order_id) (column grants),
+    -- so the attack names only those. Every sale is a normal row now (feature 05: no status, no pending). Sales have
+    -- no delete grant at all (void-only), so the checker's delete probes are denied with 42501. It needs a client
+    -- (clients is seeded first, earlier in this list, so the farm already has one by the time this row runs).
     ('public.sales'::regclass, 'tenant_id',
-       'insert into public.sales (tenant_id, sale_number, client_id, type, status, sale_date) select %1$L, (select coalesce(max(sale_number), 0) + 1 from public.sales where tenant_id = %1$L), c.id, ''delivery'', ''pending'', current_date from public.clients c where c.tenant_id = %1$L order by c.created_at, c.id limit 1',
-       'insert into public.sales (tenant_id, sale_number, type, status, sale_date, delivered_date) values (%1$L, 999999, ''on_site'', ''complete'', current_date, current_date)'),
+       'insert into public.sales (tenant_id, sale_number, client_id, type, sale_date) select %1$L, (select coalesce(max(sale_number), 0) + 1 from public.sales where tenant_id = %1$L), c.id, ''delivery'', current_date from public.clients c where c.tenant_id = %1$L order by c.created_at, c.id limit 1',
+       'insert into public.sales (tenant_id, sale_number, type, sale_date) values (%1$L, 999999, ''on_site'', current_date)'),
     -- sale_lines: one line per seeded sale, using that farm's own first size (the composite size FK requires it).
     ('public.sale_lines'::regclass, 'tenant_id',
        'insert into public.sale_lines (tenant_id, sale_id, size_id, eggs, price_per_tray, line_total) select %1$L, s.id, z.id, 30, 6.5, 6.5 from public.sales s, public.sizes z where s.tenant_id = %1$L and z.tenant_id = %1$L order by s.created_at limit 1',
@@ -245,7 +244,24 @@ create or replace function tests.tenant_table_registry()
     -- The ledger's attack uses a random sale_id: RLS (42501) is reported before the FK check.
     ('public.sale_submissions'::regclass, 'tenant_id',
        'insert into public.sale_submissions (tenant_id, id, sale_id, payload_hash) select %1$L, gen_random_uuid(), s.id, repeat(''0'', 64) from public.sales s where s.tenant_id = %1$L order by s.created_at limit 1',
-       'insert into public.sale_submissions (tenant_id, id, sale_id, payload_hash) values (%1$L, gen_random_uuid(), gen_random_uuid(), repeat(''0'', 64))')
+       'insert into public.sale_submissions (tenant_id, id, sale_id, payload_hash) values (%1$L, gen_random_uuid(), gen_random_uuid(), repeat(''0'', 64))'),
+    -- Feature 05. order_counters: seeded by the tenants insert trigger, update-only for owners (like sale_counters).
+    ('public.order_counters'::regclass, 'tenant_id', null::text,
+       'insert into public.order_counters (tenant_id) values (%1$L)'),
+    -- orders: owners insert only (tenant_id, order_number, client_id, order_date, wanted_by, status) and never delete
+    -- (no delete grant). The seed is a plain requested order for the farm's first client. The attack names a random
+    -- client: RLS (42501) is reported before the FK check, and orders_write_guard accepts a plain requested insert.
+    ('public.orders'::regclass, 'tenant_id',
+       'insert into public.orders (tenant_id, order_number, client_id, order_date, status) select %1$L, (select coalesce(max(order_number), 0) + 1 from public.orders where tenant_id = %1$L), c.id, current_date, ''requested'' from public.clients c where c.tenant_id = %1$L order by c.created_at, c.id limit 1',
+       'insert into public.orders (tenant_id, order_number, client_id, order_date, status) values (%1$L, 999999, gen_random_uuid(), current_date, ''requested'')'),
+    -- order_lines: one line per seeded order, using that farm's own first size (the composite size FK requires it).
+    ('public.order_lines'::regclass, 'tenant_id',
+       'insert into public.order_lines (tenant_id, order_id, size_id, eggs, price_per_tray, line_total) select %1$L, o.id, z.id, 30, 6.5, 6.5 from public.orders o, public.sizes z where o.tenant_id = %1$L and z.tenant_id = %1$L order by o.created_at, z.sort_order limit 1',
+       'insert into public.order_lines (tenant_id, order_id, size_id, eggs, price_per_tray, line_total) values (%1$L, gen_random_uuid(), gen_random_uuid(), 30, 6.5, 6.5)'),
+    -- The ledger's attack uses a random order_id: RLS (42501) is reported before the FK check.
+    ('public.order_submissions'::regclass, 'tenant_id',
+       'insert into public.order_submissions (tenant_id, id, order_id, payload_hash) select %1$L, gen_random_uuid(), o.id, repeat(''0'', 64) from public.orders o where o.tenant_id = %1$L order by o.created_at limit 1',
+       'insert into public.order_submissions (tenant_id, id, order_id, payload_hash) values (%1$L, gen_random_uuid(), gen_random_uuid(), repeat(''0'', 64))')
 $$;
 
 -- --------------------------------------------------------------------------------------------
