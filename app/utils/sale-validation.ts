@@ -1,4 +1,4 @@
-// Field-level checks for the Log/Edit sale form (feature 04 §2.5 R3, AC13, AC15, AC19, AC20, AC23, AC24),
+// Field-level checks for the Log/Edit sale form (feature 04 §2.5 R3, AC13, AC15, AC19, AC20, AC23; feature 05 AC36),
 // in the ClientForm.vue style (manual per-field checks, not a zod schema): a field is checked on blur and
 // on Save; the message clears the moment the value is valid. Pure, so tests import it directly. These
 // mirror the M15 migration's CHECK constraints (§3.1) and the limits in `shared/constants/sales.ts`; they
@@ -53,17 +53,20 @@ export function checkSaleClient(type: 'delivery' | 'on_site', clientId: string |
   return { ok: true, value: clientId }
 }
 
-/** AC23: required, not in the future (relative to the device's local `today`). */
+/** AC23, feature 05 AC38: the one date, required, not in the future (relative to the device's local `today`). */
 export function checkSaleDate(date: string, today: IsoDate): FieldResult<IsoDate> {
   if (!isIsoDate(date)) return { ok: false, message: SALE_COPY.dateEmpty }
   if (compareIsoDates(date, today) > 0) return { ok: false, message: SALE_COPY.saleDateFuture }
   return { ok: true, value: date }
 }
 
-/** AC24, AC33: required, not before the sale date, not in the future. */
-export function checkDeliveredDate(date: string, saleDate: IsoDate, today: IsoDate): FieldResult<IsoDate> {
-  if (!isIsoDate(date)) return { ok: false, message: SALE_COPY.dateEmpty }
-  if (compareIsoDates(date, saleDate) < 0) return { ok: false, message: SALE_COPY.deliveredBeforeSale(formatShortDate(saleDate, today)) }
-  if (compareIsoDates(date, today) > 0) return { ok: false, message: SALE_COPY.deliveredDateFuture }
+/**
+ * Feature 05 AC36 (G7): a delivery made from an order can change its date only to one that is not before the order's
+ * date and not in the future. A direct sale uses checkSaleDate.
+ */
+export function checkLinkedSaleDate(date: string, orderDate: IsoDate, today: IsoDate): FieldResult<IsoDate> {
+  const base = checkSaleDate(date, today)
+  if (!base.ok) return base
+  if (compareIsoDates(date, orderDate) < 0) return { ok: false, message: SALE_COPY.saleDateBeforeOrder(formatShortDate(orderDate, today)) }
   return { ok: true, value: date }
 }

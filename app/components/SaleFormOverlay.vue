@@ -16,6 +16,8 @@ const props = defineProps<{
   mode: 'add' | 'edit'
   sale?: Sale | null
   today: IsoDate
+  /** Edit of a delivery made from an order: that order's date (the earliest the sale date may be, feature 05 AC36). */
+  orderDate?: IsoDate | null
 }>()
 
 const open = defineModel<boolean>('open', { required: true })
@@ -86,6 +88,7 @@ const discardBody = computed(() => (props.mode === 'edit' && props.sale
         :mode="mode"
         :sale="sale"
         :today="today"
+        :order-date="orderDate"
         @cancel="requestClose"
         @saved="onSaved"
         @changed-elsewhere="onChangedElsewhere"

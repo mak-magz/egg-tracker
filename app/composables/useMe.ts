@@ -58,6 +58,8 @@ export function useMe() {
     clearNuxtState(key => key.startsWith('clients:'))
     // Sales point at clients (feature 04 AC61): the list, and the on-hand cache, go with the session too.
     clearNuxtState(key => key.startsWith('sales:') || key.startsWith('on-hand:'))
+    // Orders point at clients too (feature 05 AC55): the list and any open stacked detail go with the session.
+    clearNuxtState(key => key.startsWith('orders:') || key.startsWith('detail-stack:'))
   }
 
   /**

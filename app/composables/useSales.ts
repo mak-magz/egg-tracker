@@ -1,7 +1,8 @@
 // The one owner of the farm's (current window of) sales (feature 04 §3.4). Unlike useClients (the whole
 // list, filtered client-side), the Sales list is filtered and PAGED on the server (AC52's 5,000-sale bar,
 // and no per-keystroke text search here): this holds the current filters and the page(s) fetched for them,
-// and refetches whenever a filter changes. `hasAny` tells first use (AC46) from no match (AC10).
+// and refetches whenever a filter changes. `hasAny` tells first use (AC46) from no match (AC10). Every sale is a
+// real, completed one (feature 05 AC37): there is no status to filter by and nothing is ever deleted.
 //
 // State lives in useState('sales:state'), keyed by farm id (feature 03's own privacy pattern: state for
 // another farm is ignored, and useMe().clear() drops every `sales:*` key on sign-out, AC61). A sale never
@@ -10,13 +11,11 @@
 import type { IsoDate, Sale, SalesListResponse, SaleType } from '#shared/types/api'
 import { SALES_PAGE_SIZE } from '#shared/constants/sales'
 
-export type SalesStatusFilter = 'all' | 'pending' | 'complete'
 export type SalesTypeFilter = 'all' | SaleType
 
 export interface SalesFilters {
   from: IsoDate | null
   to: IsoDate | null
-  status: SalesStatusFilter
   type: SalesTypeFilter
   clientId: string | null
   /** "Show voided sales" (AC68). Off by default; not one of the "n filters" the mobile Filters button counts. */
@@ -24,7 +23,7 @@ export interface SalesFilters {
 }
 
 export function defaultSalesFilters(): SalesFilters {
-  return { from: null, to: null, status: 'all', type: 'all', clientId: null, includeVoided: false }
+  return { from: null, to: null, type: 'all', clientId: null, includeVoided: false }
 }
 
 export type SalesLoadStatus = 'idle' | 'loading' | 'ready' | 'refreshing' | 'error'
@@ -46,7 +45,6 @@ let loadSeq = 0
 /** True when `sale` would be included under `filters` (used for optimistic insert/remove after a write). */
 export function saleMatchesFilters(sale: Sale, filters: SalesFilters): boolean {
   if (!filters.includeVoided && sale.voidedAt) return false
-  if (filters.status !== 'all' && sale.status !== filters.status) return false
   if (filters.type !== 'all' && sale.type !== filters.type) return false
   if (filters.clientId && sale.clientId !== filters.clientId) return false
   if (filters.from && sale.saleDate < filters.from) return false
@@ -64,7 +62,6 @@ function query(filters: SalesFilters, limit: number, offset: number): Record<str
   const q: Record<string, string | number | boolean> = { limit, offset }
   if (filters.from) q.from = filters.from
   if (filters.to) q.to = filters.to
-  if (filters.status !== 'all') q.status = filters.status
   if (filters.type !== 'all') q.type = filters.type
   if (filters.clientId) q.clientId = filters.clientId
   if (filters.includeVoided) q.includeVoided = true
@@ -88,7 +85,7 @@ export function useSales() {
   const refreshFailed = computed(() => current.value?.failures ?? 0)
   /** The list is known (loaded, maybe refreshing): show it, never the loading placeholder. */
   const hasList = computed(() => status.value === 'ready' || status.value === 'refreshing')
-  /** "Show more" (AC7); never true for the Pending filter, which the server never limits (AC9). */
+  /** "Show more" (AC7). */
   const hasMore = computed(() => sales.value.length < total.value)
 
   function patch(farmIdNow: string, change: Partial<Omit<SalesState, 'farmId'>>) {
@@ -132,7 +129,7 @@ export function useSales() {
     return load(filters.value, { silent: true })
   }
 
-  /** "Show more" (AC7): fetches the next SALES_PAGE_SIZE rows and appends. Never called for status = pending (AC9). */
+  /** "Show more" (AC7): fetches the next SALES_PAGE_SIZE rows and appends. */
   async function loadMore(): Promise<'ok' | 'error'> {
     const fid = farmId.value
     const cur = current.value
@@ -174,18 +171,6 @@ export function useSales() {
     patch(fid, { sales: list, total, hasAny: cur.hasAny || !wasPresent })
   }
 
-  /** Removes a sale from the current page for good (Delete, Pending only, AC44). */
-  function remove(id: string) {
-    const fid = farmId.value
-    const cur = current.value
-    if (!fid || !cur) return
-    const idx = cur.sales.findIndex(s => s.id === id)
-    if (idx === -1) return
-    const list = [...cur.sales]
-    list.splice(idx, 1)
-    patch(fid, { sales: list, total: Math.max(0, cur.total - 1) })
-  }
-
   /** True if `sale` is currently showing under the loaded filters (used to decide the "hidden by filter" toast). */
   function isVisible(sale: Sale): boolean {
     return current.value ? saleMatchesFilters(sale, current.value.filters) : false
@@ -210,7 +195,6 @@ export function useSales() {
     reload,
     loadMore,
     upsert,
-    remove,
     isVisible,
     reset,
   }

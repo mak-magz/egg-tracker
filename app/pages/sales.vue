@@ -1,16 +1,18 @@
 <!--
-  Sales (feature 04). Design: docs/design/source/template.html (Sales screen, Log a sale dialog); UX:
-  docs/features/04-sales.md §2.5; technical design §3.4.
-  Filters -> the server-paged list (table when wide, cards when narrow). The top-bar "Add sale" button (md+)
-  and the FAB (<md) come from the layout via `primaryAction`. The list is fetched on the client after mount
-  (personal data: a sale points at a client, AC60), lives in memory only (useSales), and every filter is a
-  page-local ref that never touches the URL (AC11). One shared useSaleMutations() instance drives every
-  status/delete/void action from the list, the detail and their dialogs, so a row and its detail never fight
-  over whose spinner is showing (R1); SaleForm owns its own create/update saving state.
+  Sales (feature 04; feature 05 AC37 to AC42). Design: docs/design/source/template.html (Sales screen, Log a sale
+  dialog); UX: docs/features/04-sales.md §2.5 and docs/features/05-orders.md §2.5 "Sales screen after this feature".
+  Filters -> the server-paged list (table when wide, cards when narrow). The top-bar "Add sale" button (md+) and the
+  FAB (<md) come from the layout via `primaryAction`. The list is fetched on the client after mount (personal data:
+  a sale points at a client, AC60), lives in memory only (useSales), and every filter is a page-local ref that never
+  touches the URL (AC11). Every sale is a real, completed one: there is no status, no Mark delivered and no Delete;
+  the only removal is Void. One shared useSaleMutations() instance drives void from the list, the detail and the
+  dialog, so a row and its detail never fight over whose spinner is showing (R1); SaleForm owns its own
+  create/update saving state. "From order #n" opens that order on top of the sale, read-only (D3/D10).
 -->
 <script setup lang="ts">
 import { useDebounceFn, useEventListener } from '@vueuse/core'
-import type { IsoDate, Sale } from '#shared/types/api'
+import type { IsoDate, OrderDelivery, OrderDetail as OrderDetailData, OrderResponse, Sale, SaleResponse, VoidSaleResponse } from '#shared/types/api'
+import { formatQty } from '#shared/utils/quantity'
 import type { SaleSavedEvent } from '~/components/SaleForm.vue'
 import { SALE_COPY } from '~/utils/sale-copy'
 import { createTodayTracker } from '~/utils/today-tracker'
@@ -21,11 +23,15 @@ definePageMeta({
   primaryAction: { label: 'Add sale', ariaLabel: 'Add sale', icon: 'i-lucide-plus', fab: true },
 })
 
+const api = useApi()
 const toast = useToast()
 const primary = usePrimaryAction()
 const list = useSales()
 const mutations = useSaleMutations()
 const clients = useClients()
+const onHand = useOnHand()
+const stack = useDetailStack()
+const { sizeById, trayEggs } = useFarm()
 
 // The device's local "today" (feature 01 §3.8 D13): SSR can't know it, kept current while the screen stays
 // open (today-tracker.ts, reused as-is).
@@ -34,26 +40,14 @@ const today = ref<IsoDate>(tracker.current)
 function syncToday() {
   if (tracker.refresh()) today.value = tracker.current
 }
-onMounted(() => {
-  syncToday()
-  useEventListener(document, 'visibilitychange', () => {
-    if (document.visibilityState === 'visible') syncToday()
-  })
-  useEventListener(window, 'focus', () => syncToday())
-})
 
 // ---- Filters (memory only: AC8, AC11, AC60). Reset on a fresh visit to the screen. -----------------------
 const filters = reactive<SalesFilters>(defaultSalesFilters())
 const dateRangeError = computed(() => (filters.from && filters.to && filters.from > filters.to ? SALE_COPY.dateRangeInvalid : null))
 
-const activeFilterCount = computed(() => {
-  let n = 0
-  if (filters.type !== 'all') n++
-  if (filters.clientId) n++
-  if (filters.from || filters.to) n++
-  return n
-})
-const filtering = computed(() => filters.status !== 'all' || activeFilterCount.value > 0)
+/** The filters `Filters (n)` counts on a phone: Client and the date range (the Type chips are always on screen). */
+const activeFilterCount = computed(() => (filters.clientId ? 1 : 0) + (filters.from || filters.to ? 1 : 0))
+const filtering = computed(() => filters.type !== 'all' || activeFilterCount.value > 0)
 
 const debouncedLoad = useDebounceFn(() => {
   if (dateRangeError.value) return
@@ -61,11 +55,6 @@ const debouncedLoad = useDebounceFn(() => {
 }, 300)
 
 watch(filters, debouncedLoad, { deep: true })
-
-onMounted(() => {
-  void clients.load({ silent: clients.hasList.value })
-  void list.load({ ...filters })
-})
 
 function clearFilters() {
   Object.assign(filters, defaultSalesFilters())
@@ -76,7 +65,6 @@ const loadFailed = computed(() => list.status.value === 'error')
 const loading = computed(() => !list.hasList.value && !loadFailed.value)
 const firstUse = computed(() => list.hasList.value && !list.hasAny.value)
 const noMatch = computed(() => list.hasList.value && list.hasAny.value && list.sales.value.length === 0)
-const noMatchPendingOnly = computed(() => filters.status === 'pending' && activeFilterCount.value === 0 && !filters.includeVoided)
 
 const retrying = ref(false)
 async function retryLoad() {
@@ -133,9 +121,8 @@ async function focusControl(...keys: string[]) {
 
 function filterLabelFor(sale: Sale): string {
   if (sale.voidedAt) return SALE_COPY.showVoided
-  if (filters.status !== 'all' && sale.status !== filters.status) return sale.status === 'complete' ? SALE_COPY.statusComplete : SALE_COPY.statusPending
   if (filters.type !== 'all' && sale.type !== filters.type) return sale.type === 'delivery' ? SALE_COPY.typeDelivery : SALE_COPY.typeOnSite
-  return SALE_COPY.statusAll
+  return SALE_COPY.typeAll
 }
 
 /** After a change: if the sale still matches the current filters, flash + reveal it; otherwise say why it left. */
@@ -186,6 +173,8 @@ type Opener = { kind: 'primary' } | { kind: 'empty' } | { kind: 'row', id: strin
 const formOpen = ref(false)
 const formMode = ref<'add' | 'edit'>('add')
 const editSale = ref<Sale | null>(null)
+/** For a delivery made from an order: that order's date, the earliest its sale date may be (AC36). */
+const editOrderDate = ref<IsoDate | null>(null)
 let opener: Opener = { kind: 'primary' }
 
 function openAdd(from: Opener = { kind: 'primary' }) {
@@ -193,6 +182,7 @@ function openAdd(from: Opener = { kind: 'primary' }) {
   opener = from
   formMode.value = 'add'
   editSale.value = null
+  editOrderDate.value = null
   formOpen.value = true
 }
 primary.onPrimaryAction(() => openAdd({ kind: 'primary' }))
@@ -202,6 +192,15 @@ function openEdit(sale: Sale, from: Opener = { kind: 'row', id: sale.id }) {
   opener = from
   formMode.value = 'edit'
   editSale.value = sale
+  editOrderDate.value = null
+  if (sale.orderId !== null) {
+    const orderId = sale.orderId
+    void api<OrderResponse>(`/api/orders/${encodeURIComponent(orderId)}`)
+      .then((res) => {
+        if (editSale.value?.orderId === orderId) editOrderDate.value = res.order.orderDate
+      })
+      .catch(() => undefined)
+  }
   detailOpen.value = false
   formOpen.value = true
 }
@@ -209,7 +208,7 @@ function openEdit(sale: Sale, from: Opener = { kind: 'row', id: sale.id }) {
 async function onFormClosed() {
   await nextTick()
   await new Promise(resolve => requestAnimationFrame(resolve))
-  if (opener.kind === 'row') return focusControl(`open:${opener.id}`, `menu:${opener.id}`)
+  if (opener.kind === 'row') return focusControl(`open:${opener.id}`)
   if (opener.kind === 'empty') {
     const card = document.querySelector<HTMLElement>('[data-sale-focus="empty-add"]')
     if (card) return card.focus({ preventScroll: true })
@@ -221,9 +220,7 @@ async function onFormClosed() {
 function onSaved(event: SaleSavedEvent) {
   if (event.kind === 'unchanged') return
   const n = event.sale.saleNumber
-  const title = event.kind === 'logged_pending'
-    ? SALE_COPY.toastLoggedPending(n)
-    : event.kind === 'recorded' ? SALE_COPY.toastRecorded(n) : SALE_COPY.toastUpdated(n)
+  const title = event.kind === 'recorded' ? SALE_COPY.toastRecorded(n) : SALE_COPY.toastUpdated(n)
   if (!list.isVisible(event.sale)) {
     // AC29: if the current filters would hide the new/edited sale, clear them so the owner sees it.
     clearFilters()
@@ -245,65 +242,126 @@ watch(() => list.sales.value, (rows) => {
   const fresh = rows.find(s => s.id === detailSale.value!.id)
   if (fresh) detailSale.value = fresh
 })
+watch(detailOpen, (isOpen) => {
+  if (!isOpen) stack.clear()
+})
 
-// ---- Mark delivered / Mark as pending --------------------------------------------------------------------
-const markDeliveredOpen = ref(false)
-const markDeliveredSale = ref<Sale | null>(null)
-function openMarkDelivered(sale: Sale) {
-  markDeliveredSale.value = sale
-  markDeliveredOpen.value = true
-}
-function onMarked(sale: Sale) {
-  afterVisibleChange(sale, SALE_COPY.toastMarkedDelivered)
-}
-function onMarkFailed() {
-  const n = markDeliveredSale.value?.saleNumber
-  if (n) errorToast(`sales-mark-${n}`, SALE_COPY.markFailed(n), () => markDeliveredSale.value && openMarkDelivered(markDeliveredSale.value))
-}
-
-async function markPending(sale: Sale) {
-  const result = await mutations.markPending(sale.id)
-  if (!result) return
-  if (result.ok) {
-    afterVisibleChange(result.data.sale, SALE_COPY.toastMarkedPending)
-    return
+/** Opens any sale by id (a hand-off from Orders, or another delivery picked in the stacked order). */
+async function openSaleById(id: string) {
+  try {
+    const res = await api<SaleResponse>(`/api/sales/${encodeURIComponent(id)}`)
+    orderOverlayOpen.value = false
+    detailSale.value = res.sale
+    detailOpen.value = true
   }
-  if (result.error.kind === 'voided' || result.error.kind === 'sale_changed') {
-    onChangedElsewhere()
-    return
+  catch {
+    errorToast('sales-open-failed', SALE_COPY.loadFailedTitle)
   }
-  errorToast(`sales-mark-pending-${sale.saleNumber}`, SALE_COPY.markPendingFailed(sale.saleNumber), () => void markPending(sale))
 }
 
-// ---- Delete / Void ----------------------------------------------------------------------------------------
-const removalOpen = ref(false)
-const removalSale = ref<Sale | null>(null)
-const removalAction = ref<'delete' | 'void'>('delete')
-function openRemoval(sale: Sale) {
-  removalSale.value = sale
-  removalAction.value = sale.status === 'pending' ? 'delete' : 'void'
-  removalOpen.value = true
+// ---- Void -------------------------------------------------------------------------------------------------
+const voidOpen = ref(false)
+const voidSale = ref<Sale | null>(null)
+function openVoid(sale: Sale) {
+  voidSale.value = sale
+  voidOpen.value = true
 }
-const removalClientLabel = computed(() => {
-  const sale = removalSale.value
+const voidClientLabel = computed(() => {
+  const sale = voidSale.value
   if (!sale) return ''
   if (!sale.clientId) return SALE_COPY.walkIn
   return clients.sorted.value.find(c => c.id === sale.clientId)?.name ?? SALE_COPY.walkIn
 })
-function onDeleted(sale: Sale) {
-  toast.add({ title: SALE_COPY.toastDeleted(sale.saleNumber), icon: 'i-lucide-check' })
-  detailOpen.value = false
+
+/** "10 trays of Large" for what an order still owes after a void; null when nothing, or the order stays closed. */
+function owedText(order: OrderDetailData): string | null {
+  if (order.closedShortAt !== null) return null
+  const parts = order.lines
+    .filter(l => l.remainingEggs > 0)
+    .map(l => `${formatQty(l.remainingEggs, trayEggs.value)} of ${sizeById(l.sizeId).name}`)
+  return parts.length ? parts.join(', ') : null
 }
-function onVoided(sale: Sale) {
-  afterVisibleChange(sale, SALE_COPY.toastVoided(sale.saleNumber))
+
+function onVoided(response: VoidSaleResponse) {
+  const sale = response.sale
+  if (detailSale.value?.id === sale.id) detailSale.value = sale
+  void onHand.invalidate(sale.lines.map(l => l.sizeId))
+  const owed = response.order ? owedText(response.order) : null
+  const message = response.order && owed && sale.orderNumber !== null
+    ? SALE_COPY.toastVoidedLinked(sale.saleNumber, sale.orderNumber, owed)
+    : SALE_COPY.toastVoided(sale.saleNumber)
+  afterVisibleChange(sale, message)
 }
-function onRemovalRefused() {
+function onVoidRefused() {
   onChangedElsewhere()
+  void list.reload()
 }
+
+// ---- Stacked read-only order (flow H, D3/D10) ----------------------------------------------------------------
+const orderOverlayOpen = ref(false)
+const stackedOrder = ref<OrderDetailData | null>(null)
+
+function openOrderOf(sale: Sale) {
+  if (sale.orderId === null) return
+  stack.push({ kind: 'order', id: sale.orderId })
+}
+
+watch(() => stack.top.value, async (entry) => {
+  if (!entry || entry.kind !== 'order') {
+    orderOverlayOpen.value = false
+    return
+  }
+  stackedOrder.value = null
+  orderOverlayOpen.value = true
+  try {
+    const res = await api<OrderResponse>(`/api/orders/${encodeURIComponent(entry.id)}`)
+    if (stack.top.value?.id === entry.id) stackedOrder.value = res.order
+  }
+  catch {
+    if (stack.top.value?.id === entry.id) {
+      orderOverlayOpen.value = false
+      stack.pop()
+      errorToast('sales-order-open-failed', SALE_COPY.openOrderFailed)
+    }
+  }
+})
+
+watch(orderOverlayOpen, (isOpen) => {
+  if (!isOpen && stack.top.value) stack.pop()
+})
+
+/** A delivery picked inside the stacked order: the sale underneath just comes back; any other one opens here. */
+function onStackedDelivery(delivery: OrderDelivery) {
+  if (detailSale.value?.id === delivery.saleId && detailOpen.value) {
+    orderOverlayOpen.value = false
+    return
+  }
+  void openSaleById(delivery.saleId)
+}
+
+async function openOrderInOrders(order: { id: string }) {
+  await stack.handoffTo({ kind: 'order', id: order.id }, '/orders')
+}
+
+// ---- Mount ----------------------------------------------------------------------------------------------------
+onMounted(() => {
+  syncToday()
+  useEventListener(document, 'visibilitychange', () => {
+    if (document.visibilityState === 'visible') syncToday()
+  })
+  useEventListener(window, 'focus', () => syncToday())
+  void clients.load({ silent: clients.hasList.value })
+  void list.load({ ...filters })
+  // "Open in Sales" from the Orders screen hands a sale over to open here, fully editable.
+  const handoff = stack.takeHandoff('sale')
+  if (handoff) void openSaleById(handoff.id)
+})
+
+onBeforeUnmount(() => stack.clear())
 
 // The FAB/Add button hides while any sheet or dialog is open (UX "Getting there").
 watchEffect(() => {
-  primary.hidden.value = formOpen.value || detailOpen.value || markDeliveredOpen.value || removalOpen.value
+  primary.hidden.value = formOpen.value || detailOpen.value || voidOpen.value || orderOverlayOpen.value
 })
 </script>
 
@@ -343,7 +401,6 @@ watchEffect(() => {
 
     <template v-else>
       <SalesToolbar
-        v-model:status="filters.status"
         v-model:type="filters.type"
         v-model:client-id="filters.clientId"
         v-model:from="filters.from"
@@ -367,10 +424,8 @@ watchEffect(() => {
         :busy-ids="mutations.pendingIds.value"
         @open="openDetail"
         @edit="(s: Sale) => openEdit(s)"
-        @mark-delivered="openMarkDelivered"
-        @mark-pending="markPending"
-        @delete="openRemoval"
-        @void="openRemoval"
+        @void="openVoid"
+        @open-order="openOrderOf"
       >
         <template
           v-if="noMatch"
@@ -379,12 +434,6 @@ watchEffect(() => {
           <div class="flex flex-col items-center gap-3 p-10 text-center">
             <p class="text-base text-muted">
               {{ SALE_COPY.noMatch }}
-            </p>
-            <p
-              v-if="noMatchPendingOnly"
-              class="text-base text-muted"
-            >
-              {{ SALE_COPY.noMatchPendingNote }}
             </p>
             <UButton
               color="neutral"
@@ -420,6 +469,7 @@ watchEffect(() => {
       :mode="formMode"
       :sale="editSale"
       :today="today"
+      :order-date="editOrderDate"
       @saved="onSaved"
       @changed-elsewhere="onChangedElsewhere"
       @closed="onFormClosed"
@@ -431,30 +481,27 @@ watchEffect(() => {
       :today="today"
       :mutations="mutations"
       @edit="(s: Sale) => openEdit(s, { kind: 'row', id: s.id })"
-      @mark-delivered="openMarkDelivered"
-      @mark-pending="markPending"
-      @delete="openRemoval"
-      @void="openRemoval"
+      @void="openVoid"
+      @open-order="openOrderOf"
     />
 
-    <MarkDeliveredDialog
-      v-model:open="markDeliveredOpen"
-      :sale="markDeliveredSale"
-      :today="today"
+    <SaleVoidDialog
+      v-model:open="voidOpen"
+      :sale="voidSale"
+      :client-label="voidClientLabel"
       :mutations="mutations"
-      @marked="onMarked"
-      @failed="onMarkFailed"
-    />
-
-    <SaleRemovalDialog
-      v-model:open="removalOpen"
-      :sale="removalSale"
-      :action="removalAction"
-      :client-label="removalClientLabel"
-      :mutations="mutations"
-      @deleted="onDeleted"
       @voided="onVoided"
-      @refused="onRemovalRefused"
+      @refused="onVoidRefused"
+    />
+
+    <OrderDetail
+      v-model:open="orderOverlayOpen"
+      :order="stackedOrder"
+      :deliveries="stackedOrder?.deliveries ?? null"
+      :today="today"
+      readonly
+      @open-sale="onStackedDelivery"
+      @open-elsewhere="openOrderInOrders"
     />
   </div>
 </template>

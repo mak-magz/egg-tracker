@@ -85,6 +85,12 @@ function goBack() {
   else void navigateTo('/')
 }
 
+// The phone bar's More sheet (feature 05 AC1). Closed by any route change, so a row tap just navigates.
+const moreOpen = ref(false)
+watch(() => route.path, () => {
+  moreOpen.value = false
+})
+
 // ---- Primary action: top-bar button (md+) and FAB (<md) (feature 01 §3.4, AC1, AC31, AC32) ----
 const { action: primaryAction, hasFab, fabVisible, trigger: triggerPrimaryAction } = usePrimaryAction()
 // ---------------------------------------------------------------------------------------------
@@ -261,7 +267,7 @@ const navUi = computed(() => ({
 
       <!-- FAB: 52px, above the tab bar (D8), hidden while the page's sheet or a dialog is open. -->
       <UButton
-        v-if="primaryAction && fabVisible"
+        v-if="primaryAction && fabVisible && !moreOpen"
         class="fixed right-4 bottom-[calc(4rem+env(safe-area-inset-bottom)+1rem)] z-40 size-13 justify-center rounded-full shadow-lg md:hidden"
         data-primary-action
         :icon="primaryAction.icon"
@@ -270,7 +276,8 @@ const navUi = computed(() => ({
         @click="triggerPrimaryAction"
       />
 
-      <AppBottomTabs />
+      <AppBottomTabs v-model:more-open="moreOpen" />
+      <AppMoreSheet v-model:open="moreOpen" />
     </UDashboardGroup>
   </div>
 </template>

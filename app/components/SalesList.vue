@@ -1,13 +1,12 @@
 <!--
-  The sale list (feature 04 §2.5 "Sales list, mobile/desktop", AC3, AC4, AC48, R5 to R8): the design's table
-  when the area is wide enough (~720px, per UX), stacked cards when it isn't — the switch is the list area's
-  OWN width (useElementSize), not the screen width, mirroring ClientsList.vue. Renders the given, already
+  The sale list (feature 04 §2.5 "Sales list, mobile/desktop", AC3, AC4, AC48, R5 to R8; feature 05 AC39): the
+  design's table when the area is wide enough (~720px, per UX), stacked cards when it isn't — the switch is the list
+  area's OWN width (useElementSize), not the screen width, mirroring ClientsList.vue. Renders the given, already
   sorted and filtered, page ONCE: this is a server-paginated list (unlike Clients' 500-row client filter), so
   there is no "rows in the DOM" step-loading here. Client names are joined here from useClients() (a sale
   never carries a name, AC60); sizes from useFarm() (a line always resolves, even an archived one, AC38).
-  The whole card/row is a real <button> that opens the detail; Mark delivered and the ⋮ sit above it (z-10)
-  so they don't trigger it. Status/type are always words (R5); "Delivered {date}" only when it differs from
-  the sale date (AC4).
+  The whole card/row is a real <button> that opens the detail; the ⋮ and the "From order #n" pill sit above it
+  (z-10) so they don't trigger it. Type is always a word (R5); there is no status: every sale already left the farm.
 -->
 <script setup lang="ts">
 import { useElementSize } from '@vueuse/core'
@@ -27,14 +26,12 @@ const props = defineProps<{
 const emit = defineEmits<{
   'open': [sale: Sale]
   'edit': [sale: Sale]
-  'mark-delivered': [sale: Sale]
-  'mark-pending': [sale: Sale]
-  'delete': [sale: Sale]
   'void': [sale: Sale]
+  'open-order': [sale: Sale]
 }>()
 
 const { sorted: allClients } = useClients()
-const { sizeById, eggsPerTray, formatPrice } = useFarm()
+const { sizeById, trayEggs, formatPrice } = useFarm()
 
 const busy = computed(() => new Set(props.busyIds ?? []))
 
@@ -46,18 +43,13 @@ function clientName(sale: Sale): string {
 
 const LINES_SHOWN = 3
 function lineText(line: Sale['lines'][number]): string {
-  return `${sizeById(line.sizeId).name} · ${formatQty(line.eggs, eggsPerTray.value ?? 30)}`
+  return `${sizeById(line.sizeId).name} · ${formatQty(line.eggs, trayEggs.value)}`
 }
 function shownLines(sale: Sale): string[] {
   return sale.lines.slice(0, LINES_SHOWN).map(lineText)
 }
 function moreCount(sale: Sale): number {
   return Math.max(0, sale.lines.length - LINES_SHOWN)
-}
-function deliveredNote(sale: Sale): string | null {
-  return sale.status === 'complete' && sale.deliveredDate && sale.deliveredDate !== sale.saleDate
-    ? SALE_COPY.deliveredOn(formatShortDate(sale.deliveredDate, props.today))
-    : null
 }
 
 const TABLE_MIN_WIDTH = 720
@@ -66,8 +58,8 @@ const { width } = useElementSize(sizer)
 const wide = computed(() => width.value >= TABLE_MIN_WIDTH)
 
 function rowAria(sale: Sale): string {
-  const status = sale.voidedAt ? SALE_COPY.voided : sale.status === 'complete' ? SALE_COPY.statusComplete : SALE_COPY.statusPending
-  return SALE_COPY.openSaleAria(sale.saleNumber, clientName(sale), status)
+  const kind = sale.voidedAt ? SALE_COPY.voided : sale.type === 'delivery' ? SALE_COPY.typeDelivery : SALE_COPY.typeOnSite
+  return SALE_COPY.openSaleAria(sale.saleNumber, clientName(sale), kind)
 }
 
 const flash = 'animate-[size-row-flash_1.5s_ease-out] motion-reduce:animate-none'
@@ -120,7 +112,7 @@ const flash = 'animate-[size-row-flash_1.5s_ease-out] motion-reduce:animate-none
               scope="col"
               class="px-4 py-2.5 text-left text-sm font-medium text-muted"
             >
-              {{ SALE_COPY.headerStatus }}
+              {{ SALE_COPY.headerType }}
             </th>
             <th
               scope="col"
@@ -180,10 +172,6 @@ const flash = 'animate-[size-row-flash_1.5s_ease-out] motion-reduce:animate-none
                 <p class="pt-2 text-base font-semibold wrap-anywhere text-highlighted">
                   {{ clientName(sale) }}
                 </p>
-                <SaleTypeBadge
-                  :type="sale.type"
-                  class="mt-1"
-                />
               </td>
               <td class="px-4 py-1.5 align-top">
                 <p
@@ -208,25 +196,14 @@ const flash = 'animate-[size-row-flash_1.5s_ease-out] motion-reduce:animate-none
               <td class="px-4 py-1.5 align-top">
                 <div class="flex flex-col items-start gap-1.5 pt-2">
                   <div class="flex flex-wrap items-center gap-1.5">
-                    <SaleStatusBadge :status="sale.status" />
+                    <SaleTypeBadge :type="sale.type" />
                     <SaleVoidedBadge v-if="sale.voidedAt" />
                   </div>
-                  <UButton
-                    v-if="sale.status === 'pending' && !sale.voidedAt"
-                    color="neutral"
-                    variant="outline"
-                    size="md"
-                    :label="SALE_COPY.markDelivered"
-                    :loading="busy.has(sale.id)"
-                    :disabled="busy.has(sale.id)"
-                    @click="emit('mark-delivered', sale)"
+                  <FromOrderLink
+                    v-if="sale.orderId !== null && sale.orderNumber !== null"
+                    :order-number="sale.orderNumber"
+                    @open="emit('open-order', sale)"
                   />
-                  <p
-                    v-if="deliveredNote(sale)"
-                    class="text-sm text-muted"
-                  >
-                    {{ deliveredNote(sale) }}
-                  </p>
                 </div>
               </td>
               <td class="px-2 py-1.5 text-right align-top">
@@ -235,9 +212,6 @@ const flash = 'animate-[size-row-flash_1.5s_ease-out] motion-reduce:animate-none
                     :sale="sale"
                     :busy="busy.has(sale.id)"
                     @edit="emit('edit', sale)"
-                    @mark-delivered="emit('mark-delivered', sale)"
-                    @mark-pending="emit('mark-pending', sale)"
-                    @delete="emit('delete', sale)"
                     @void="emit('void', sale)"
                   />
                 </div>
@@ -289,9 +263,6 @@ const flash = 'animate-[size-row-flash_1.5s_ease-out] motion-reduce:animate-none
                 :sale="sale"
                 :busy="busy.has(sale.id)"
                 @edit="emit('edit', sale)"
-                @mark-delivered="emit('mark-delivered', sale)"
-                @mark-pending="emit('mark-pending', sale)"
-                @delete="emit('delete', sale)"
                 @void="emit('void', sale)"
               />
             </div>
@@ -320,26 +291,13 @@ const flash = 'animate-[size-row-flash_1.5s_ease-out] motion-reduce:animate-none
           </div>
           <div class="mt-2 flex flex-wrap items-center gap-2">
             <SaleTypeBadge :type="sale.type" />
-            <SaleStatusBadge :status="sale.status" />
             <SaleVoidedBadge v-if="sale.voidedAt" />
-            <UButton
-              v-if="sale.status === 'pending' && !sale.voidedAt"
-              color="neutral"
-              variant="outline"
-              size="xl"
-              class="relative z-10 min-h-11"
-              :label="SALE_COPY.markDelivered"
-              :loading="busy.has(sale.id)"
-              :disabled="busy.has(sale.id)"
-              @click="emit('mark-delivered', sale)"
+            <FromOrderLink
+              v-if="sale.orderId !== null && sale.orderNumber !== null"
+              :order-number="sale.orderNumber"
+              @open="emit('open-order', sale)"
             />
           </div>
-          <p
-            v-if="deliveredNote(sale)"
-            class="mt-1 text-sm text-muted"
-          >
-            {{ deliveredNote(sale) }}
-          </p>
         </li>
       </ul>
       <div

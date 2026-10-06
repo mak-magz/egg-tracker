@@ -21,8 +21,23 @@ const props = defineProps<{
   usedSizeIds: readonly string[]
   eggsPerTray: number
   currency: string | null
-  onHandEggs: number | null
-  onHandStatus: 'loading' | 'ready' | 'error'
+  onHandEggs?: number | null
+  onHandStatus?: 'loading' | 'ready' | 'error'
+  /** Orders don't touch stock (feature 05 AC10): no per-line on-hand hint. */
+  hideOnHand?: boolean
+  /** An order line that already has deliveries (feature 05 AC19): the size is shown read-only with this accessible name. */
+  lockedLabel?: string
+  /** The least this line may be, in eggs (Edit after a delivery): the minus steppers stop there. */
+  minEggs?: number
+  /** Always-visible note under the quantity, e.g. "At least 20 trays delivered". */
+  minNote?: string
+  /** Muted note under the price, e.g. "Price changes only affect future deliveries." */
+  priceNote?: string
+  /** "In this order" on the order form; the sale form keeps "In this sale". */
+  usedLabel?: string
+  usedOptionLabel?: (name: string) => string
+  /** Unique per form so the radio ids never clash. */
+  idPrefix?: string
   showUsualPriceNote: boolean
   lineTotal: number | null
   removable: boolean
@@ -52,6 +67,8 @@ function onSizeUpdate(id: string | null) {
   sizeId.value = id
   if (wasEmpty && qtyEmpty && id !== null) emit('size-chosen')
 }
+
+const prefix = computed(() => props.idPrefix ?? 'sale-line')
 
 const onHandText = computed(() => {
   if (props.onHandStatus === 'loading') return SALE_COPY.onHandLoading
@@ -88,13 +105,29 @@ function onPriceInput() {
       />
     </div>
 
+    <div
+      v-if="lockedLabel"
+      role="group"
+      :aria-label="lockedLabel"
+      class="flex min-h-11 items-center gap-2 rounded-md border border-default bg-default px-3 py-2 text-base font-semibold text-highlighted"
+    >
+      <span class="min-w-0 flex-1 wrap-anywhere">{{ sizeName }}</span>
+      <UIcon
+        name="i-lucide-lock"
+        class="size-4 shrink-0 text-muted"
+        aria-hidden="true"
+      />
+    </div>
     <SizeChipPicker
+      v-else
       :model-value="sizeId"
       :options="sizeOptions"
       :used-ids="usedSizeIds"
-      :name="`sale-line-size-${index}`"
+      :name="`${prefix}-size-${index}`"
       :group-label="SALE_COPY.sizeLabel"
       :disabled="disabled"
+      :used-label="usedLabel"
+      :used-option-label="usedOptionLabel"
       @update:model-value="onSizeUpdate"
     />
     <p
@@ -109,7 +142,7 @@ function onPriceInput() {
     </p>
 
     <p
-      v-if="sizeId"
+      v-if="sizeId && !hideOnHand"
       class="text-sm text-dimmed"
     >
       {{ onHandText }}
@@ -126,11 +159,18 @@ function onPriceInput() {
       :eggs-per-tray="eggsPerTray"
       :label="quantityLabel"
       :name="`lines.${index}.qty`"
-      :id-prefix="`sale-line-qty-${index}`"
+      :id-prefix="`${prefix}-qty-${index}`"
       :error="quantityError"
+      :min-eggs="minEggs"
       :disabled="disabled"
       inline-labels
     />
+    <p
+      v-if="minNote"
+      class="text-sm text-default"
+    >
+      {{ minNote }}
+    </p>
 
     <div class="flex flex-wrap items-end justify-between gap-3">
       <UFormField
@@ -179,5 +219,11 @@ function onPriceInput() {
         >{{ SALE_COPY.lineTotalNotReady }}</span>
       </div>
     </div>
+    <p
+      v-if="priceNote"
+      class="text-sm text-muted"
+    >
+      {{ priceNote }}
+    </p>
   </fieldset>
 </template>

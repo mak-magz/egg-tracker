@@ -1,10 +1,11 @@
-// The logic behind useSaleMutations() (feature 04 §3.4), kept free of Nuxt auto-imports so tests/unit can
+// The logic behind useSaleMutations() (feature 04 §3.4, reduced by feature 05: sales are void-only), kept free of Nuxt auto-imports so tests/unit can
 // drive it with a stubbed `$api`. Every call is one request; each returns { ok, data } | { ok: false, error }
 // and never throws (client-mutations.ts's own shape and style).
 //
 // Guards (UX R1, AC30): create/update share ONE in-flight guard per form instance (a call made while one
-// runs resolves to null). Mark delivered / mark as pending / void / delete are guarded PER SALE ID, because
-// other rows stay usable while one runs.
+// runs resolves to null). Void is guarded PER SALE ID, because other rows stay usable while one runs. A void of a
+// delivery also returns the order it came from, recomputed in the same change (feature 05 AC35): it goes to
+// `patchOrder` so the Orders list is right when the owner returns to it.
 // Submission id (AC30): one per form opening, reused on a retry of the SAME normalised payload (type,
 // client, dates, every line — NOT `confirmShortfall`, so retrying with "Record anyway" after a shortfall is
 // not "a different payload", per §3.1's `sale_submissions.payload_hash`). Replaced when any of those change
@@ -13,14 +14,14 @@ import { ref, readonly } from 'vue'
 import type {
   CreateSaleRequest,
   CreateSaleResponse,
-  DeleteSaleResponse,
-  MarkSaleDeliveredRequest,
+  OrderDetail,
   Sale,
   SaleChangeResponse,
   SaleLineInput,
   SaleType,
   UpdateSaleRequest,
   VoidSaleRequest,
+  VoidSaleResponse,
 } from '#shared/types/api'
 import { mapSaleError } from './sale-errors'
 import type { SaleError } from './sale-errors'
@@ -38,7 +39,6 @@ export interface SaleInput {
   type: SaleType
   saleDate: string
   clientId: string | null
-  deliveredDate: string | null
   lines: SaleLineInput[]
 }
 
@@ -46,20 +46,22 @@ export interface SaleMutationDeps {
   api: SaleApi
   /** Puts a sale a write just returned into the list (useSales().upsert). */
   upsert: (sale: Sale) => void
-  /** Removes a sale from the list for good (useSales().remove) — Delete only. */
-  removeFromList: (id: string) => void
+  /** Puts the order a void just recomputed into the Orders list (useOrders().upsert). */
+  patchOrder?: (order: OrderDetail) => void
+  /** A delivery's date changed (its order's version moved with it): quietly re-read the Orders list (useOrders().reload). */
+  refreshOrders?: () => void
   /** A quiet re-read with the current filters (useSales().reload). */
   reload: () => Promise<unknown>
   /** Test seam; defaults to crypto.randomUUID. */
   newId?: () => string
 }
 
-/** Two payloads are the same intent when type, client, both dates and every line (sorted by size) agree. */
+/** Two payloads are the same intent when type, client, the date and every line (sorted by size) agree. */
 function payloadKey(input: SaleInput): string {
   const lines = [...input.lines]
     .sort((a, b) => a.sizeId.localeCompare(b.sizeId))
     .map(l => [l.sizeId, l.eggs, Math.round(l.pricePerTray * 100)])
-  return JSON.stringify([input.type, input.clientId, input.saleDate, input.deliveredDate, lines])
+  return JSON.stringify([input.type, input.clientId, input.saleDate, lines])
 }
 
 export function createSaleSubmissionTracker(newId: () => string = () => crypto.randomUUID()) {
@@ -80,17 +82,17 @@ export function createSaleSubmissionTracker(newId: () => string = () => crypto.r
 }
 
 export function createSaleMutations(deps: SaleMutationDeps) {
-  const { api, upsert, removeFromList, reload } = deps
+  const { api, upsert, patchOrder, refreshOrders, reload } = deps
   const submissions = createSaleSubmissionTracker(deps.newId)
   /** A create or an update is being saved (one per form). */
   const saving = ref(false)
-  /** Ids of the sales whose mark/void/delete is running. */
+  /** Ids of the sales whose void is running. */
   const pendingIds = ref<readonly string[]>([])
 
   /** What to do after a failed write besides telling the owner: keep the list honest (client-mutations.ts's own pattern). */
   function afterFailure(error: SaleError) {
     // Never awaited: the owner's message must not wait on a second request, and a failed read changes nothing.
-    if (error.kind === 'sale_changed' || error.kind === 'not_pending' || error.kind === 'not_complete' || error.kind === 'voided') {
+    if (error.kind === 'sale_changed' || error.kind === 'sale_locked' || error.kind === 'voided') {
       if (error.sale) upsert(error.sale)
       else void reload().catch(() => undefined)
     }
@@ -102,6 +104,7 @@ export function createSaleMutations(deps: SaleMutationDeps) {
     try {
       const data = await call()
       upsert(data.sale)
+      if (data.sale.orderId) refreshOrders?.()
       return { ok: true, data }
     }
     catch (e) {
@@ -114,36 +117,18 @@ export function createSaleMutations(deps: SaleMutationDeps) {
     }
   }
 
-  async function runForSale<T extends { sale: Sale }>(id: string, call: () => Promise<T>): Promise<SaleResult<T>> {
+  async function runForSale(id: string, call: () => Promise<VoidSaleResponse>): Promise<SaleResult<VoidSaleResponse>> {
     if (pendingIds.value.includes(id)) return null
     pendingIds.value = [...pendingIds.value, id]
     try {
       const data = await call()
       upsert(data.sale)
+      if (data.order) patchOrder?.(data.order)
       return { ok: true, data }
     }
     catch (e) {
       const error = mapSaleError(e)
       afterFailure(error)
-      return { ok: false, error }
-    }
-    finally {
-      pendingIds.value = pendingIds.value.filter(x => x !== id)
-    }
-  }
-
-  async function runDelete(id: string, call: () => Promise<DeleteSaleResponse>): Promise<SaleResult<DeleteSaleResponse>> {
-    if (pendingIds.value.includes(id)) return null
-    pendingIds.value = [...pendingIds.value, id]
-    try {
-      const data = await call()
-      removeFromList(id)
-      return { ok: true, data }
-    }
-    catch (e) {
-      const error = mapSaleError(e)
-      // A 404 (already gone elsewhere): nothing was ever there to keep, and the caller treats it as done.
-      if (error.kind !== 'not_found') afterFailure(error)
       return { ok: false, error }
     }
     finally {
@@ -167,19 +152,9 @@ export function createSaleMutations(deps: SaleMutationDeps) {
       const body: UpdateSaleRequest = { version: sale.version, ...input, confirmShortfall }
       return runForm<SaleChangeResponse>(() => api<SaleChangeResponse>(path(sale.id), { method: 'PUT', body, timeout: SALE_WRITE_TIMEOUT_MS }))
     },
-    markDelivered(id: string, deliveredDate: string, confirmShortfall = false) {
-      const body: MarkSaleDeliveredRequest = { deliveredDate, confirmShortfall }
-      return runForSale(id, () => api<SaleChangeResponse>(`${path(id)}/mark-delivered`, { method: 'POST', body, timeout: SALE_WRITE_TIMEOUT_MS }))
-    },
-    markPending(id: string) {
-      return runForSale(id, () => api<SaleChangeResponse>(`${path(id)}/mark-pending`, { method: 'POST', timeout: SALE_WRITE_TIMEOUT_MS }))
-    },
     voidSale(sale: Pick<Sale, 'id' | 'version'>) {
       const body: VoidSaleRequest = { version: sale.version }
-      return runForSale(sale.id, () => api<SaleChangeResponse>(`${path(sale.id)}/void`, { method: 'POST', body, timeout: SALE_WRITE_TIMEOUT_MS }))
-    },
-    remove(id: string) {
-      return runDelete(id, () => api<DeleteSaleResponse>(path(id), { method: 'DELETE', timeout: SALE_WRITE_TIMEOUT_MS }))
+      return runForSale(sale.id, () => api<VoidSaleResponse>(`${path(sale.id)}/void`, { method: 'POST', body, timeout: SALE_WRITE_TIMEOUT_MS }))
     },
   }
 }

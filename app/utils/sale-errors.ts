@@ -14,8 +14,7 @@ export type SaleErrorKind
     | 'stock_short' // 409 stock_short (AC26, AC35, AC42): `shortfall` is never empty
     | 'sale_changed' // 409 sale_changed, or a bad id/version: the sale changed elsewhere (AC43)
     | 'not_found' // 404: the id isn't one of this farm's sales
-    | 'not_pending' // 409 not_pending: Delete attempted on a Complete/voided sale (AC44)
-    | 'not_complete' // 409 not_complete: Void attempted on a Pending sale (AC67)
+    | 'sale_locked' // 409 sale_locked: a delivery from an order can't have its client or lines changed (feature 05 AC36)
     | 'voided' // 409 voided: any change attempted on an already-voided sale (AC68)
     | 'unknown'
 
@@ -23,7 +22,7 @@ export interface SaleError {
   kind: SaleErrorKind
   /** Server field messages, for `validation`. */
   fields?: Record<string, string>
-  /** For `sale_changed`, `not_pending`, `not_complete`: the sale as it is NOW, when the server sent it. */
+  /** For `sale_changed`, `sale_locked`, `voided`: the sale as it is NOW, when the server sent it. */
   sale?: Sale
   /** For `stock_short`: only the short sizes, farm order. Never empty when the kind is `stock_short`. */
   shortfall?: ShortfallLine[]
@@ -61,8 +60,7 @@ export function mapSaleError(e: unknown): SaleError {
     const reason = reasonOf(data)
     if (reason === 'stock_short') return { kind: 'stock_short', ...(data?.shortfall ? { shortfall: data.shortfall } : {}) }
     if (reason === 'sale_changed') return { kind: 'sale_changed', ...(data?.sale ? { sale: data.sale } : {}) }
-    if (reason === 'not_pending') return { kind: 'not_pending', ...(data?.sale ? { sale: data.sale } : {}) }
-    if (reason === 'not_complete') return { kind: 'not_complete', ...(data?.sale ? { sale: data.sale } : {}) }
+    if (reason === 'sale_locked') return { kind: 'sale_locked', ...(data?.sale ? { sale: data.sale } : {}) }
     if (reason === 'voided') return { kind: 'voided', ...(data?.sale ? { sale: data.sale } : {}) }
     return { kind: 'unknown' }
   }

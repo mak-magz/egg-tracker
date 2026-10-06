@@ -1,12 +1,14 @@
 <!--
-  Log / Edit sale: the whole sheet or dialog content (feature 04 §2.5 "Log a sale", AC12 to AC32, AC40 to
-  AC43, AC64 to AC66). A header part (Delivery/On-site, Client, and in Edit the type-change note) plus a
-  repeatable lines part (SaleLineCard x1-20, Add size) plus Sale date / Already delivered (or a Complete
-  delivery's Delivered date) plus the footer total. SELF-CONTAINED (AC34-style, feature 03): validation, the
-  submission id, the discard-dirty state and the save call all live here, like ClientForm/ProductionForm.
-  Type change (AC64-66): switching Delivery <-> On-site in Edit adjusts which fields show and what would be
-  saved; switching back restores the sale's original date/client exactly. Stock-short (AC26, AC35, AC42) is
-  a confirm dialog on top of this still-open form; "Go back" keeps every typed value.
+  Log / Edit sale: the whole sheet or dialog content (feature 04 §2.5 "Log a sale", AC12 to AC32, AC40, AC41,
+  AC64 to AC66; feature 05 AC36 to AC42). A header part (Delivery/On-site, Client) plus a repeatable lines part
+  (SaleLineCard x1-20, Add size) plus the one Sale date plus the footer total. SELF-CONTAINED (AC34-style,
+  feature 03): validation, the submission id, the discard-dirty state and the save call all live here, like
+  ClientForm/ProductionForm.
+  Every sale has already left the farm (feature 05 AC37), so there is no "Already delivered" and no delivered date:
+  the Sale date is the day the eggs left. A type change in Edit (AC42) is a plain edit: stock never moves and nothing
+  warns. A delivery made from an order (`sale.orderId`, AC36) shows its type, client and lines read-only with a lock
+  note; only the Sale date can change. Stock-short (AC26, AC38) is a confirm dialog on top of this still-open form;
+  "Go back" keeps every typed value.
 -->
 <script setup lang="ts">
 import type { FormSubmitEvent } from '@nuxt/ui'
@@ -16,22 +18,23 @@ import type { ClientPickerOption } from './ClientPicker.vue'
 import type { SizeChipOption } from './SizeChipPicker.vue'
 import { computeLineTotal, formatPriceInput } from '#shared/utils/price'
 import { formatQty, splitEggs } from '#shared/utils/quantity'
-import { formatShortDate } from '~/utils/day-label'
+import { formatDateHint } from '~/utils/day-label'
+import { ORDER_COPY } from '~/utils/order-copy'
 import { SALE_COPY } from '~/utils/sale-copy'
 import { MAX_SALE_LINES, SALE_FIELDS } from '#shared/constants/sales'
 import type { SaleError } from '~/utils/sale-errors'
 import type { SaleInput } from '~/utils/sale-mutations'
 import {
-  checkDeliveredDate,
   checkLinePrice,
   checkLineQuantity,
+  checkLinkedSaleDate,
   checkSaleClient,
   checkSaleDate,
 } from '~/utils/sale-validation'
 import type { QuantityValue } from '~/utils/sale-validation'
 
 export interface SaleSavedEvent {
-  kind: 'logged_pending' | 'recorded' | 'updated' | 'unchanged'
+  kind: 'recorded' | 'updated' | 'unchanged'
   sale: Sale
 }
 
@@ -41,6 +44,8 @@ const props = defineProps<{
   sale?: Sale | null
   /** The device's local date. */
   today: IsoDate
+  /** Edit of a delivery made from an order: the order's date, the earliest the sale date may be (AC36). Null while it loads. */
+  orderDate?: IsoDate | null
 }>()
 
 const emit = defineEmits<{
@@ -49,14 +54,16 @@ const emit = defineEmits<{
   'changed-elsewhere': []
 }>()
 
-const { activeSizes, sizeById, eggsPerTray, currency, formatPrice } = useFarm()
+const { activeSizes, sizeById, trayEggs, currency, formatPrice } = useFarm()
 const { activeClients, sorted: allClients } = useClients()
 const onHand = useOnHand()
 const mutations = useSaleMutations()
 
 const isEdit = computed(() => props.mode === 'edit')
 const originalSale = computed(() => (isEdit.value ? (props.sale ?? null) : null))
-const originalType = computed<SaleType | null>(() => originalSale.value?.type ?? null)
+/** A delivery made from an order: client, type and lines are read-only; only the date can change (AC36). */
+const linked = computed(() => originalSale.value !== null && originalSale.value.orderId !== null)
+const linkedOrderNumber = computed(() => originalSale.value?.orderNumber ?? null)
 
 // ---- Lines --------------------------------------------------------------------------------------------
 interface LineState {
@@ -78,7 +85,7 @@ function buildInitialLines(): LineState[] {
     return [{ key: newKey(), sizeId: null, qty: { trays: null, loose: null }, priceRaw: '', priceIsUsual: false }]
   }
   return sale.lines.map((line) => {
-    const { trays, loose } = splitEggs(line.eggs, eggsPerTray.value ?? 30)
+    const { trays, loose } = splitEggs(line.eggs, trayEggs.value)
     return { key: newKey(), sizeId: line.sizeId, qty: { trays, loose }, priceRaw: formatPriceInput(line.pricePerTray), priceIsUsual: false }
   })
 }
@@ -107,6 +114,14 @@ function sizeNameFor(line: LineState): string | null {
   return sizeById(line.sizeId).name
 }
 
+/** A linked sale's lines are shown with a lock and their quantity (AC36). */
+function lockedLabelFor(line: LineState): string | undefined {
+  if (!linked.value || !line.sizeId) return undefined
+  const sale = originalSale.value
+  const eggs = sale?.lines.find(l => l.sizeId === line.sizeId)?.eggs ?? 0
+  return ORDER_COPY.lockedLineAria(sizeNameFor(line) ?? '', formatQty(eggs, trayEggs.value))
+}
+
 const canAddLine = computed(() => lines.value.length < MAX_SALE_LINES)
 const allSizesUsed = computed(() => activeSizeOptions.value.length > 0 && activeSizeOptions.value.every(s => lines.value.some(l => l.sizeId === s.id)))
 const addDisabledReason = computed(() => {
@@ -118,7 +133,7 @@ const addDisabledReason = computed(() => {
 const body = useTemplateRef<HTMLElement>('body')
 
 async function addLine() {
-  if (!canAddLine.value || allSizesUsed.value) return
+  if (!canAddLine.value || allSizesUsed.value || linked.value) return
   const price = clientDefaultPrice.value
   lines.value.push({ key: newKey(), sizeId: null, qty: { trays: null, loose: null }, priceRaw: price !== null ? formatPriceInput(price) : '', priceIsUsual: price !== null })
   await nextTick()
@@ -130,7 +145,7 @@ async function addLine() {
 
 async function removeLine(key: string) {
   const idx = lines.value.findIndex(l => l.key === key)
-  if (idx === -1 || lines.value.length <= 1) return
+  if (idx === -1 || lines.value.length <= 1 || linked.value) return
   lines.value.splice(idx, 1)
   await nextTick()
   const groups = body.value?.querySelectorAll<HTMLElement>('[role="radiogroup"], select')
@@ -151,68 +166,10 @@ const state = reactive({
   type: originalSale.value?.type ?? ('delivery' as SaleType),
   clientId: originalSale.value?.clientId ?? null as string | null,
   saleDate: originalSale.value?.saleDate ?? props.today,
-  alreadyDelivered: false,
-  deliveredDate: originalSale.value?.deliveredDate ?? props.today,
 })
 
-const originalSnapshot = {
-  saleDate: originalSale.value?.saleDate ?? props.today,
-  clientId: originalSale.value?.clientId ?? null,
-  deliveredDate: originalSale.value?.deliveredDate ?? null,
-}
-
-const typeUnchanged = computed(() => !isEdit.value || originalType.value === state.type)
-const switchedFromOnSiteToDelivery = computed(() => isEdit.value && originalType.value === 'on_site' && state.type === 'delivery')
-const switchedFromDeliveryToOnSite = computed(() => isEdit.value && originalType.value === 'delivery' && state.type === 'on_site')
-
-watch(() => state.type, (newType) => {
-  if (!isEdit.value || !originalSale.value) return
-  if (newType === originalType.value) {
-    state.saleDate = originalSnapshot.saleDate
-    state.clientId = originalSnapshot.clientId
-    state.alreadyDelivered = false
-    state.deliveredDate = originalSnapshot.deliveredDate ?? props.today
-    return
-  }
-  if (newType === 'delivery' && originalType.value === 'on_site') {
-    state.alreadyDelivered = false
-    state.deliveredDate = props.today
-    return
-  }
-  if (newType === 'on_site' && originalType.value === 'delivery') {
-    state.saleDate = originalSnapshot.deliveredDate ?? props.today
-  }
-})
-
-/** Shows the switch (ADD's Delivery, or Edit's On-site -> Delivery, AC24, AC64). */
-const showsAlreadyDeliveredSwitch = computed(() => {
-  if (state.type !== 'delivery') return false
-  if (!isEdit.value) return true
-  return switchedFromOnSiteToDelivery.value
-})
-/** Shows a Delivered date field: ADD with the switch on, Edit's On-site->Delivery with the switch on, or an
- * unchanged Complete delivery being edited (AC40). */
-const showsDeliveredDateField = computed(() => {
-  if (state.type !== 'delivery') return false
-  if (!isEdit.value) return state.alreadyDelivered
-  if (switchedFromOnSiteToDelivery.value) return state.alreadyDelivered
-  return originalSale.value?.status === 'complete'
-})
-/** On-site (add, or unchanged/switched-to on-site edit): one date field labelled "Sale date" IS the delivered date. */
+/** On-site: the client is optional ("Walk-in"). */
 const isOnSite = computed(() => state.type === 'on_site')
-
-const typeChangeNote = computed<string | null>(() => {
-  if (typeUnchanged.value) return null
-  if (switchedFromOnSiteToDelivery.value) {
-    return state.alreadyDelivered ? SALE_COPY.typeNoteOnSiteToDeliveryOn : SALE_COPY.typeNoteOnSiteToDeliveryOff
-  }
-  if (switchedFromDeliveryToOnSite.value) {
-    return originalSale.value?.status === 'complete'
-      ? SALE_COPY.typeNoteDeliveryCompleteToOnSite(formatShortDate(state.saleDate, props.today))
-      : SALE_COPY.typeNoteDeliveryPendingToOnSite
-  }
-  return null
-})
 
 // ---- Client picker + price pre-fill (AC13, AC14, AC18) ---------------------------------------------------
 const clientOptions = computed<ClientPickerOption[]>(() => {
@@ -225,6 +182,12 @@ const clientOptions = computed<ClientPickerOption[]>(() => {
   return list
 })
 
+const linkedClientText = computed(() => {
+  const c = allClients.value.find(x => x.id === state.clientId)
+  if (!c) return SALE_COPY.walkIn
+  return c.active ? c.name : SALE_COPY.clientInactiveSelected(c.name)
+})
+
 const clientDefaultPrice = computed<number | null>(() => {
   const id = state.clientId
   if (!id) return null
@@ -232,7 +195,7 @@ const clientDefaultPrice = computed<number | null>(() => {
 })
 
 watch(clientDefaultPrice, (price) => {
-  if (price === null) return
+  if (price === null || linked.value) return
   for (const line of lines.value) {
     if (line.priceIsUsual || line.priceRaw.trim() === '') {
       line.priceRaw = formatPriceInput(price)
@@ -260,7 +223,7 @@ function onClientAdded(event: ClientSavedEvent) {
 
 // ---- Live totals (AC22) -----------------------------------------------------------------------------------
 function lineEggs(line: LineState): number | null {
-  const check = checkLineQuantity(line.qty, eggsPerTray.value ?? 30)
+  const check = checkLineQuantity(line.qty, trayEggs.value)
   return check.ok ? check.value : null
 }
 function linePrice(line: LineState): number | null {
@@ -271,7 +234,7 @@ function lineTotalFor(line: LineState): number | null {
   const eggs = lineEggs(line)
   const price = linePrice(line)
   if (eggs === null || price === null || !line.sizeId) return null
-  return computeLineTotal(price, eggs, eggsPerTray.value ?? 30)
+  return computeLineTotal(price, eggs, trayEggs.value)
 }
 
 const completeLineTotals = computed(() => lines.value.map(lineTotalFor))
@@ -287,6 +250,7 @@ const footerTotalText = computed(() => {
 
 // ---- On-hand hints (AC25) -----------------------------------------------------------------------------
 watchEffect(() => {
+  if (linked.value) return
   const ids = lines.value.map(l => l.sizeId).filter((id): id is string => !!id)
   if (ids.length) void onHand.ensure(ids)
 })
@@ -300,19 +264,15 @@ const addTouched = computed(() => {
   if (state.clientId !== null) return true
   return lines.value.some(l => l.sizeId !== null || l.qty.trays !== null || l.qty.loose !== null || l.priceRaw.trim() !== '')
 })
-const editSnapshot = isEdit.value
-  ? JSON.stringify({ type: state.type, clientId: state.clientId, saleDate: state.saleDate, deliveredDate: state.deliveredDate, alreadyDelivered: state.alreadyDelivered, lines: lines.value.map(l => ({ s: l.sizeId, t: l.qty.trays, l: l.qty.loose, p: l.priceRaw })) })
-  : ''
-const dirty = computed(() => {
-  if (!isEdit.value) return addTouched.value
-  const now = JSON.stringify({ type: state.type, clientId: state.clientId, saleDate: state.saleDate, deliveredDate: state.deliveredDate, alreadyDelivered: state.alreadyDelivered, lines: lines.value.map(l => ({ s: l.sizeId, t: l.qty.trays, l: l.qty.loose, p: l.priceRaw })) })
-  return now !== editSnapshot
-})
+function snapshot(): string {
+  return JSON.stringify({ type: state.type, clientId: state.clientId, saleDate: state.saleDate, lines: lines.value.map(l => ({ s: l.sizeId, t: l.qty.trays, l: l.qty.loose, p: l.priceRaw })) })
+}
+const editSnapshot = isEdit.value ? snapshot() : ''
+const dirty = computed(() => (isEdit.value ? snapshot() !== editSnapshot : addTouched.value))
 
 // ---- Errors ------------------------------------------------------------------------------------------------
 const clientError = ref<string | null>(null)
 const saleDateError = ref<string | null>(null)
-const deliveredDateError = ref<string | null>(null)
 const lineErrors = ref<Record<string, { size?: string, quantity?: string, price?: string }>>({})
 const formError = ref<string | null>(null)
 
@@ -322,23 +282,17 @@ const busy = computed(() => saving.value)
 function clearErrors() {
   clientError.value = null
   saleDateError.value = null
-  deliveredDateError.value = null
   lineErrors.value = {}
   formError.value = null
 }
 
-// ---- Stock shortfall confirm (AC26, AC42) ------------------------------------------------------------------
+// ---- Stock shortfall confirm (AC26, AC38) ------------------------------------------------------------------
 const shortfallOpen = ref(false)
 const shortfallLines = ref<ShortfallLine[]>([])
 const shortfallVerb = computed<'selling' | 'delivering' | 'adding'>(() => {
-  if (!isEdit.value) return isOnSite.value ? 'selling' : 'delivering'
-  return switchedFromDeliveryToOnSite.value ? 'selling' : 'adding'
+  if (isEdit.value) return 'adding'
+  return isOnSite.value ? 'selling' : 'delivering'
 })
-
-function deriveForSubmit(): { saleDate: IsoDate, clientId: string | null, deliveredDate: IsoDate | null } {
-  if (isOnSite.value) return { saleDate: state.saleDate, clientId: state.clientId, deliveredDate: state.saleDate }
-  return { saleDate: state.saleDate, clientId: state.clientId, deliveredDate: showsDeliveredDateField.value ? state.deliveredDate : null }
-}
 
 function focusFirstProblem() {
   if (clientError.value) {
@@ -351,13 +305,41 @@ function focusFirstProblem() {
     body.value?.querySelectorAll<HTMLElement>('[role="radiogroup"], select')[idx]?.scrollIntoView({ block: 'center' })
     return
   }
-  if (saleDateError.value || deliveredDateError.value) {
+  if (saleDateError.value) {
     document.querySelector<HTMLElement>('[data-sale-focus="date"]')?.scrollIntoView({ block: 'center' })
   }
 }
 
+function validateDate(): boolean {
+  const orderDate = props.orderDate
+  const check = linked.value && orderDate ? checkLinkedSaleDate(state.saleDate, orderDate, props.today) : checkSaleDate(state.saleDate, props.today)
+  if (!check.ok) {
+    saleDateError.value = check.message
+    return false
+  }
+  return true
+}
+
 function validate(): { input: SaleInput } | null {
   clearErrors()
+
+  // A delivery made from an order: only the date can change, so the rest goes back exactly as it was (AC36).
+  if (linked.value && originalSale.value) {
+    if (!validateDate()) {
+      focusFirstProblem()
+      return null
+    }
+    const sale = originalSale.value
+    return {
+      input: {
+        type: sale.type,
+        saleDate: state.saleDate,
+        clientId: sale.clientId,
+        lines: sale.lines.map(l => ({ sizeId: l.sizeId, eggs: l.eggs, pricePerTray: l.pricePerTray })),
+      },
+    }
+  }
+
   let ok = true
 
   const clientCheck = checkSaleClient(state.type, state.clientId)
@@ -366,20 +348,7 @@ function validate(): { input: SaleInput } | null {
     ok = false
   }
 
-  const saleDateCheck = checkSaleDate(state.saleDate, props.today)
-  if (!saleDateCheck.ok) {
-    saleDateError.value = saleDateCheck.message
-    ok = false
-  }
-
-  const derived = deriveForSubmit()
-  if (showsDeliveredDateField.value) {
-    const deliveredCheck = checkDeliveredDate(state.deliveredDate, state.saleDate, props.today)
-    if (!deliveredCheck.ok) {
-      deliveredDateError.value = deliveredCheck.message
-      ok = false
-    }
-  }
+  if (!validateDate()) ok = false
 
   const seenSizes = new Set<string>()
   const lineInputs: SaleLineInput[] = []
@@ -396,7 +365,7 @@ function validate(): { input: SaleInput } | null {
     else {
       seenSizes.add(line.sizeId)
     }
-    const qtyCheck = checkLineQuantity(line.qty, eggsPerTray.value ?? 30)
+    const qtyCheck = checkLineQuantity(line.qty, trayEggs.value)
     if (!qtyCheck.ok) {
       errs.quantity = qtyCheck.message
       ok = false
@@ -416,7 +385,7 @@ function validate(): { input: SaleInput } | null {
     focusFirstProblem()
     return null
   }
-  return { input: { type: state.type, saleDate: derived.saleDate, clientId: derived.clientId, deliveredDate: derived.deliveredDate, lines: lineInputs } }
+  return { input: { type: state.type, saleDate: state.saleDate, clientId: state.clientId, lines: lineInputs } }
 }
 
 function applyServerFields(fields: Record<string, string>) {
@@ -427,10 +396,6 @@ function applyServerFields(fields: Record<string, string>) {
   }
   if (fields[SALE_FIELDS.saleDate]) {
     saleDateError.value = fields[SALE_FIELDS.saleDate]!
-    mapped = true
-  }
-  if (fields[SALE_FIELDS.deliveredDate]) {
-    deliveredDateError.value = fields[SALE_FIELDS.deliveredDate]!
     mapped = true
   }
   if (fields[SALE_FIELDS.lines]) {
@@ -449,8 +414,12 @@ function handleFailure(error: SaleError) {
   if (error.kind === 'validation') {
     if (applyServerFields(error.fields ?? {})) return
   }
-  if ((error.kind === 'sale_changed') && isEdit.value) {
+  if ((error.kind === 'sale_changed' || error.kind === 'voided') && isEdit.value) {
     emit('changed-elsewhere')
+    return
+  }
+  if (error.kind === 'sale_locked') {
+    formError.value = SALE_COPY.serverSaleLocked
     return
   }
   formError.value = isEdit.value ? SALE_COPY.editSaveFailed : SALE_COPY.saveFailed
@@ -478,12 +447,8 @@ async function attemptSave(confirmShortfall: boolean) {
 
   const result = await mutations.create(validated.input, confirmShortfall)
   if (!result) return
-  if (result.ok) {
-    emit('saved', { kind: result.data.sale.status === 'pending' ? 'logged_pending' : 'recorded', sale: result.data.sale })
-  }
-  else {
-    handleFailure(result.error)
-  }
+  if (result.ok) emit('saved', { kind: 'recorded', sale: result.data.sale })
+  else handleFailure(result.error)
 }
 
 let lastValidated: { input: SaleInput } | null = null
@@ -503,7 +468,7 @@ const shortfallDialogLines = computed(() => shortfallLines.value.map(s => ({
   neededText: formatQtyLocal(s.neededEggs),
 })))
 function formatQtyLocal(eggs: number): string {
-  return formatQty(eggs, eggsPerTray.value ?? 30)
+  return formatQty(eggs, trayEggs.value)
 }
 
 defineExpose({ dirty, saving: busy, focusFirstProblem })
@@ -538,6 +503,18 @@ defineExpose({ dirty, saving: busy, focusFirstProblem })
       ref="body"
       class="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto overscroll-contain p-4 sm:p-5"
     >
+      <p
+        v-if="linked && linkedOrderNumber !== null"
+        class="flex items-center gap-2 text-base font-medium text-highlighted"
+      >
+        <UIcon
+          name="i-lucide-lock"
+          class="size-4 shrink-0 text-muted"
+          aria-hidden="true"
+        />
+        {{ SALE_COPY.partOfOrder(linkedOrderNumber) }}
+      </p>
+
       <div
         role="radiogroup"
         :aria-label="SALE_COPY.saleTypeGroupLabel"
@@ -550,7 +527,7 @@ defineExpose({ dirty, saving: busy, focusFirstProblem })
           icon="i-lucide-truck"
           class="min-h-11 justify-center font-semibold"
           :aria-pressed="state.type === 'delivery'"
-          :disabled="busy"
+          :disabled="busy || linked"
           :label="SALE_COPY.typeDelivery"
           @click="state.type = 'delivery'"
         />
@@ -561,20 +538,11 @@ defineExpose({ dirty, saving: busy, focusFirstProblem })
           icon="i-lucide-store"
           class="min-h-11 justify-center font-semibold"
           :aria-pressed="state.type === 'on_site'"
-          :disabled="busy"
+          :disabled="busy || linked"
           :label="SALE_COPY.typeOnSite"
           @click="state.type = 'on_site'"
         />
       </div>
-
-      <UAlert
-        v-if="typeChangeNote"
-        role="status"
-        color="info"
-        variant="subtle"
-        icon="i-lucide-info"
-        :title="typeChangeNote"
-      />
 
       <UFormField
         :label="SALE_COPY.clientLabel"
@@ -583,7 +551,19 @@ defineExpose({ dirty, saving: busy, focusFirstProblem })
         :error="clientError ?? undefined"
         :ui="{ label: 'text-base font-medium', hint: 'text-sm text-dimmed', error: 'mt-1.5 text-sm' }"
       >
+        <div
+          v-if="linked"
+          class="flex min-h-11 items-center gap-2 rounded-md bg-muted px-3 py-2 text-base text-highlighted ring ring-inset ring-default"
+        >
+          <span class="min-w-0 flex-1 wrap-anywhere">{{ linkedClientText }}</span>
+          <UIcon
+            name="i-lucide-lock"
+            class="size-4 shrink-0 text-muted"
+            aria-hidden="true"
+          />
+        </div>
         <ClientPicker
+          v-else
           v-model="state.clientId"
           data-sale-focus="client"
           :options="clientOptions"
@@ -604,14 +584,16 @@ defineExpose({ dirty, saving: busy, focusFirstProblem })
         :size-name="sizeNameFor(line)"
         :size-options="sizeOptionsFor(line)"
         :used-size-ids="usedSizeIdsFor(line)"
-        :eggs-per-tray="eggsPerTray ?? 30"
+        :eggs-per-tray="trayEggs"
         :currency="currency"
         :on-hand-eggs="onHandFor(line).eggs"
         :on-hand-status="onHandFor(line).status"
+        :hide-on-hand="linked"
+        :locked-label="lockedLabelFor(line)"
         :show-usual-price-note="line.priceIsUsual && line.priceRaw.trim() !== ''"
         :line-total="lineTotalFor(line)"
-        :removable="lines.length > 1"
-        :disabled="busy"
+        :removable="lines.length > 1 && !linked"
+        :disabled="busy || linked"
         :size-error="lineErrors[line.key]?.size"
         :quantity-error="lineErrors[line.key]?.quantity"
         :price-error="lineErrors[line.key]?.price"
@@ -620,7 +602,17 @@ defineExpose({ dirty, saving: busy, focusFirstProblem })
         @price-edited="onLinePriceEdited(line)"
       />
 
-      <div class="flex flex-col gap-1">
+      <p
+        v-if="linked"
+        class="text-sm text-muted"
+      >
+        {{ SALE_COPY.linkedEggsNote }}
+      </p>
+
+      <div
+        v-else
+        class="flex flex-col gap-1"
+      >
         <UButton
           color="neutral"
           variant="outline"
@@ -650,45 +642,18 @@ defineExpose({ dirty, saving: busy, focusFirstProblem })
           v-model="state.saleDate"
           type="date"
           data-sale-focus="date"
+          :min="linked && orderDate ? orderDate : undefined"
           :max="today"
           size="xl"
           class="w-full sm:w-[200px]"
           :disabled="busy"
         />
-      </UFormField>
-
-      <div
-        v-if="showsAlreadyDeliveredSwitch"
-        class="flex items-center justify-between gap-3 rounded-md bg-muted p-3"
-      >
-        <div class="flex flex-col">
-          <span class="text-base font-medium text-default">{{ SALE_COPY.alreadyDelivered }}</span>
-          <span class="text-sm text-dimmed">{{ SALE_COPY.alreadyDeliveredHelp }}</span>
-        </div>
-        <USwitch
-          v-model="state.alreadyDelivered"
-          size="xl"
-          :disabled="busy"
-          :aria-label="SALE_COPY.alreadyDelivered"
-        />
-      </div>
-
-      <UFormField
-        v-if="showsDeliveredDateField"
-        :label="SALE_COPY.deliveredDateLabel"
-        size="xl"
-        :error="deliveredDateError ?? undefined"
-        :ui="{ label: 'text-base font-medium', error: 'mt-1.5 text-sm' }"
-      >
-        <UInput
-          v-model="state.deliveredDate"
-          type="date"
-          :max="today"
-          :min="state.saleDate"
-          size="xl"
-          class="w-full sm:w-[200px]"
-          :disabled="busy"
-        />
+        <p
+          v-if="!saleDateError"
+          class="mt-1 text-sm text-muted"
+        >
+          {{ formatDateHint(state.saleDate, today) }}
+        </p>
       </UFormField>
     </div>
 

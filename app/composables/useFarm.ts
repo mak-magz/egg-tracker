@@ -29,6 +29,12 @@ export function useFarm() {
   const eggsPerTray = computed(() => farm.value?.eggsPerTray ?? null)
 
   /**
+   * The tray size as a plain number for formatting, so a template never writes a fallback literal. It is the farm's
+   * own `eggsPerTray`; it only falls back to 1 (a harmless identity) when there is no farm, which the shell never renders.
+   */
+  const trayEggs = computed(() => eggsPerTray.value ?? 1)
+
+  /**
    * The farm's ISO currency code (feature 03). Falls back to the default only when there is no farm; an unknown
    * code is handled by formatPrice / currencySymbol themselves (they show the default's symbol, AC36).
    */
@@ -76,5 +82,5 @@ export function useFarm() {
     return fetchSizes(api as SizeApi, { apply: applySizes, superseded: () => sizesVersion.value !== started })
   }
 
-  return { farm, eggsPerTray, currency, currencySymbol, formatPrice, sizes, activeSizes, archivedSizes, sizeById, applySizes, refreshSizes }
+  return { farm, eggsPerTray, trayEggs, currency, currencySymbol, formatPrice, sizes, activeSizes, archivedSizes, sizeById, applySizes, refreshSizes }
 }

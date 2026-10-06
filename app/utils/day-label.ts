@@ -43,6 +43,14 @@ export function formatDateHint(date: IsoDate, today: IsoDate): string {
     : { weekday: 'long', month: 'short', day: 'numeric', year: 'numeric' })
 }
 
+/** "Fri, Oct 9" (the order's wanted-by line); "Fri, Oct 9, 2026" when the year differs from today's. */
+export function formatWeekdayDate(date: IsoDate, today: IsoDate): string {
+  const sameYear = parts(date).y === parts(today).y
+  return format(date, sameYear
+    ? { weekday: 'short', month: 'short', day: 'numeric' }
+    : { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })
+}
+
 /** Month abbreviation + day number parts for chart labels ("Aug", 29). */
 export function dayParts(date: IsoDate): { month: string, day: number } {
   return { month: format(date, { month: 'short' }), day: parts(date).d }

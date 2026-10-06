@@ -1,8 +1,9 @@
-// UI-only copy for the Sales screen (feature 04 §2.5 "Copy"). This is the UX-designed wording the FORM
-// shows. Field/server messages shared with the server live in `shared/constants/sales.ts` (`SALE_MESSAGES`);
-// this file re-exports them under its own keys below rather than holding a second literal, so the two can
-// never silently drift (QA S2, feature 04 §5; see `tests/unit/sale-message-parity.spec.ts`). No message here
-// repeats a client's name beyond what the sale already carries, a price or a quantity the owner typed (AC59).
+// UI-only copy for the Sales screen (feature 04 §2.5 "Copy", reduced by feature 05 AC37 to AC42: no Pending, no
+// Mark delivered, no Delete). This is the UX-designed wording the FORM shows. Field/server messages shared with the
+// server live in `shared/constants/sales.ts` (`SALE_MESSAGES`); this file re-exports them under its own keys below
+// rather than holding a second literal, so the two can never silently drift (QA S2, feature 04 §5; see
+// `tests/unit/sale-message-parity.spec.ts`). No message here repeats a client's name beyond what the sale already
+// carries, a price or a quantity the owner typed (AC59).
 import { SALE_MESSAGES } from '#shared/constants/sales'
 
 export const SALE_COPY = {
@@ -10,11 +11,7 @@ export const SALE_COPY = {
   subtitle: 'Deliveries and on-site sales',
   addLabel: 'Add sale',
 
-  // ---- Filters (AC7 to AC11) ----------------------------------------------------------------------
-  statusAll: 'All',
-  statusPending: 'Pending',
-  statusComplete: 'Complete',
-  statusGroupLabel: 'Status',
+  // ---- Filters (AC7 to AC11, feature 05 AC39) -------------------------------------------------------
   typeAll: 'All types',
   typeDelivery: 'Delivery',
   typeOnSite: 'On-site',
@@ -41,22 +38,20 @@ export const SALE_COPY = {
   headerClient: 'Client',
   headerSizes: 'Sizes',
   headerTotal: 'Total',
-  headerStatus: 'Status',
+  headerType: 'Type',
   headerActions: 'Actions',
   walkIn: 'Walk-in',
   saleNumber: (n: number) => `#${n}`,
   moreSizes: (n: number) => `+ ${n} more sizes`,
   sizeCount: (n: number) => `${n} ${n === 1 ? 'size' : 'sizes'}`,
-  deliveredOn: (date: string) => `Delivered ${date}`,
-  markDelivered: 'Mark delivered',
-  openSaleAria: (n: number, client: string, status: string) => `Open sale #${n}, ${client}, ${status}`,
+  openSaleAria: (n: number, client: string, kind: string) => `Open sale #${n}, ${client}, ${kind}`,
   actionsFor: (n: number) => `Actions for sale #${n}`,
+  /** The link pill on a delivery made from an order (feature 05 AC39). */
+  fromOrder: (n: number) => `From order #${n}`,
+  openOrderAria: (n: number) => `Open order #${n}`,
 
   // ---- Row menu -------------------------------------------------------------------------------------
-  menuMarkDelivered: 'Mark delivered',
-  menuMarkPending: 'Mark as pending',
   menuEdit: 'Edit',
-  menuDelete: 'Delete',
   menuVoid: 'Void',
 
   // ---- Log / Edit form (AC12 to AC32) --------------------------------------------------------------
@@ -96,10 +91,8 @@ export const SALE_COPY = {
   lineTotalLabel: 'Line total',
   lineTotalNotReady: 'Not worked out yet',
 
+  /** The one date: the day the eggs left (feature 05 AC38). */
   saleDateLabel: 'Sale date',
-  alreadyDelivered: 'Already delivered',
-  alreadyDeliveredHelp: 'Turn on if it has already been delivered.',
-  deliveredDateLabel: 'Delivered date',
   today: 'Today',
 
   saleTotal: (formatted: string) => `Sale total ${formatted}`,
@@ -109,7 +102,11 @@ export const SALE_COPY = {
   cancel: 'Cancel',
   save: 'Save',
 
-  // ---- Field / server messages (AC13, AC15, AC19, AC20, AC23, AC24) --------------------------------
+  // ---- Edit a delivery that came from an order (feature 05 AC36, §2.5 "Sales") ---------------------
+  partOfOrder: (n: number) => `Part of order #${n}`,
+  linkedEggsNote: 'Void this delivery and deliver again to change eggs.',
+
+  // ---- Field / server messages (AC13, AC15, AC19, AC20, AC23) --------------------------------------
   // The ones also raised by the server reuse SALE_MESSAGES verbatim; the rest (a size, a blank price, the
   // dynamic-limit variants) have no server equivalent and stay as UI-only literals.
   clientRequired: SALE_MESSAGES.clientRequired,
@@ -125,13 +122,8 @@ export const SALE_COPY = {
   priceTooLarge: (max: string) => `The most you can enter is ${max}.`,
   saleDateFuture: SALE_MESSAGES.saleDateFuture,
   dateEmpty: SALE_MESSAGES.saleDateRequired,
-  deliveredBeforeSale: (saleDate: string) => `The delivered date can't be before the sale date, ${saleDate}.`,
-  deliveredDateFuture: SALE_MESSAGES.deliveredDateFuture,
-
-  typeNoteOnSiteToDeliveryOff: 'This becomes a pending delivery. Its trays go back on hand until you mark it delivered.',
-  typeNoteOnSiteToDeliveryOn: 'It stays delivered, and your stock doesn\'t change.',
-  typeNoteDeliveryPendingToOnSite: 'This becomes an on-site sale. Its trays come out of your stock now.',
-  typeNoteDeliveryCompleteToOnSite: (date: string) => `This becomes an on-site sale, dated ${date}. Your stock doesn't change, because it already left.`,
+  /** "The sale date can't be before the order date, Oct 3." (the date is built by the form; the base is the server's). */
+  saleDateBeforeOrder: (orderDate: string) => `The sale date can't be before the order date, ${orderDate}.`,
 
   saveFailed: SALE_MESSAGES.saveFailed,
   editSaveFailed: 'Couldn\'t save your changes. Check your connection and try again.',
@@ -139,30 +131,24 @@ export const SALE_COPY = {
   serverDuplicateSize: SALE_MESSAGES.linesDuplicateSize,
   serverSizesChanged: SALE_MESSAGES.linesSizesChanged,
   serverClientInactive: SALE_MESSAGES.clientInvalid,
-  serverNotPending: SALE_MESSAGES.notPending,
-  serverNotComplete: SALE_MESSAGES.notComplete,
   serverVoided: SALE_MESSAGES.voided,
+  serverSaleLocked: SALE_MESSAGES.saleLocked,
 
-  // ---- Toasts (AC29, AC34, AC39, AC40, AC44, AC67) -------------------------------------------------
-  toastLoggedPending: (n: number) => `Delivery #${n} logged as pending`,
+  // ---- Toasts (AC29, AC34, AC39, AC67) -------------------------------------------------------------
   toastRecorded: (n: number) => `Sale #${n} recorded`,
-  toastMarkedDelivered: 'Marked delivered — inventory updated',
-  toastMarkedPending: 'Marked as pending — inventory updated',
   toastUpdated: (n: number) => `Updated sale #${n}`,
-  toastDeleted: (n: number) => `Deleted sale #${n}`,
   toastVoided: (n: number) => `Sale #${n} voided`,
+  toastVoidedLinked: (n: number, orderNumber: number, owed: string) => `Sale #${n} voided. Order #${orderNumber} shows ${owed} still owed.`,
   hiddenByFilter: (message: string, filter: string) => `${message}. Hidden by the ${filter} filter.`,
   hiddenByVoidedToggle: (message: string) => `${message}. Hidden — turn on "Show voided sales" to see it.`,
 
-  markFailed: (n: number) => `Couldn't mark #${n} delivered. Check your connection and try again.`,
-  markPendingFailed: (n: number) => `Couldn't mark #${n} as pending. Check your connection and try again.`,
   changedElsewhere: SALE_MESSAGES.saleChanged,
-  deletedElsewhere: 'This sale was deleted somewhere else.',
   refreshFailed: 'Couldn\'t refresh your sales.',
   loadMoreFailed: 'Couldn\'t load more sales.',
   tryAgain: 'Try again',
+  openOrderFailed: 'Couldn\'t open that order. Check your connection and try again.',
 
-  // ---- Shortfall dialog (AC26, AC35, AC42) ---------------------------------------------------------
+  // ---- Shortfall dialog (AC26, AC42; feature 05 AC38: every new direct sale) -----------------------
   shortfallTitle: 'Not enough on hand',
   shortfallLeadSelling: 'You\'re selling more than you have of:',
   shortfallLeadDelivering: 'You\'re delivering more than you have of:',
@@ -172,39 +158,30 @@ export const SALE_COPY = {
   recordAnyway: 'Record anyway',
   goBack: 'Go back',
 
-  // ---- Mark delivered step (AC33 to AC37) ----------------------------------------------------------
-  markDeliveredTitle: 'Mark delivered',
-  markDeliveredAnyway: 'Mark delivered anyway',
-  checkingStock: 'Checking stock…',
-  saleLineFor: (n: number, client: string) => `#${n} · ${client}`,
-  cantStillMarkDelivered: 'You can still mark it delivered.',
-
-  // ---- Detail (AC6) ---------------------------------------------------------------------------------
+  // ---- Detail (AC6, feature 05 AC39) ---------------------------------------------------------------
   detailTitle: (n: number) => `Sale #${n}`,
   detailClient: 'Client',
   detailSaleDate: 'Sale date',
-  detailDelivered: 'Delivered',
   detailSaleTotal: 'Sale total',
-  detailPendingNote: 'Your stock hasn\'t changed yet.',
   detailVoidedNote: 'This sale is voided. It no longer counts toward your stock.',
   perTray: (formatted: string) => `${formatted} / tray`,
   quantityAtPrice: (qty: string, price: string) => `${qty} at ${price} / tray`,
-  deleteSale: 'Delete sale',
   voidSale: 'Void sale',
   edit: 'Edit',
+  openInSales: 'Open in Sales',
 
-  // ---- Delete confirm — Pending only (AC44, AC45) --------------------------------------------------
-  deleteDialogTitle: (n: number) => `Delete sale #${n}?`,
-  deleteDialogLine: (client: string, n: number, total: string) => `${client} · ${n} ${n === 1 ? 'size' : 'sizes'} · ${total}`,
-  deleteStockLine: 'It hasn\'t left yet, so your stock doesn\'t change.',
-  deleteNoUndo: (n: number) => `You can't undo this. The number #${n} won't be used again.`,
-  deleteFailed: SALE_MESSAGES.deleteFailed,
-
-  // ---- Void confirm — Complete/on-site only (AC67, AC68) -------------------------------------------
+  // ---- Void confirm (AC67, AC68; feature 05 AC35) --------------------------------------------------
   voidDialogTitle: (n: number) => `Void sale #${n}?`,
+  voidDialogLine: (client: string, n: number, total: string) => `${client} · ${n} ${n === 1 ? 'size' : 'sizes'} · ${total}`,
   voidPutsBackOnHand: 'This puts back on hand:',
   voidNoUndo: 'You can\'t undo this. It stays in your records, marked Voided.',
   voidFailed: SALE_MESSAGES.voidFailed,
+  /** The preview of what a void does to the order the delivery came from (AC35). */
+  voidOrderOwed: (orderNumber: number, owed: string) => `Order #${orderNumber} will show ${owed} still owed.`,
+  voidOrderOwedMany: (orderNumber: number) => `Order #${orderNumber} will show these still owed:`,
+  voidOrderBack: (status: string) => `It will go back to ${status}.`,
+  voidOrderClosedShort: (orderNumber: number) => `Order #${orderNumber} was closed short and stays closed.`,
+  voidOrderLoading: 'Checking the order…',
 
   // ---- Discard (AC32) ---------------------------------------------------------------------------------
   discardTitle: 'Discard this entry?',
@@ -217,7 +194,6 @@ export const SALE_COPY = {
   firstUseTitle: 'No sales yet',
   firstUseBody: 'Log your first sale or delivery and it will show here, newest first.',
   noMatch: 'No sales match these filters.',
-  noMatchPendingNote: 'You don\'t have any pending deliveries.',
   loadFailedTitle: 'Couldn\'t load your sales',
   loadFailedBody: 'Check your connection and try again.',
 

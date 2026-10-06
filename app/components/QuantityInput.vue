@@ -36,6 +36,10 @@ const props = withDefaults(defineProps<{
   last?: boolean
   /** Show the design's inline "trays" / "loose" labels at lg+ (phones use the form's column headers). */
   inlineLabels?: boolean
+  /** Edit after a delivery (feature 05 AC19): the minus steppers stop at this many eggs in total. */
+  minEggs?: number
+  /** The Deliver step (feature 05 AC26): the plus steppers stop at this many eggs in total. */
+  maxEggs?: number
   /** Visible message under the row. */
   error?: string
   disabled?: boolean
@@ -43,6 +47,8 @@ const props = withDefaults(defineProps<{
   name: undefined,
   last: false,
   inlineLabels: false,
+  minEggs: undefined,
+  maxEggs: undefined,
   error: undefined,
   disabled: false,
 })
@@ -87,6 +93,29 @@ function selectAll(event: FocusEvent) {
   if (el?.value) requestAnimationFrame(() => el.select())
 }
 
+/** The total in eggs as typed, ignoring anything that isn't a whole number (the form's own check reports those). */
+const totalEggs = computed(() => {
+  const t = model.value.trays ?? 0
+  const l = model.value.loose ?? 0
+  return Number.isInteger(t) && Number.isInteger(l) ? t * props.eggsPerTray + l : 0
+})
+
+function unitEggs(part: Part): number {
+  return part === 'trays' ? props.eggsPerTray : 1
+}
+
+/** The minus stepper stops at zero, and at `minEggs` when set. */
+function decDisabled(part: Part): boolean {
+  if (!((model.value[part] ?? 0) > 0)) return true
+  return props.minEggs !== undefined && totalEggs.value - unitEggs(part) < props.minEggs
+}
+
+/** The plus stepper stops at `maxEggs` when set (and loose at the tray size minus one). */
+function incDisabled(part: Part): boolean {
+  if (part === 'loose' && (model.value.loose ?? 0) >= looseMax.value) return true
+  return props.maxEggs !== undefined && totalEggs.value + unitEggs(part) > props.maxEggs
+}
+
 const parts = computed(() => [
   {
     part: 'trays' as const,
@@ -95,7 +124,6 @@ const parts = computed(() => [
     inputLabel: `${props.label} trays`,
     incLabel: `Increase ${props.label} trays`,
     decLabel: `Decrease ${props.label} trays`,
-    incDisabled: false,
     enterkeyhint: 'next',
   },
   {
@@ -105,7 +133,6 @@ const parts = computed(() => [
     inputLabel: `${props.label} loose eggs`,
     incLabel: `Increase ${props.label} loose eggs`,
     decLabel: `Decrease ${props.label} loose eggs`,
-    incDisabled: (model.value.loose ?? 0) >= looseMax.value,
     enterkeyhint: props.last ? 'done' : 'next',
   },
 ])
@@ -135,7 +162,7 @@ const parts = computed(() => [
               icon="i-lucide-minus"
               tabindex="-1"
               :aria-label="p.decLabel"
-              :disabled="disabled || !((model[p.part] ?? 0) > 0)"
+              :disabled="disabled || decDisabled(p.part)"
               class="size-11 justify-center lg:size-10"
               @click="step(p.part, -1)"
             />
@@ -167,7 +194,7 @@ const parts = computed(() => [
               icon="i-lucide-plus"
               tabindex="-1"
               :aria-label="p.incLabel"
-              :disabled="disabled || p.incDisabled"
+              :disabled="disabled || incDisabled(p.part)"
               class="size-11 justify-center lg:size-10"
               @click="step(p.part, 1)"
             />

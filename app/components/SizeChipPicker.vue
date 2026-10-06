@@ -34,6 +34,10 @@ const props = defineProps<{
    */
   groupLabel: string
   disabled?: boolean
+  /** What a size already used on another line says: "In this sale" (default) or "In this order" (feature 05 AC12). */
+  usedLabel?: string
+  /** The fallback select's wording for a used size: `{Size} (in this sale)` (default) or `(in this order)`. */
+  usedOptionLabel?: (name: string) => string
 }>()
 
 const modelValue = defineModel<string | null>({ required: true })
@@ -102,7 +106,7 @@ function chipClasses(opt: SizeChipOption): string {
             <span
               v-if="isUsed(opt.id)"
               class="text-xs"
-            >{{ SALE_COPY.usedInSale }}</span>
+            >{{ usedLabel ?? SALE_COPY.usedInSale }}</span>
             <span
               v-else-if="opt.archived"
               class="text-xs"
@@ -140,7 +144,7 @@ function chipClasses(opt: SizeChipOption): string {
       :value="opt.id"
       :disabled="isUsed(opt.id)"
     >
-      {{ isUsed(opt.id) ? SALE_COPY.usedSizeOption(opt.name) : opt.archived ? `${opt.name} (${SALE_COPY.archived})` : opt.name }}
+      {{ isUsed(opt.id) ? (usedOptionLabel ?? SALE_COPY.usedSizeOption)(opt.name) :opt.archived ? `${opt.name} (${SALE_COPY.archived})` : opt.name }}
     </option>
   </select>
 </template>

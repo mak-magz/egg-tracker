@@ -1,46 +1,30 @@
 <!--
-  The ⋮ menu on a sale row or card (feature 04 §2.5 "Row menu", owner correction 2026-09-27): the status
-  action first (Mark delivered / Mark as pending, mutually exclusive by status), then Edit, then EITHER
-  Delete (Pending only, red) OR Void (Complete/on-site only, red) — never both. A VOIDED sale has no menu at
-  all (nothing left to do to it, AC68): renders nothing. Items are 44px on phones/tablets (36px at lg); the
-  trigger shows a spinner while that sale's request runs (R1). Accessible name "Actions for sale #{n}".
-  Lazily mounts the real menu on first press (ClientRowMenu.vue's own trick, so many rows stay cheap to draw).
+  The ⋮ menu on a sale row or card (feature 04 §2.5 "Row menu", feature 05 §2.5 "Sales"): Edit, then Void (red, after a
+  separator) on every non-voided sale. There is no Mark delivered, Mark as pending or Delete: sales are void-only
+  (AC37, AC40). A VOIDED sale has no menu at all (nothing left to do to it, AC68): renders nothing. Items are 44px on
+  phones/tablets (36px at lg); the trigger shows a spinner while that sale's request runs (R1). Accessible name
+  "Actions for sale #{n}". Lazily mounts the real menu on first press (ClientRowMenu.vue's own trick, so many rows
+  stay cheap to draw).
 -->
 <script setup lang="ts">
 import type { DropdownMenuItem } from '@nuxt/ui'
 import type { Sale } from '#shared/types/api'
 import { SALE_COPY } from '~/utils/sale-copy'
 
-const props = defineProps<{
-  sale: Pick<Sale, 'id' | 'saleNumber' | 'status' | 'type' | 'voidedAt'>
+defineProps<{
+  sale: Pick<Sale, 'id' | 'saleNumber' | 'voidedAt'>
   busy?: boolean
 }>()
 
 const emit = defineEmits<{
-  'mark-delivered': []
-  'mark-pending': []
-  'edit': []
-  'delete': []
-  'void': []
+  edit: []
+  void: []
 }>()
 
-const items = computed<DropdownMenuItem[]>(() => {
-  const list: DropdownMenuItem[] = []
-  if (props.sale.status === 'pending') {
-    list.push({ label: SALE_COPY.menuMarkDelivered, icon: 'i-lucide-truck', onSelect: () => emit('mark-delivered') })
-  }
-  else if (props.sale.type === 'delivery') {
-    list.push({ label: SALE_COPY.menuMarkPending, icon: 'i-lucide-undo-2', onSelect: () => emit('mark-pending') })
-  }
-  list.push({ label: SALE_COPY.menuEdit, icon: 'i-lucide-pencil', onSelect: () => emit('edit') })
-  if (props.sale.status === 'pending') {
-    list.push({ label: SALE_COPY.menuDelete, icon: 'i-lucide-trash-2', color: 'error', onSelect: () => emit('delete') })
-  }
-  else {
-    list.push({ label: SALE_COPY.menuVoid, icon: 'i-lucide-ban', color: 'error', onSelect: () => emit('void') })
-  }
-  return list
-})
+const items = computed<DropdownMenuItem[][]>(() => [
+  [{ label: SALE_COPY.menuEdit, icon: 'i-lucide-pencil', onSelect: () => emit('edit') }],
+  [{ label: SALE_COPY.menuVoid, icon: 'i-lucide-ban', color: 'error', onSelect: () => emit('void') }],
+])
 
 const activated = ref(false)
 const open = ref(false)

@@ -1,14 +1,14 @@
 <!--
-  Sales filters (feature 04 §2.5 flow J, AC7 to AC11, owner decision O2). Status chips stay visible at every
-  width; on phones Type, Client, Dates and "Show voided sales" sit behind one Filters button (the button
-  shows how many of those are set: `Filters (2)`), on desktop/tablet everything is on screen (the design's
-  row plus the Client picker and the voided switch). Two DOM subtrees switched by a CSS breakpoint only (no
-  JS), the same convention as sheetUi.ts. Every model is the PAGE's own ref: nothing here touches the URL,
-  a cookie or any storage (AC11, AC60).
+  Sales filters (feature 04 §2.5 flow J, AC7 to AC11, owner decision O2; feature 05 AC39 removes the Status chips).
+  The Type chips stay visible at every width; on phones Client, Dates and "Show voided sales" sit behind one Filters
+  button (the button shows how many of those are set: `Filters (2)`), on desktop/tablet everything is on screen (the
+  Client picker beside the chips, then the date range and the voided switch). Two DOM subtrees switched by a CSS
+  breakpoint only (no JS), the same convention as sheetUi.ts. Every model is the PAGE's own ref: nothing here touches
+  the URL, a cookie or any storage (AC11, AC60).
 -->
 <script setup lang="ts">
 import type { IsoDate } from '#shared/types/api'
-import type { SalesStatusFilter, SalesTypeFilter } from '~/composables/useSales'
+import type { SalesTypeFilter } from '~/composables/useSales'
 import { SALE_COPY } from '~/utils/sale-copy'
 
 export interface ToolbarClientOption { id: string, name: string, inactive: boolean }
@@ -16,8 +16,9 @@ export interface ToolbarClientOption { id: string, name: string, inactive: boole
 const props = defineProps<{
   disabled?: boolean
   clientOptions: readonly ToolbarClientOption[]
-  /** A filter besides "Show voided" is set: shows the "Showing x of n" line and counts toward `Filters (n)`. */
+  /** A filter besides "Show voided" is set: counts toward `Filters (n)`. */
   activeFilterCount: number
+  /** Anything but the plain default is on: shows the "Showing x of n" line. */
   filtering: boolean
   shown: number
   total: number
@@ -26,18 +27,12 @@ const props = defineProps<{
 
 const emit = defineEmits<{ clear: [] }>()
 
-const status = defineModel<SalesStatusFilter>('status', { required: true })
 const type = defineModel<SalesTypeFilter>('type', { required: true })
 const clientId = defineModel<string | null>('clientId', { required: true })
 const from = defineModel<IsoDate | null>('from', { required: true })
 const to = defineModel<IsoDate | null>('to', { required: true })
 const includeVoided = defineModel<boolean>('includeVoided', { required: true })
 
-const STATUS_CHIPS: { value: SalesStatusFilter, label: string }[] = [
-  { value: 'all', label: SALE_COPY.statusAll },
-  { value: 'pending', label: SALE_COPY.statusPending },
-  { value: 'complete', label: SALE_COPY.statusComplete },
-]
 const TYPE_CHIPS: { value: SalesTypeFilter, label: string }[] = [
   { value: 'all', label: SALE_COPY.typeAll },
   { value: 'delivery', label: SALE_COPY.typeDelivery },
@@ -66,55 +61,36 @@ const panelOpen = ref(false)
     <div class="flex flex-wrap items-center gap-2">
       <div
         role="group"
-        :aria-label="SALE_COPY.statusGroupLabel"
-        class="flex gap-2"
+        :aria-label="SALE_COPY.typeGroupLabel"
+        class="flex flex-wrap gap-2"
       >
         <UButton
-          v-for="c in STATUS_CHIPS"
+          v-for="c in TYPE_CHIPS"
           :key="c.value"
           :label="c.label"
           size="xl"
-          :color="status === c.value ? 'primary' : 'neutral'"
-          :variant="status === c.value ? 'solid' : 'soft'"
+          :color="type === c.value ? 'primary' : 'neutral'"
+          :variant="type === c.value ? 'solid' : 'soft'"
           class="rounded-full px-4 font-semibold"
-          :aria-pressed="status === c.value"
+          :aria-pressed="type === c.value"
+          :data-sale-focus="`type:${c.value}`"
           :disabled="disabled"
-          @click="status = c.value"
+          @click="type = c.value"
         />
       </div>
 
-      <!-- Desktop/tablet: Type chips + Client picker inline (the design's row, plus Client, AC7) -->
-      <div class="hidden items-center gap-2 lg:flex lg:flex-wrap">
-        <div
-          role="group"
-          :aria-label="SALE_COPY.typeGroupLabel"
-          class="flex gap-2"
-        >
-          <UButton
-            v-for="c in TYPE_CHIPS"
-            :key="c.value"
-            :label="c.label"
-            size="xl"
-            :color="type === c.value ? 'primary' : 'neutral'"
-            :variant="type === c.value ? 'solid' : 'soft'"
-            class="rounded-full px-4 font-semibold"
-            :aria-pressed="type === c.value"
-            :disabled="disabled"
-            @click="type = c.value"
-          />
-        </div>
-        <USelectMenu
-          v-model="clientSelectValue"
-          :items="clientItems"
-          value-key="id"
-          label-key="label"
-          size="xl"
-          class="w-[200px]"
-          :aria-label="SALE_COPY.clientFilterLabel"
-          :search-input="{ placeholder: SALE_COPY.clientFilterSearchPlaceholder }"
-          :disabled="disabled"
-        />
-      </div>
+      <!-- Desktop/tablet: the Client picker inline (AC7) -->
+      <USelectMenu
+        v-model="clientSelectValue"
+        :items="clientItems"
+        value-key="id"
+        label-key="label"
+        size="xl"
+        class="hidden w-[200px] lg:inline-flex"
+        :aria-label="SALE_COPY.clientFilterLabel"
+        :search-input="{ placeholder: SALE_COPY.clientFilterSearchPlaceholder }"
+        :disabled="disabled"
+      />
 
       <!-- Phones: everything else behind one button -->
       <UButton
@@ -122,7 +98,7 @@ const panelOpen = ref(false)
         variant="outline"
         size="xl"
         class="lg:hidden"
-        trailing-icon="i-lucide-chevron-down"
+        :trailing-icon="panelOpen ? 'i-lucide-chevron-up' : 'i-lucide-chevron-down'"
         :label="activeFilterCount > 0 ? SALE_COPY.filtersButtonCount(activeFilterCount) : SALE_COPY.filtersButton"
         :aria-expanded="panelOpen"
         :disabled="disabled"
@@ -135,24 +111,6 @@ const panelOpen = ref(false)
       v-if="panelOpen"
       class="flex flex-col gap-3 rounded-2xl bg-default p-3 ring ring-inset ring-default lg:hidden"
     >
-      <div
-        role="group"
-        :aria-label="SALE_COPY.typeGroupLabel"
-        class="flex gap-2"
-      >
-        <UButton
-          v-for="c in TYPE_CHIPS"
-          :key="c.value"
-          :label="c.label"
-          size="xl"
-          :color="type === c.value ? 'primary' : 'neutral'"
-          :variant="type === c.value ? 'solid' : 'soft'"
-          class="rounded-full px-4 font-semibold"
-          :aria-pressed="type === c.value"
-          :disabled="disabled"
-          @click="type = c.value"
-        />
-      </div>
       <UFormField :label="SALE_COPY.clientFilterLabel">
         <USelectMenu
           v-model="clientSelectValue"

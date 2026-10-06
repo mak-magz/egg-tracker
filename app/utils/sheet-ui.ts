@@ -6,6 +6,8 @@
 const DIALOG_WIDTH = {
   /** The design's Add client dialog (about 420px). */
   420: 'md:max-w-[420px]',
+  /** The Deliver step (feature 05): a small one-step dialog. */
+  480: 'md:max-w-[480px]',
   /** The Log / Edit production dialog. */
   520: 'md:max-w-[520px]',
   /** The Log / Edit sale dialog (feature 04 UX S1): a line needs size + qty + price + total in view. */
