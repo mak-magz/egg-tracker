@@ -9,7 +9,6 @@ export const SALE_FIELDS = {
   type: 'type',
   clientId: 'clientId',
   saleDate: 'saleDate',
-  deliveredDate: 'deliveredDate',
   lines: 'lines',
   submissionId: 'submissionId',
   version: 'version',
@@ -30,7 +29,7 @@ export const MAX_SALE_PRICE = 9_999.99
 /** Most decimals a line's price may have (AC19). */
 export const SALE_PRICE_DECIMALS = 2
 
-/** "Show more" page size for the sales list (AC7). Not applied when the Status filter is Pending (AC9). */
+/** "Show more" page size for the sales list (AC7). */
 export const SALES_PAGE_SIZE = 25
 
 /** §2.5 copy used by validation on both the server and the form. */
@@ -52,16 +51,14 @@ export const SALE_MESSAGES = {
   priceTooLargeServer: 'The most you can enter is 9,999.99.',
   saleDateFuture: 'The sale date can\'t be in the future. Pick today or earlier.',
   saleDateRequired: 'Pick a date.',
-  deliveredDateFuture: 'The delivered date can\'t be in the future. Pick today or earlier.',
-  deliveredDateBeforeSale: 'The delivered date can\'t be before the sale date.',
   endBeforeStart: 'End date must be on or after the start date',
   submissionReused: 'This request was already used with different details. Try again.',
   saleChanged: 'This sale was changed somewhere else. The list is up to date now.',
-  notPending: 'This sale is no longer pending. Void it instead.',
-  notComplete: 'This sale isn\'t complete anymore. The list is up to date now.',
+  /** 409 sale_locked (TM053): a delivery made from an order can't have its client, type or lines changed (feature 05 AC36). */
+  saleLocked: 'This delivery came from an order, so only its date can change. Void it and deliver again to change the eggs.',
+  /** TM055 sale_date: a delivery's date can't be before its order's date. */
+  saleDateBeforeOrder: 'The sale date can\'t be before the order date.',
   voided: 'This sale is voided and can\'t be changed.',
   saveFailed: 'Couldn\'t save. Check your connection and try again.',
-  deleteFailed: 'Couldn\'t delete. Check your connection and try again.',
   voidFailed: 'Couldn\'t void. Check your connection and try again.',
-  markDeliveredFailed: 'Couldn\'t mark this delivered. Check your connection and try again.',
 } as const

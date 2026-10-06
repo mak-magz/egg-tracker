@@ -8,7 +8,9 @@ export type ApiErrorCode = 'unauthenticated' | 'no_farm' | 'validation_failed' |
 export type ApiErrorReason
   = | 'name_taken' | 'last_active_size' | 'sizes_changed' | 'client_limit' | 'client_changed'
   // Feature 04 (docs/features/04-sales.md §3.3).
-    | 'sale_changed' | 'stock_short' | 'not_pending' | 'not_complete' | 'voided'
+    | 'sale_changed' | 'stock_short' | 'voided'
+  // Feature 05 (docs/features/05-orders.md §3.3). 'not_pending' and 'not_complete' were retired with pending sales.
+    | 'order_changed' | 'order_closed' | 'has_delivery' | 'not_partial' | 'over_delivery' | 'sale_locked'
 
 /**
  * The row that already has the name being saved (sizes, feature 02 AC4; clients, feature 03 AC11).
@@ -42,6 +44,8 @@ export interface ApiErrorData {
   sale?: Sale
   /** With reason 'stock_short' (feature 04 AC26, AC35, AC42): only the SHORT sizes, farm order. Never empty when reason is 'stock_short'. */
   shortfall?: ShortfallLine[]
+  /** With the order_* / has_delivery / not_partial / over_delivery reasons (feature 05): the order as it is NOW, so the screen refreshes with no second request. Absent if that read failed. */
+  order?: OrderDetail
 }
 
 /**
@@ -181,7 +185,6 @@ export interface ClientChangeResponse { client: Client, changed: boolean }
 
 // ---- Sales (docs/features/04-sales.md §3.3) ----
 export type SaleType = 'delivery' | 'on_site'
-export type SaleStatus = 'pending' | 'complete'
 
 /** One line: a size, its eggs, its price PER TRAY, and its FROZEN total (never recomputed once saved, AC55). */
 export interface SaleLine { sizeId: string, eggs: number, pricePerTray: number, lineTotal: number }
@@ -192,21 +195,24 @@ export interface Sale {
   id: string
   saleNumber: number
   type: SaleType
-  status: SaleStatus
   clientId: string | null
+  /** The one date: the day the eggs left the farm (feature 05 AC38, decision U1). */
   saleDate: IsoDate
-  deliveredDate: IsoDate | null
+  /** Set when this sale is a delivery made from an order (feature 05 AC27); null for a direct sale. */
+  orderId: string | null
+  /** The linked order's number (for "From order #n", AC39); null for a direct sale. */
+  orderNumber: number | null
   lines: SaleLine[]
   /** Sum of lines[].lineTotal. Never stored; always agrees with the lines shown (AC22). */
   saleTotal: number
-  /** Changes on every real edit or status change. Send it back with an edit (AC43). */
+  /** Changes on every real edit or void. Send it back with an edit (AC43). */
   version: number
-  /** Set once, never cleared (AC67, owner correction 2026-09-27). Independent of `status`, which stays 'complete'
-   * on a voided sale. Non-null means this sale no longer counts toward on-hand and accepts no further change. */
+  /** Set once, never cleared (AC67, owner correction 2026-09-27). Non-null means this sale no longer counts toward
+   * on-hand and accepts no further change. */
   voidedAt: IsoDate | null
 }
 
-/** GET /api/sales?from&to&status&type&clientId&limit&offset&includeVoided (all optional; includeVoided default false, AC68) */
+/** GET /api/sales?from&to&type&clientId&limit&offset&includeVoided (all optional; includeVoided default false, AC68) */
 export interface SalesListResponse {
   /** Whether the farm has ANY sale at all, ignoring every filter (AC46 vs AC10). */
   hasAny: boolean
@@ -216,14 +222,12 @@ export interface SalesListResponse {
 }
 export interface SaleResponse { sale: Sale }
 
-/** POST /api/sales. `deliveredDate` present -> created Complete ("Already delivered", AC24); omitted/null -> Pending.
- * Ignored (and forced to equal saleDate) when type is 'on_site' (AC24, AC65). */
+/** POST /api/sales: a direct sale. Every sale has already left the farm on `saleDate` (feature 05 AC37, AC38). */
 export interface CreateSaleRequest {
   submissionId: string
   type: SaleType
   saleDate: IsoDate
   clientId?: string | null
-  deliveredDate?: IsoDate | null
   lines: SaleLineInput[]
   /** true = "Record anyway" after a 409 stock_short (AC26). */
   confirmShortfall?: boolean
@@ -236,19 +240,122 @@ export interface UpdateSaleRequest {
   type: SaleType
   saleDate: IsoDate
   clientId?: string | null
-  deliveredDate?: IsoDate | null
   lines: SaleLineInput[]
   confirmShortfall?: boolean
 }
-export interface MarkSaleDeliveredRequest { deliveredDate: IsoDate, confirmShortfall?: boolean }
 /** `changed` false = nothing to do (already in that state / already matches what was asked, AC37, AC40, AC67). */
 export interface SaleChangeResponse { sale: Sale, changed: boolean }
-/** POST /api/sales/:id/void (AC67, AC68 -- owner correction, 2026-09-27). Complete only; one-way; never a shortfall check. */
+/** POST /api/sales/:id/void (AC67, AC68). One-way; never a shortfall check. Sales are void-only: there is no delete (feature 05 AC40). */
 export interface VoidSaleRequest { version: number }
-export type VoidSaleResponse = SaleChangeResponse
-/** DELETE /api/sales/:id. Pending only -- refused (409 not_pending) on a complete or voided sale (AC44). */
-export interface DeleteSaleResponse { saleId: string, saleNumber: number }
+/** `order` is the linked order as it is NOW (recomputed in the same change, feature 05 AC35), or null for a direct sale. */
+export interface VoidSaleResponse { sale: Sale, changed: boolean, order: OrderDetail | null }
 
 export interface OnHandLine { sizeId: string, eggs: number }
 /** GET /api/sales/on-hand?sizeId=...&sizeId=... (repeated) -- omit to get every size of the farm. */
 export interface OnHandResponse { onHand: OnHandLine[] }
+
+// ---- Orders (docs/features/05-orders.md §3.3) ----
+export type OrderStatus = 'requested' | 'confirmed' | 'ready' | 'partially_fulfilled' | 'fulfilled' | 'cancelled'
+/** The three statuses an owner may set by hand (AC21). Everything else is set by deliveries, Close short or Cancel. */
+export type OrderManualStatus = 'requested' | 'confirmed' | 'ready'
+/** The list's status chips (AC4). 'open' = requested, confirmed, ready, partially_fulfilled. 'fulfilled' includes closed short. */
+export type OrdersView = 'open' | 'all' | 'fulfilled' | 'cancelled'
+
+/** One line of an order. Delivered / remaining are COMPUTED from the order's non-voided deliveries, never stored (AC32). */
+export interface OrderLine {
+  sizeId: string
+  /** Ordered, in individual eggs. */
+  orderedEggs: number
+  /** Sum of this size's eggs on the order's non-voided deliveries. */
+  deliveredEggs: number
+  /** What is still owed. 0 on a Fulfilled, Cancelled or closed-short order. */
+  remainingEggs: number
+  /** Set when the order was closed short: the remainder dropped at that moment, fixed from then on (AC34, AC35). Otherwise 0. */
+  droppedEggs: number
+  pricePerTray: number
+  /** Frozen at save (AC51). */
+  lineTotal: number
+}
+/** A line as sent in a request: no lineTotal (the server computes and freezes it). Same shape as SaleLineInput. */
+export interface OrderLineInput { sizeId: string, eggs: number, pricePerTray: number }
+
+export interface Order {
+  id: string
+  orderNumber: number
+  clientId: string
+  orderDate: IsoDate
+  wantedBy: IsoDate | null
+  status: OrderStatus
+  /** Non-null = Fulfilled (closed short): shown with that wording (AC34). One-way. */
+  closedShortAt: IsoDate | null
+  /** Non-null = Cancelled. One-way. */
+  cancelledAt: IsoDate | null
+  /** The old sale number when this order was converted from a pending sale (AC45). Null otherwise. */
+  convertedFromSaleNumber: number | null
+  lines: OrderLine[]
+  /** Sum of lines[].lineTotal, computed at read time. */
+  orderTotal: number
+  /** Non-voided deliveries. > 0 locks the client and the delivered lines, and refuses Cancel (AC19, AC22). */
+  deliveryCount: number
+  /** Voided deliveries (shown in the detail; they do not count for any rule, owner decision G1). */
+  voidedDeliveryCount: number
+  /** Changes on every real change to the header, the lines OR the deliveries (stale check, AC20). */
+  version: number
+}
+
+/** One drop of eggs against an order = one sale (AC27). */
+export interface OrderDelivery {
+  saleId: string
+  saleNumber: number
+  deliveredDate: IsoDate
+  voidedAt: IsoDate | null
+  lines: { sizeId: string, eggs: number }[]
+}
+export interface OrderDetail extends Order { deliveries: OrderDelivery[] }
+
+/** GET /api/orders?view&clientId&from&to&limit&offset. view 'open' ignores limit/offset: every open order is returned (AC5). */
+export interface OrdersListResponse {
+  /** Whether the farm has ANY order, ignoring every filter (AC6). */
+  hasAny: boolean
+  /** Total matches for the filters, ignoring limit/offset. */
+  total: number
+  orders: Order[]
+}
+export interface OrderResponse { order: OrderDetail }
+
+/** POST /api/orders */
+export interface CreateOrderRequest {
+  submissionId: string
+  clientId: string
+  orderDate: IsoDate
+  wantedBy?: IsoDate | null
+  lines: OrderLineInput[]
+}
+export interface CreateOrderResponse { order: OrderDetail, replayed: boolean }
+
+/** PUT /api/orders/:id. Replaces the whole order (header + every line); the whole order is always sent (AC19). */
+export interface UpdateOrderRequest {
+  version: number
+  clientId: string
+  orderDate: IsoDate
+  wantedBy?: IsoDate | null
+  lines: OrderLineInput[]
+}
+/** `changed` false = nothing to do (already in that state / already matches what was asked). */
+export interface OrderChangeResponse { order: OrderDetail, changed: boolean }
+
+/** POST /api/orders/:id/status (AC21). */
+export interface SetOrderStatusRequest { status: OrderManualStatus }
+/** POST /api/orders/:id/close (AC34). `version` is the one the confirm dialog was built from. */
+export interface CloseOrderRequest { version: number }
+/** POST /api/orders/:id/cancel has no body (AC22). */
+
+/** POST /api/orders/:id/deliver (AC24 to AC31). Lines with 0 eggs are simply left out. */
+export interface DeliverOrderRequest {
+  submissionId: string
+  deliveredDate: IsoDate
+  lines: { sizeId: string, eggs: number }[]
+  /** true = "Deliver anyway" after a 409 stock_short (AC30). */
+  confirmShortfall?: boolean
+}
+export interface DeliverOrderResponse { order: OrderDetail, sale: Sale, replayed: boolean }

@@ -21,13 +21,6 @@ const saleDateSchema = plainIsoDateSchema.refine(
   { error: SALE_MESSAGES.saleDateFuture },
 )
 
-/** The delivered date: a real date, not after UTC today + 1 (AC24, AC33). "Before the sale date" is checked by the
- * database (TM034), which is the only place both dates are known together at once. */
-const deliveredDateSchema = plainIsoDateSchema.refine(
-  d => compareIsoDates(d, maxLoggableDate(new Date())) <= 0,
-  { error: SALE_MESSAGES.deliveredDateFuture },
-)
-
 /** A line's price per tray (AC19): the same shape as a client's default price. */
 const salePriceSchema = z
   .number({ error: SALE_MESSAGES.priceNotANumber })
@@ -86,7 +79,6 @@ export const createSaleBodySchema = z
     type: saleTypeSchema,
     saleDate: saleDateSchema,
     clientId: z.uuid({ error: SALE_MESSAGES.clientInvalid }).nullish(),
-    deliveredDate: deliveredDateSchema.nullish(),
     lines: saleLinesSchema,
     confirmShortfall: z.boolean().optional(),
   })
@@ -103,17 +95,10 @@ export const updateSaleBodySchema = z
     type: saleTypeSchema,
     saleDate: saleDateSchema,
     clientId: z.uuid({ error: SALE_MESSAGES.clientInvalid }).nullish(),
-    deliveredDate: deliveredDateSchema.nullish(),
     lines: saleLinesSchema,
     confirmShortfall: z.boolean().optional(),
   })
   .superRefine(checkClientForType)
-
-/** POST /api/sales/:id/mark-delivered */
-export const markSaleDeliveredBodySchema = z.object({
-  deliveredDate: deliveredDateSchema,
-  confirmShortfall: z.boolean().optional(),
-})
 
 /** POST /api/sales/:id/void */
 export const voidSaleBodySchema = z.object({
@@ -124,7 +109,7 @@ export const voidSaleBodySchema = z.object({
     .max(Number.MAX_SAFE_INTEGER, { error: SALE_MESSAGES.saleChanged }),
 })
 
-/** Route params for /api/sales/:id, /:id/mark-delivered, /:id/mark-pending, /:id/void. */
+/** Route params for /api/sales/:id, /:id/void. */
 export const saleIdParamsSchema = z.object({ id: z.uuid({ error: SALE_MESSAGES.saleChanged }) })
 
 /** An empty query value (`?from=`) means "not set". No future-date refusal here (AC7: sale dates are never in the future anyway). */
@@ -135,12 +120,11 @@ function queryBoolean(defaultValue: boolean) {
   return z.preprocess(v => (v === undefined || v === '' ? undefined : v === true || v === 'true'), z.boolean().optional().default(defaultValue))
 }
 
-/** GET /api/sales?from&to&status&type&clientId&limit&offset&includeVoided (all optional). */
+/** GET /api/sales?from&to&type&clientId&limit&offset&includeVoided (all optional). */
 export const salesListQuerySchema = z
   .object({
     from: optionalQueryDate,
     to: optionalQueryDate,
-    status: z.enum(['pending', 'complete']).optional(),
     type: z.enum(['delivery', 'on_site']).optional(),
     clientId: z.uuid().optional(),
     limit: z.coerce.number().int().min(1).max(100).optional().default(25),
@@ -160,7 +144,6 @@ export const onHandQuerySchema = z.object({
 export type SaleLineInputBody = z.infer<typeof saleLineInputSchema>
 export type CreateSaleBody = z.infer<typeof createSaleBodySchema>
 export type UpdateSaleBody = z.infer<typeof updateSaleBodySchema>
-export type MarkSaleDeliveredBody = z.infer<typeof markSaleDeliveredBodySchema>
 export type VoidSaleBody = z.infer<typeof voidSaleBodySchema>
 export type SaleIdParams = z.infer<typeof saleIdParamsSchema>
 export type SalesListQuery = z.infer<typeof salesListQuerySchema>

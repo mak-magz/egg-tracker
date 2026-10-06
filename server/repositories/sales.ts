@@ -1,6 +1,7 @@
-// Sales repository (docs/features/04-sales.md §3.3 "Repository"). Every write is ONE security invoker Postgres
+// Sales repository (docs/features/04-sales.md §3.3 "Repository", reworked by docs/features/05-orders.md §3.3.4: no
+// pending, no mark-delivered, no delete -- a sale is edited or voided). Every write is ONE security invoker Postgres
 // function called through TenantDb.rpc, which sets p_tenant_id from the server context (never from input). Each
-// function returns { sale: <jsonb> } (or a small id/number pair for delete), already the whole shape the API
+// function returns { sale: <jsonb> }, already the whole shape the API
 // needs -- unlike clients/production, there is no separate re-read step, because app.sale_json is built into every
 // function's return value.
 //
@@ -15,18 +16,19 @@ import { SALE_FIELDS, SALE_MESSAGES } from '../../shared/constants/sales'
 import type {
   ApiErrorData,
   CreateSaleResponse,
-  DeleteSaleResponse,
   OnHandResponse,
   Sale,
   SaleChangeResponse,
   SaleLineInput,
   SalesListResponse,
+  VoidSaleResponse,
 } from '../../shared/types/api'
 import type { TenantDb, TenantRpcArgs } from '../utils/db'
 import { apiError } from '../utils/errors'
+import { orderDetailJsonSchema, toOrderDetail } from './order-json'
 
 /** Which function raised, so an error shared by several (TM002, TM005) lands on the right field. */
-export type SaleOperation = 'create' | 'update' | 'markDelivered' | 'markPending' | 'delete' | 'void' | 'get' | 'list' | 'onHand'
+export type SaleOperation = 'create' | 'update' | 'void' | 'get' | 'list' | 'onHand'
 
 const saleLineJsonSchema = z.object({
   sizeId: z.string(),
@@ -35,14 +37,14 @@ const saleLineJsonSchema = z.object({
   lineTotal: z.number(),
 })
 
-const saleJsonSchema = z.object({
+export const saleJsonSchema = z.object({
   id: z.string(),
   saleNumber: z.number(),
   type: z.enum(['delivery', 'on_site']),
-  status: z.enum(['pending', 'complete']),
   clientId: z.string().nullable(),
   saleDate: z.string(),
-  deliveredDate: z.string().nullable(),
+  orderId: z.string().nullable(),
+  orderNumber: z.number().nullable(),
   version: z.number(),
   voidedAt: z.string().nullable(),
   lines: z.array(saleLineJsonSchema),
@@ -51,8 +53,8 @@ const saleJsonSchema = z.object({
 
 const createResultSchema = z.object({ sale: saleJsonSchema, replayed: z.boolean() })
 const changeResultSchema = z.object({ sale: saleJsonSchema, changed: z.boolean() })
+const voidResultSchema = z.object({ sale: saleJsonSchema, changed: z.boolean(), order: orderDetailJsonSchema.nullable() })
 const getResultSchema = z.object({ sale: saleJsonSchema.nullable() })
-const deleteResultSchema = z.object({ saleId: z.string(), saleNumber: z.number() })
 const listResultSchema = z.object({ hasAny: z.boolean(), total: z.number(), sales: z.array(saleJsonSchema) })
 const onHandLineSchema = z.object({ sizeId: z.string(), eggs: z.number() })
 const onHandResultSchema = z.object({ onHand: z.array(onHandLineSchema) })
@@ -80,10 +82,10 @@ export function toSale(row: z.infer<typeof saleJsonSchema>): Sale {
     id: row.id,
     saleNumber: row.saleNumber,
     type: row.type,
-    status: row.status,
     clientId: row.clientId,
     saleDate: row.saleDate,
-    deliveredDate: row.deliveredDate,
+    orderId: row.orderId,
+    orderNumber: row.orderNumber,
     lines: row.lines.map(l => ({ sizeId: l.sizeId, eggs: l.eggs, pricePerTray: l.pricePerTray, lineTotal: l.lineTotal })),
     saleTotal: row.saleTotal,
     version: row.version,
@@ -119,14 +121,7 @@ function shortfallFromDetail(details: string | null | undefined): ShortfallLineL
 }
 type ShortfallLineList = z.infer<typeof shortfallDetailSchema>['shortfall']
 
-function dateFieldFor(hint: string | null | undefined): string {
-  return hint === 'delivered_date' ? SALE_FIELDS.deliveredDate : SALE_FIELDS.saleDate
-}
-
-function dateFieldMessage(hint: string | null | undefined): string {
-  return hint === 'delivered_date' ? SALE_MESSAGES.deliveredDateFuture : SALE_MESSAGES.saleDateFuture
-}
-
+/** TM002 (hint sale_date) and TM055 (hint sale_date) are both about the one sale date. */
 function clientFieldMessage(hint: string | null | undefined): string {
   return hint === 'required' ? SALE_MESSAGES.clientRequired : SALE_MESSAGES.clientInvalid
 }
@@ -154,8 +149,8 @@ export async function mapSaleDbError(
   saleId?: string,
 ): Promise<H3Error<ApiErrorData>> {
   switch (error.code) {
-    case 'TM002': // sale_date or delivered_date after UTC today + 1
-      return apiError(400, 'validation_failed', { [dateFieldFor(error.hint)]: dateFieldMessage(error.hint) })
+    case 'TM002': // sale_date after UTC today + 1
+      return apiError(400, 'validation_failed', { [SALE_FIELDS.saleDate]: SALE_MESSAGES.saleDateFuture })
     case 'TM005': // malformed input (the route's schema normally catches this first)
       return apiError(400, 'validation_failed', { [malformedField(operation)]: SALE_MESSAGES.saleChanged })
     case 'TM027': // the sale isn't one of this farm's (foreign id or truly unknown -- the same answer, AC58)
@@ -172,8 +167,6 @@ export async function mapSaleDbError(
       return apiError(400, 'validation_failed', { [SALE_FIELDS.clientId]: clientFieldMessage(error.hint) })
     case 'TM033': // a NEW line's size isn't active/foreign
       return apiError(400, 'validation_failed', { [SALE_FIELDS.lines]: SALE_MESSAGES.linesSizesChanged })
-    case 'TM034': // delivered_date before sale_date
-      return apiError(400, 'validation_failed', { [SALE_FIELDS.deliveredDate]: SALE_MESSAGES.deliveredDateBeforeSale })
     case 'TM036': { // update_sale / void_sale: the version isn't the one the form opened with
       const sale = await currentSaleOrUndefined(db, saleId)
       return sale
@@ -188,26 +181,21 @@ export async function mapSaleDbError(
     }
     case 'TM038': // the same submissionId used with a different payload
       return apiError(400, 'validation_failed', { [SALE_FIELDS.submissionId]: SALE_MESSAGES.submissionReused })
-    case 'TM041': { // delete_sale: the sale isn't pending (complete or already voided -- one message, AC44)
+    case 'TM053': { // update_sale: a delivery made from an order can only change its date (AC36)
       const sale = await currentSaleOrUndefined(db, saleId)
       return sale
-        ? apiError(409, 'conflict', undefined, { reason: 'not_pending', sale })
-        : apiError(409, 'conflict', undefined, { reason: 'not_pending' })
+        ? apiError(409, 'conflict', undefined, { reason: 'sale_locked', sale })
+        : apiError(409, 'conflict', undefined, { reason: 'sale_locked' })
     }
-    case 'TM042': { // void_sale: the sale isn't complete (a Pending sale is never voided)
-      const sale = await currentSaleOrUndefined(db, saleId)
-      return sale
-        ? apiError(409, 'conflict', undefined, { reason: 'not_complete', sale })
-        : apiError(409, 'conflict', undefined, { reason: 'not_complete' })
-    }
-    case 'TM043': { // update_sale / mark_sale_pending / mark_sale_delivered: the sale is already voided
+    case 'TM055': // update_sale: a linked sale's date is before its order's date
+      return apiError(400, 'validation_failed', { [SALE_FIELDS.saleDate]: SALE_MESSAGES.saleDateBeforeOrder })
+    case 'TM043': { // update_sale: the sale is already voided
       const sale = await currentSaleOrUndefined(db, saleId)
       return sale
         ? apiError(409, 'conflict', undefined, { reason: 'voided', sale })
         : apiError(409, 'conflict', undefined, { reason: 'voided' })
     }
     case 'TM006': // p_tenant_id disagrees with the session: only a server bug can cause this
-    case 'TM039': // an action not valid for this sale: unreachable from our routes
     case 'TM040': // an immutable column changed, or voided_at moved once set: unreachable from our routes
     case '23505': // backstops behind the checks above
     case '23514':
@@ -229,11 +217,8 @@ function toLinesArgs(lines: SaleLineInput[]): { p_size_ids: string[], p_eggs: nu
 }
 
 /** Only the keys that are set: supabase-js types an optional rpc argument as `?: string`, not `string | null`. */
-function optionalArgs(clientId: string | null | undefined, deliveredDate: string | null | undefined): { p_client_id?: string, p_delivered_date?: string } {
-  const args: { p_client_id?: string, p_delivered_date?: string } = {}
-  if (clientId !== null && clientId !== undefined) args.p_client_id = clientId
-  if (deliveredDate !== null && deliveredDate !== undefined) args.p_delivered_date = deliveredDate
-  return args
+function optionalArgs(clientId: string | null | undefined): { p_client_id?: string } {
+  return clientId !== null && clientId !== undefined ? { p_client_id: clientId } : {}
 }
 
 export interface CreateSaleInput {
@@ -241,7 +226,6 @@ export interface CreateSaleInput {
   type: 'delivery' | 'on_site'
   saleDate: string
   clientId?: string | null
-  deliveredDate?: string | null
   lines: SaleLineInput[]
   confirmShortfall?: boolean
 }
@@ -250,7 +234,6 @@ export interface UpdateSaleInput {
   type: 'delivery' | 'on_site'
   saleDate: string
   clientId?: string | null
-  deliveredDate?: string | null
   lines: SaleLineInput[]
   confirmShortfall?: boolean
 }
@@ -262,7 +245,7 @@ export async function createSale(db: TenantDb, input: CreateSaleInput): Promise<
     p_type: input.type,
     p_sale_date: input.saleDate,
     ...toLinesArgs(input.lines),
-    ...optionalArgs(input.clientId, input.deliveredDate),
+    ...optionalArgs(input.clientId),
     ...(input.confirmShortfall !== undefined ? { p_confirm_shortfall: input.confirmShortfall } : {}),
   }
   const { data, error } = await db.rpc('create_sale', args)
@@ -271,7 +254,7 @@ export async function createSale(db: TenantDb, input: CreateSaleInput): Promise<
   return { sale: toSale(result.sale), replayed: result.replayed }
 }
 
-/** Replaces the whole sale (header + every line): AC40, AC64-66. */
+/** Replaces the whole sale (header + every line): AC40, AC42. A delivery made from an order accepts only a new date (AC36). */
 export async function updateSale(db: TenantDb, id: string, input: UpdateSaleInput): Promise<SaleChangeResponse> {
   const args: TenantRpcArgs<'update_sale'> = {
     p_sale_id: id,
@@ -279,7 +262,7 @@ export async function updateSale(db: TenantDb, id: string, input: UpdateSaleInpu
     p_type: input.type,
     p_sale_date: input.saleDate,
     ...toLinesArgs(input.lines),
-    ...optionalArgs(input.clientId, input.deliveredDate),
+    ...optionalArgs(input.clientId),
     ...(input.confirmShortfall !== undefined ? { p_confirm_shortfall: input.confirmShortfall } : {}),
   }
   const { data, error } = await db.rpc('update_sale', args)
@@ -288,41 +271,12 @@ export async function updateSale(db: TenantDb, id: string, input: UpdateSaleInpu
   return { sale: toSale(result.sale), changed: result.changed }
 }
 
-/** Marks a delivery delivered: stamps the date and completes every line at once (AC33, AC34). */
-export async function markSaleDelivered(db: TenantDb, id: string, input: { deliveredDate: string, confirmShortfall?: boolean }): Promise<SaleChangeResponse> {
-  const args: TenantRpcArgs<'mark_sale_delivered'> = {
-    p_sale_id: id,
-    p_delivered_date: input.deliveredDate,
-    ...(input.confirmShortfall !== undefined ? { p_confirm_shortfall: input.confirmShortfall } : {}),
-  }
-  const { data, error } = await db.rpc('mark_sale_delivered', args)
-  if (error) throw await mapSaleDbError(db, error, 'markDelivered', id)
-  const result = parseResult('mark_sale_delivered', changeResultSchema, data)
-  return { sale: toSale(result.sale), changed: result.changed }
-}
-
-/** Undoes a mark-delivered (AC39). Never checks shortfall: reversing only ever gives eggs back. */
-export async function markSalePending(db: TenantDb, id: string): Promise<SaleChangeResponse> {
-  const { data, error } = await db.rpc('mark_sale_pending', { p_sale_id: id })
-  if (error) throw await mapSaleDbError(db, error, 'markPending', id)
-  const result = parseResult('mark_sale_pending', changeResultSchema, data)
-  return { sale: toSale(result.sale), changed: result.changed }
-}
-
-/** Deletes a PENDING sale for good (AC44). A complete or voided sale is refused (TM041 -> 409 not_pending). */
-export async function deleteSale(db: TenantDb, id: string): Promise<DeleteSaleResponse> {
-  const { data, error } = await db.rpc('delete_sale', { p_sale_id: id })
-  if (error) throw await mapSaleDbError(db, error, 'delete', id)
-  const result = parseResult('delete_sale', deleteResultSchema, data)
-  return { saleId: result.saleId, saleNumber: result.saleNumber }
-}
-
-/** Voids a COMPLETE sale, one-way (AC67, AC68). A pending sale is refused (TM042 -> 409 not_complete). */
-export async function voidSale(db: TenantDb, id: string, input: { version: number }): Promise<SaleChangeResponse> {
+/** Voids a sale, one-way (AC67, AC68). A linked delivery also brings its order right in the same change; that order comes back (AC35). */
+export async function voidSale(db: TenantDb, id: string, input: { version: number }): Promise<VoidSaleResponse> {
   const { data, error } = await db.rpc('void_sale', { p_sale_id: id, p_version: input.version })
   if (error) throw await mapSaleDbError(db, error, 'void', id)
-  const result = parseResult('void_sale', changeResultSchema, data)
-  return { sale: toSale(result.sale), changed: result.changed }
+  const result = parseResult('void_sale', voidResultSchema, data)
+  return { sale: toSale(result.sale), changed: result.changed, order: result.order ? toOrderDetail(result.order) : null }
 }
 
 /** One sale of this farm, or null (not found, or another farm's: the same answer, AC58). */
@@ -336,7 +290,6 @@ export async function getSale(db: TenantDb, id: string): Promise<Sale | null> {
 export interface ListSalesFilters {
   from?: string
   to?: string
-  status?: 'pending' | 'complete'
   type?: 'delivery' | 'on_site'
   clientId?: string
   limit?: number
@@ -344,12 +297,11 @@ export interface ListSalesFilters {
   includeVoided?: boolean
 }
 
-/** Sales matching the filters, newest first, server-paginated (D4). Pending is never capped (AC9). */
+/** Sales matching the filters, newest first, server-paginated (D4). */
 export async function listSales(db: TenantDb, filters: ListSalesFilters): Promise<SalesListResponse> {
   const args: TenantRpcArgs<'list_sales'> = {
     p_from: filters.from,
     p_to: filters.to,
-    p_status: filters.status,
     p_type: filters.type,
     p_client_id: filters.clientId,
     p_limit: filters.limit,

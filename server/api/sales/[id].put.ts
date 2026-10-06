@@ -1,8 +1,9 @@
 // PUT /api/sales/:id (§3.3): REPLACES the whole sale (header + every line), including the type (AC40, AC64-66).
-// Carries the `version` the form was opened with (AC43).
+// Carries the `version` the form was opened with (AC43). A delivery made from an order accepts only a new date:
+// the client, type and lines must equal what is stored (AC36).
 // 200 SaleChangeResponse (`changed: false` when nothing differed) | 400 validation_failed (type, clientId,
-// saleDate, deliveredDate, lines, version) | 404 not_found | 409 conflict sale_changed (+ sale), stock_short
-// (+ shortfall) or voided (+ sale) | 401 | 403 | 500.
+// saleDate, lines, version) | 404 not_found | 409 conflict sale_changed (+ sale), stock_short (+ shortfall),
+// voided (+ sale) or sale_locked (+ sale) | 401 | 403 | 500.
 import { getRouterParams, readBody } from 'h3'
 import { saleIdParamsSchema, updateSaleBodySchema } from '../../../shared/schemas/sales'
 import type { SaleChangeResponse } from '../../../shared/types/api'
