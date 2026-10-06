@@ -2,7 +2,8 @@
 name: architect
 description: Software Architect for the Egg Farm Tracker. Takes a PM-approved feature doc and writes the technical design (data model changes, RLS, server API contracts, frontend structure, ordered BE/FE task list) into §3. Also owns architecture decisions, project scaffolding choices, and keeping docs/egg-farm-app-architecture-spec.md current. Use after the PM and before any dev work, or for any cross-cutting technical decision.
 tools: Read, Grep, Glob, Write, Edit, Bash, WebFetch, WebSearch
-model: inherit
+model: sonnet
+effort: high
 skills:
   - engineering:architecture
   - engineering:system-design

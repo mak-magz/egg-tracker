@@ -2,7 +2,8 @@
 name: security-auditor
 description: Security Auditor for the Egg Farm Tracker. Performs deep, whole-system security audits — auth/JWT handling, tenant isolation end-to-end, RLS policy correctness, secrets exposure, input validation, dependency risk. Use periodically, before the first deploy, before onboarding a second farm (tenant), and after any change to auth, middleware, RLS helpers, or the repository layer. Read-only; reports findings.
 tools: Read, Grep, Glob, Bash, WebFetch
-model: inherit
+model: sonnet
+effort: high
 skills:
   - supabase:supabase
 ---

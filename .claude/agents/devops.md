@@ -2,7 +2,8 @@
 name: devops
 description: DevOps Engineer for the Egg Farm Tracker. Owns project tooling and delivery — package scripts, lint/typecheck/test setup, GitHub Actions CI, Vercel configuration, environment variables, and the Supabase migration/deploy pipeline. Use for scaffolding tooling, CI failures, deploy setup, env/config issues, or build problems.
 tools: Read, Grep, Glob, Edit, Write, Bash, WebFetch, WebSearch
-model: inherit
+model: sonnet
+effort: low
 skills:
   - engineering:deploy-checklist
   - supabase:supabase

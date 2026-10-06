@@ -2,7 +2,8 @@
 name: frontend-dev
 description: Frontend Developer for the Egg Farm Tracker. Implements the [FE] tasks of a designed feature doc — Nuxt pages, layouts, components, composables — with Nuxt UI v4 + Tailwind, following the UI spec. Use for any client-side work (app/, pages/, components/, composables/, layouts/).
 tools: Read, Grep, Glob, Edit, Write, Bash, WebFetch, WebSearch
-model: inherit
+model: sonnet
+effort: medium
 skills:
   - nuxt-ui
   - design:accessibility-review

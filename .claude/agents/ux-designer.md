@@ -1,8 +1,9 @@
 ---
 name: ux-designer
 description: UX Designer for the Egg Farm Tracker. Turns a PM feature doc's acceptance criteria into concrete screen layouts, interaction flows, states, and copy (§2.5 UX design), optimized for fast barnside phone entry. Use after the PM and before the architect for any feature with UI; also for UX reviews of built screens.
-tools: Read, Grep, Glob, Write, Edit, WebFetch
-model: inherit
+tools: Read, Grep, Glob, Write, Edit, WebFetch, mcp__*
+model: sonnet
+effort: medium
 skills:
   - design:ux-copy
   - design:accessibility-review

@@ -167,19 +167,22 @@ Shape: **`(produced_on, size_id, quality, eggs)`** + `tenant_id` (as built in fe
 
 ### Inventory
 - **Computed, not stored** — on-hand = (sellable eggs produced) − (eggs sold). No stored running figure to drift out of sync.
-- **Tracked by size** (by the farm's `sizes`: large on hand, jumbo on hand, …), because sales are sized. On-hand = `sum(production.eggs) where quality = 'good' group by size_id` minus completed sales by `size_id`.
+- **Tracked by size** (by the farm's `sizes`: large on hand, jumbo on hand, …), because sales are sized. On-hand = `sum(production.eggs) where quality = 'good' group by size_id` minus the eggs of non-voided sales by `size_id` *(feature 05: every sale is a real, completed transaction, so there is no status test)*.
 - Only **good** production counts; rejects excluded.
-- **On-hand = physically present right now.** Inventory subtracts **at delivery/completion**, not at order time (a pending delivery hasn't left yet). If "available to promise" is ever needed, that's a separate computed notion (on-hand minus pending) — not in v1.
+- **On-hand = physically present right now.** Inventory subtracts **when a sale is logged**, i.e. when the eggs actually leave. **Orders never change it** *(feature 05)*: an order is a promise, not a sale, and reserves nothing. If "available to promise" is ever needed, that's a separate computed notion (on-hand minus open orders' remaining) — not in v1.
 
 ### Sales (absorbs Deliveries; header + lines, designed 2026-09-27, feature 04)
 The tracked entity is a **sale**; **delivery is one fulfillment method**, not a separate concept. Some sales are delivered to a client; some are on-site/home sales with no delivery. **Owner decision (2026-09-27, feature 04 Q1): a sale is an order — one header plus 1 to 20 lines** (one per egg size), because the owner plans to print an invoice from one sale. This replaces the single-row planning shape below it (the old shape assumed one size per sale; the actual build is `sales` + `sale_lines`, `docs/features/04-sales.md` §3.1).
 
-**Header (`sales`), roughly:** `(id, tenant_id, sale_number, client_id, type, status, sale_date, delivered_date, version, created_at, updated_at)`
-- **sale_number** — a whole number, unique per farm, assigned by the database when the sale is logged (never by the client), in the order sales are logged (not by `sale_date`), never reused after a delete. It becomes the invoice number in feature 05.
-- **sale_date** — when the sale was agreed/created (a delivery's "ordered" date, an on-site sale's own date). Always set, never in the future.
-- **delivered_date** — **nullable**; null until fulfilled, then stamped. Doubles as the "outstanding" signal. Equal to `sale_date` for an on-site sale.
-- **status** — `pending` / `complete`. **Lifecycle only**, `= (delivered_date is not null)`.
-- **type** — `delivery` / `on_site`. **Editable after logging** (feature 04 AC64–AC66; the planning note below about being "born complete" no longer means fixed at birth): switching type recomputes status and stock the same way logging does, and the sale number and lines don't change. `pickup` is **not** planned; on-site covers it.
+> **Revised by feature 05 (Orders, designed 2026-10-03; `docs/features/05-orders.md` §3).** Pending sales are gone: the intent to deliver is an **order** (see "Orders" below) and every sale is a real, completed transaction. The header below is as it stands after feature 05; the struck concepts (status, null `delivered_date`, mark-delivered, hard delete) are described only in the history notes.
+
+**Header (`sales`), roughly:** `(id, tenant_id, sale_number, client_id, type, sale_date, delivered_date, order_id, version, voided_at, created_at, updated_at)`
+- **sale_number** — a whole number, unique per farm, assigned by the database when the sale is logged (never by the client), in the order sales are logged (not by `sale_date`), never reused (a sale is never deleted; the numbers of converted pending sales are retired by the forward-only `sale_counters`). It becomes the invoice number in the invoice feature.
+- **sale_date** — **the day the eggs left** (the owner sees one date). Always set, never in the future.
+- **delivered_date** — a **generated** copy of `sale_date` (`generated always as (sale_date) stored`), so it is never null and can never differ. Null no longer means pending. Candidate for removal in a cleanup.
+- **status** — **removed in feature 05.** There is no `pending` sale. The only per-sale lifecycle left is `voided_at` (one-way).
+- **order_id** — nullable composite FK `(tenant_id, order_id) → orders (tenant_id, id)`, **not unique** (many deliveries per order); set only by `deliver_order`. A linked sale's client, type and lines are locked (void and re-deliver to change eggs); its date can change.
+- **type** — `delivery` / `on_site`. **Editable after logging** for a direct sale (feature 04 AC64–AC66, simplified by feature 05 to a plain edit: stock never moves because of a type change). A sale made from an order is always a delivery to the order's client. `pickup` is **not** planned; on-site covers it.
 - **client_id** — **nullable**, composite FK `(tenant_id, client_id) → clients (tenant_id, id)`; required for a delivery, optional for an on-site sale (no fake "walk-in" record needed).
 - **version** — the stale-edit marker (as `clients.version`).
 
@@ -189,15 +192,26 @@ The tracked entity is a **sale**; **delivery is one fulfillment method**, not a 
 - **price_per_tray**, **line_total** — **both snapshotted onto the line** at save time (feature 04 AC55/SL2): `line_total` is computed once, from the price, the eggs and the farm's `eggs_per_tray` *at that moment*, and frozen — a later change to the farm's tray size or currency never changes a saved line's total (it only changes how a farm's *current* prices are entered). A client's default price may *pre-fill* the form but is **not** authoritative for historical sales. The sale total is the sum of the lines' `line_total` (never stored, computed at read time — a sale has at most 20 lines).
 
 **Derived views (no separate tables/screens):**
-- "Deliveries" = `WHERE type = 'delivery'`.
-- "Outstanding/pending" = `WHERE status = 'pending'` (≡ `delivered_date IS NULL`).
-- The label "sold" shown for a completed on-site sale is computed from status + type, not stored.
+- "Deliveries" = `WHERE type = 'delivery'`; "deliveries of an order" = `WHERE order_id = …`.
+- "Outstanding / for delivery" is **not a sales view any more**: it is the remaining on open **orders** (see Orders).
 
-**The single completion event.** For a delivery, `status` flips `pending → complete` at fulfillment. That one event simultaneously (1) sets `status = complete`, (2) stamps `delivered_date`, (3) decrements inventory for every line. Implemented as **one update** (the `mark_sale_delivered` function), not three things to keep in sync. On-site sales are **born `complete`** (`sale_date` = `delivered_date`), and stay complete through any later edit that doesn't change the type.
+**The single event.** Logging a sale (directly, or via `deliver_order`) is one transaction that takes a sale number, writes the header and every line, and thereby decrements inventory for every line. There is nothing to "complete" later. The only later correction is Edit (direct sales; date only for a linked sale) or **Void** (`voided_at`, one-way: the row and its number stay, its eggs return to stock). **A sale is never deleted**: no delete grant, policy, function or route.
 
-**Why one status field (not two).** A second `fulfillment_status` was considered and rejected for v1: for a delivery, "delivered" and "complete" are the same event, so the second field would only echo the first. Two axes earn their place only when they can disagree — e.g. paid-but-not-yet-delivered — which requires payment tracking, out of v1 scope. When payment is added later, introduce a second axis named for what it tracks (e.g. `payment_status`).
+*History (feature 04, superseded by 05):* a sale used to carry `status` (`pending`/`complete`) with `delivered_date` null while pending, a `mark_sale_delivered` completion event, and a hard delete for pending sales. Feature 05 moved that intent into orders.
 
-**On-hand, shared with the future Inventory feature (feature 06).** One `security invoker` function (`app.on_hand_json`, `docs/features/04-sales.md` §3.1) computes good production minus completed sales' eggs, grouped by size — the one place this is calculated, called by Sales' per-line hint and shortfall check now, and by Inventory's screen later. A printable invoice of one sale (no payment status) is feature 05; Inventory (per-size stock, "for delivery") is feature 06.
+**Why one status field (not two).** Orders carry the only status (`orders.status`). A second axis would only be introduced for payment tracking (e.g. `payment_status`), out of v1 scope. `voided_at`, `orders.cancelled_at` and `orders.closed_short_at` are one-way flags, not status values.
+
+**On-hand, shared with the future Inventory feature (feature 06).** One `security invoker` function (`app.on_hand_json`, `docs/features/04-sales.md` §3.1, simplified by feature 05) computes good production minus non-voided sales' eggs, grouped by size — the one place this is calculated, called by Sales' per-line hint and shortfall check and the Deliver step now, and by Inventory's screen later. A printable invoice of one sale (no payment status) is the invoice feature (renumbered 07 by feature 05); Inventory (per-size stock, "for delivery" from open orders) is feature 06.
+
+### Orders (feature 05, designed 2026-10-03)
+An **order** is a promise to deliver; a sale is eggs that have left. Full design: `docs/features/05-orders.md` §3.
+- **`orders`** `(id, tenant_id, order_number, client_id not null, order_date, wanted_by null, status, cancelled_at, closed_short_at, converted_from_sale_number, version, …)` + **`order_lines`** `(tenant_id, order_id, size_id, eggs, price_per_tray, line_total, dropped_eggs)` with primary key `(tenant_id, order_id, size_id)` (1–20 lines, deferred bounds trigger) + **`order_counters`** (per-farm order numbers, never reused, independent of sale numbers) + **`order_submissions`** (the `create_order` idempotency ledger; `deliver_order` reuses `sale_submissions`). Composite same-farm FKs to `clients` and `sizes`. Orders are **never deleted** (no grant/policy/function/route).
+- **Status** (one field): `requested → confirmed → ready` (free movement among the three while nothing is delivered), then `partially_fulfilled` / `fulfilled` set **only by deliveries**, plus `cancelled` (only with no non-voided delivery). `closed_short_at` marks a partially fulfilled order closed short (shown "Fulfilled (closed short)"; one-way). Voiding the last non-voided delivery sends the order back to `ready`; a closed-short order stays closed.
+- **Delivered-so-far and remaining are computed** from the order's non-voided linked sale lines (`app.order_delivered_eggs`), never stored. The only stored derived fact is `dropped_eggs`, written once at Close short.
+- **A delivery is a sale** (`type = delivery`, `order_id` set, the order's client, the order line's frozen price) created by `deliver_order`: cap at remaining, stock check with an allow-anyway flag, sale number, status, all in one transaction. Over-delivery is refused; extra eggs are a direct sale.
+- **The database keeps status honest**: `orders_write_guard` refuses a status that disagrees with the deliveries, and a trigger on `sales` recomputes the order when a delivery is voided, so a hand-built write cannot jump an order to Fulfilled.
+- **Orders never change on-hand** and reserve nothing. Dashboard "pending deliveries" and Inventory "for delivery" (later features) read open orders' remaining.
+- **Conversion of existing pending sales** is a one-time, idempotent, all-or-nothing data migration (status `confirmed`, new order numbers in old sale-number order, `converted_from_sale_number` kept, old sale numbers retired).
 
 ### Clients (built in feature 03, designed 2026-09-26)
 - A simple **per-tenant list of the farm's customers** (shops/restaurants/individuals). NOT the SaaS's tenants. First table with real-world PII → first isolation-test target (reads **and** writes).
@@ -221,7 +235,7 @@ Keep tightly scoped — a small, fixed set (no configurability in v1):
 - Today's / this week's production (eggs, by size).
 - Current on-hand inventory (by size).
 - Recent sales / deliveries.
-- Outstanding (pending) deliveries.
+- Outstanding deliveries = remaining on **open orders** (feature 05; sales have no pending state).
 - Optionally lay rate (eggs ÷ hen count) — only if hen counts are tracked.
 
 ---
@@ -259,9 +273,10 @@ The data model (the expensive-to-reverse part) is settled. Remaining work is mec
 - **Inventory = physically on-hand**; subtract **at delivery/completion**.
 - **Price snapshot on sales** — store on the sale **line**, not a live client lookup, and freeze the computed `line_total` too so a later tray-size or currency change never changes a saved total (feature 04 AC55). (The client's *name* is not snapshotted: a rename shows on past sales.)
 - **Prices are plain numbers shown in a per-farm currency** (`tenants.currency`, default `PHP`), formatted by the one `formatPrice` helper; a currency change relabels stored prices and never converts them. Never type a currency symbol into a screen.
-- **Nullables are meaningful:** `size_id` null (rejects), `client_id` null (on-site sales), `date_delivered` null (pending).
+- **Nullables are meaningful:** `size_id` null (rejects), `client_id` null (on-site sales). *(Feature 05: `delivered_date` null no longer means pending; there is no pending sale. An order's `wanted_by` null = no date wanted.)*
 - **Categories as data** (size, quality, fulfillment_type are values, not columns). **Sizes are per-farm rows** in `sizes`, referenced by `size_id` with a composite `(tenant_id, size_id)` FK; never hardcode the list. **Rejects are always unsized.**
-- **One `status` field** (`pending`/`complete`) in v1; add a second axis only when payment arrives.
+- **One `status` field** in v1, on **orders** (`requested`/`confirmed`/`ready`/`partially_fulfilled`/`fulfilled`/`cancelled`); sales have none (feature 05). Add a second axis only when payment arrives.
+- **Sales are void-only; orders are cancel/close-only.** No sale and no order is ever deleted. Delivered-so-far on an order is computed from its non-voided deliveries, never stored.
 - **`updated_at` on every table** — cheap hedge; do not design *against* a future offline/sync layer.
 
 ---

@@ -2,7 +2,8 @@
 name: backend-dev
 description: Backend Developer for the Egg Farm Tracker. Implements the [BE] tasks of a designed feature doc — Supabase migrations, RLS policies, DB views/functions, the tenant-scoped repository layer, Nitro server routes, auth/tenant middleware, and their tests (including the cross-tenant isolation test). Use for any work under server/, supabase/, or shared server types.
 tools: Read, Grep, Glob, Edit, Write, Bash, WebFetch
-model: inherit
+model: sonnet
+effort: medium
 skills:
   - supabase:supabase
   - supabase:supabase-postgres-best-practices
