@@ -60,6 +60,8 @@ describe('server guards', () => {
       'server/api/sales/[id].put.ts',
       'server/api/sales/[id]/void.post.ts',
       'server/api/sales/on-hand.get.ts',
+      // Feature 06: the inventory route.
+      'server/api/inventory/index.get.ts',
       // Feature 05: the eight order routes.
       'server/api/orders/index.get.ts',
       'server/api/orders/index.post.ts',

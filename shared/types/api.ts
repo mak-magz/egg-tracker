@@ -254,6 +254,18 @@ export interface OnHandLine { sizeId: string, eggs: number }
 /** GET /api/sales/on-hand?sizeId=...&sizeId=... (repeated) -- omit to get every size of the farm. */
 export interface OnHandResponse { onHand: OnHandLine[] }
 
+// ---- Inventory (docs/features/06-inventory.md §3.3) ----
+/**
+ * One size on the Inventory screen: the farm size (so the screen needs no join) plus its two figures, in eggs.
+ * `onHandEggs` can be NEGATIVE (sales ahead of logged production). `owedEggs` is always >= 0.
+ */
+export interface InventorySize extends FarmSize { onHandEggs: number, owedEggs: number }
+/**
+ * GET /api/inventory. `sizes`: every ACTIVE size (farm order), then ARCHIVED sizes only if on-hand or owed is non-zero.
+ * `hasAny` is false when the farm has no good production and no non-voided sale (the empty state).
+ */
+export interface InventoryResponse { hasAny: boolean, sizes: InventorySize[] }
+
 // ---- Orders (docs/features/05-orders.md §3.3) ----
 export type OrderStatus = 'requested' | 'confirmed' | 'ready' | 'partially_fulfilled' | 'fulfilled' | 'cancelled'
 /** The three statuses an owner may set by hand (AC21). Everything else is set by deliveries, Close short or Cancel. */

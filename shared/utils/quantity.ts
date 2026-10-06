@@ -43,6 +43,14 @@ export function formatQty(eggs: number, eggsPerTray: number, locale?: string): s
   return loose === 0 ? traysPart : `${traysPart} + ${nf.format(loose)}`
 }
 
+/**
+ * formatQty for a figure that may be negative (Inventory on-hand when sales are ahead of production).
+ * formatQty throws on a negative, so this prefixes `-` to the formatted magnitude: `-2 trays`, `-1 egg`.
+ */
+export function formatQtySigned(eggs: number, eggsPerTray: number, locale?: string): string {
+  return eggs < 0 ? `-${formatQty(-eggs, eggsPerTray, locale)}` : formatQty(eggs, eggsPerTray, locale)
+}
+
 export type QuantityLabel = 'Good' | 'Rejects'
 
 /** Label first, then the R1 amount: `Good: 16 trays + 14`, `Rejects: 5 eggs`. */
