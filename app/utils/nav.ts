@@ -25,7 +25,7 @@ export const APP_NAV: readonly AppNavItem[] = [
   { key: 'production', label: 'Production', to: '/production', icon: 'i-lucide-clipboard', title: 'Production', subtitle: 'Logged by day, most recent first', mobile: 'tab' },
   { key: 'orders', label: 'Orders', to: '/orders', icon: 'i-lucide-clipboard-list', title: 'Orders', subtitle: 'What customers are waiting for', mobile: 'tab' },
   { key: 'sales', label: 'Sales', to: '/sales', icon: 'i-lucide-shopping-cart', title: 'Sales', subtitle: 'Deliveries and on-site sales', mobile: 'tab' },
-  { key: 'inventory', label: 'Inventory', to: '/inventory', icon: 'i-lucide-package', title: 'Inventory', subtitle: 'Live view — produced minus sold', mobile: 'more' },
+  { key: 'inventory', label: 'Inventory', to: '/inventory', icon: 'i-lucide-package', title: 'Inventory', subtitle: 'Live view, produced minus sold', mobile: 'more' },
   { key: 'clients', label: 'Clients', to: '/clients', icon: 'i-lucide-users', title: 'Clients', subtitle: 'Your customers', mobile: 'more' },
 ]
 
