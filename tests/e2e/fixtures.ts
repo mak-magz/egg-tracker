@@ -1,0 +1,63 @@
+import { randomUUID } from 'node:crypto'
+import { test as base, expect, type APIRequestContext, type Page } from '@playwright/test'
+
+const ORIGIN = 'http://localhost:3000'
+
+/** Fails the test on a page error, console.error or any Vue warning (a warning is logged with console.warn). */
+export const test = base.extend<{ consoleErrors: string[] }>({
+  consoleErrors: [async ({ page }, use) => {
+    const errors: string[] = []
+    // The Nuxt dev overlay sits on top of the page and intercepts clicks on mobile.
+    await page.addInitScript(() => {
+      const style = document.createElement('style')
+      style.textContent = '#nuxt-devtools-container{display:none!important}'
+      document.addEventListener('DOMContentLoaded', () => document.head.appendChild(style))
+    })
+    page.on('response', (r) => {
+      if (r.status() >= 400) errors.push(`http ${r.status()}: ${r.request().method()} ${r.url()}`)
+    })
+    page.on('pageerror', e => errors.push(`pageerror: ${e.message}\n${e.stack ?? ''}`))
+    page.on('console', (m) => {
+      const text = m.text()
+      if ((m.type() === 'error' && !text.startsWith('Failed to load resource')) || text.includes('[Vue warn]')) errors.push(`console.${m.type()}: ${text}`)
+    })
+    await use(errors)
+    expect(errors, 'browser console errors / Vue warnings').toEqual([])
+  }, { auto: true }],
+})
+export { expect }
+
+async function api<T>(request: APIRequestContext, method: 'GET' | 'POST', path: string, data?: unknown): Promise<T> {
+  const res = await request.fetch(`${ORIGIN}${path}`, {
+    method,
+    headers: { 'Origin': ORIGIN, 'Content-Type': 'application/json' },
+    data: data === undefined ? undefined : JSON.stringify(data),
+  })
+  if (!res.ok()) throw new Error(`${method} ${path} -> ${res.status()}`)
+  return await res.json() as T
+}
+
+export function today(): string {
+  const d = new Date()
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
+export interface Seeded { clientName: string, saleId: string, saleNumber: number, orderId: string, orderNumber: number }
+
+/** Seeds one client, stock, a sale and an open order through the real routes (same-origin Origin header for the CSRF guard). */
+export async function seed(page: Page): Promise<Seeded> {
+  const r = page.request
+  const { sizes } = await api<{ sizes: { id: string, archived?: boolean, active?: boolean }[] }>(r, 'GET', '/api/sizes')
+  const sizeId = sizes[0]!.id
+  const clientName = `E2E Client ${randomUUID().slice(0, 6)}`
+  const added = await api<{ client: { id: string } }>(r, 'POST', '/api/clients', { submissionId: randomUUID(), name: clientName, defaultPrice: 250 })
+  const clientId = added.client.id
+  await api(r, 'POST', '/api/production/entries', { submissionId: randomUUID(), date: today(), good: [{ sizeId, eggs: 600 }], rejects: 0 })
+  const sale = await api<{ sale: { id: string, saleNumber: number } }>(r, 'POST', '/api/sales', {
+    submissionId: randomUUID(), type: 'delivery', saleDate: today(), clientId, lines: [{ sizeId, eggs: 60, pricePerTray: 250 }],
+  })
+  const order = await api<{ order: { id: string, orderNumber: number } }>(r, 'POST', '/api/orders', {
+    submissionId: randomUUID(), clientId, orderDate: today(), lines: [{ sizeId, eggs: 90, pricePerTray: 250 }],
+  })
+  return { clientName, saleId: sale.sale.id, saleNumber: sale.sale.saleNumber, orderId: order.order.id, orderNumber: order.order.orderNumber }
+}

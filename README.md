@@ -84,6 +84,7 @@ Stop the stack with `bun run db:stop` (your local data is kept).
 | `bun run lint` / `bun run lint:fix` | ESLint (`@nuxt/eslint`, stylistic rules) |
 | `bun run test:unit` | Vitest unit tests (`tests/unit/`, no DB needed) |
 | `bun run test:db` | pgTAP DB tests, including the **tenant-isolation suite**. Needs `bun run db:start`. |
+| `bun run test:e2e` | Playwright (Edge) end-to-end specs in `tests/e2e/`. Needs `bun run db:start` and a `.env`; creates an "E2E Farm" account and rows in the LOCAL database only (refuses a non-local URL). Not part of `bun run test`, not in CI. |
 | `bun run test:migration` | Feature 05 migration test: resets the **local** DB to the pre-orders schema, seeds pending/complete/voided sales, applies the orders migrations and checks the conversion (AC43 to AC46). Needs `bun run db:start`. Leaves the DB on the current schema except for its test data: run `bun run db:reset` afterwards. Not part of `bun run test`. |
 | `bun run test` | `test:unit` then `test:db` |
 | `bun run db:start` / `db:stop` | Start or stop the local Supabase stack |

@@ -32,3 +32,11 @@ supabase/.branches/
 
 # Design export: extracted runtime/fonts are regenerable (node docs/design/extract.mjs)
 docs/design/source/assets/
+
+# Playwright (tests/e2e): saved sign-in state, reports, traces
+tests/e2e/.auth/
+playwright-report/
+test-results/
+
+# Playwright MCP session output
+.playwright-mcp/

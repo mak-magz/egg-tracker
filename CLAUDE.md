@@ -11,6 +11,7 @@ Feature 00 (scaffold: auth, tenancy, RLS foundation, app shell) is merged. Featu
 - `bun run typecheck` / `bun run lint` (`lint:fix`)
 - `bun run test:unit`: Vitest (a single file: `bunx vitest run tests/unit/<file>.spec.ts`)
 - `bun run test:db`: pgTAP tests in `supabase/tests/database/` (the local stack must be running)
+- `bun run test:e2e`: Playwright specs in `tests/e2e/` (needs the local stack and `.env`; seeds an E2E farm locally; not in `test`). `.mcp.json` adds the Playwright MCP server for live browser driving.
 - `bun run test`: both
 - `bun run db:start` / `db:stop` / `db:reset` (re-applies migrations) / `db:types` (regenerates `shared/types/database.types.ts`)
 - `bun run provision`: local CLI that creates a farm and owner account (uses the secret key from `.env`)

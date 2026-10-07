@@ -7,6 +7,7 @@
 - `nuxt.config.ts` pins `runtimeConfig.supabase.secretKey/serviceKey` to empty so builds can't bake a key in, but a runtime `NUXT_SUPABASE_*` variable would still override it. Keep them unset.
 - Before releasing, run `bun run build` then `bun run check:build` (CI does this too). Delete `.output` afterwards.
 - Migrations are applied by an explicit manual step (`supabase db push`), never by the app.
+- CI has no database job yet, so `bun run test:db` and the Playwright e2e suite (`bun run test:e2e`, needs the local Supabase stack) run only on a developer machine. Adding a Supabase service to CI would cover both.
 
 ## Hosted Supabase checklist (audit L2)
 - [ ] Authentication > Sign In / Providers: disable "Allow new users to sign up". Create owners with `bun run provision`.
