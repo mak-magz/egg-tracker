@@ -6022,6 +6022,16 @@ code,kbd,pre,samp{font-family:var(--font-mono)}
   @keyframes modalIn { from { opacity: 0; transform: scale(.97) translateY(6px); } to { opacity: 1; transform: scale(1) translateY(0); } }
   @keyframes sheetUp { from { transform: translateY(100%); } to { transform: translateY(0); } }
   @keyframes spin { to { transform: rotate(360deg); } }
+  /* Invoice print page: hide the app shell and screen-only controls; black on white, no shadow. */
+  @media print {
+    aside, header, .print-hide { display: none !important; }
+    html, body, main { height: auto !important; overflow: visible !important; background: #fff !important; }
+    main { padding: 0 !important; }
+    .invoice-sheet { box-shadow: none !important; border-radius: 0 !important; padding: 0 !important; color: #000 !important; }
+    @page { margin: 15mm; }
+    tr { break-inside: avoid; }
+    thead { display: table-header-group; }
+  }
 </style>
 </helmet>
 
@@ -6163,16 +6173,15 @@ code,kbd,pre,samp{font-family:var(--font-mono)}
               </div>
             </div>
 
-            <div sc-camel-on-click="{{ goPendingSales }}" style="cursor:pointer;background:var(--ui-bg);border-radius:var(--radius-2xl);box-shadow:var(--ring-inset);padding:20px;display:flex;flex-direction:column;gap:10px;transition:box-shadow var(--duration-fast) var(--ease-out)" style-hover="box-shadow:var(--ring-inset),var(--shadow-sm)">
+            <div sc-camel-on-click="{{ goInventory }}" style="cursor:pointer;background:var(--ui-bg);border-radius:var(--radius-2xl);box-shadow:var(--ring-inset);padding:20px;display:flex;flex-direction:column;gap:10px;transition:box-shadow var(--duration-fast) var(--ease-out)" style-hover="box-shadow:var(--ring-inset),var(--shadow-sm)">
               <div style="display:flex;align-items:center;justify-content:space-between">
-                <div style="display:flex;align-items:center;gap:8px;color:var(--ui-text-muted);font-size:var(--text-base);font-weight:500"><x-import component-from-global-scope="NuxtUIV4DesignSystem_b75bb6.Icon" name="Truck" size="16" hint-size="16px,16px"></x-import>Pending deliveries</div>
-                <x-import component-from-global-scope="NuxtUIV4DesignSystem_b75bb6.Badge" color="warning" variant="soft" size="sm" rounded="{{ true }}" hint-size="auto,22px">{{ pendingCount }}</x-import>
+                <div style="display:flex;align-items:center;gap:8px;color:var(--ui-text-muted);font-size:var(--text-base);font-weight:500"><x-import component-from-global-scope="NuxtUIV4DesignSystem_b75bb6.Icon" name="Truck" size="16" hint-size="16px,16px"></x-import>Owed on open orders</div>
               </div>
               <div style="display:flex;flex-direction:column;gap:6px">
-                <sc-for list="{{ pendingPreview }}" as="p" hint-placeholder-count="3">
-                  <div style="display:flex;justify-content:space-between;font-size:var(--text-base)"><span style="color:var(--ui-text)">{{ p.client }}</span><span style="color:var(--ui-text-muted)">{{ p.qty }}</span></div>
+                <div style="font-size:var(--text-3xl);font-weight:700;color:var(--ui-text-highlighted)">{{ owedTotalQty }}</div>
+                <sc-for list="{{ owedPreview }}" as="p" hint-placeholder-count="3">
+                  <div style="display:flex;justify-content:space-between;font-size:var(--text-sm)"><span style="color:var(--ui-text-muted)">{{ p.size }}</span><span style="color:var(--ui-text)">{{ p.qty }}</span></div>
                 </sc-for>
-                <sc-if value="{{ pendingEmpty }}" hint-placeholder-val="{{ false }}"><div style="font-size:var(--text-base);color:var(--ui-text-dimmed)">Nothing pending — nice.</div></sc-if>
               </div>
             </div>
 
@@ -6290,10 +6299,6 @@ code,kbd,pre,samp{font-family:var(--font-mono)}
             </sc-if>
           </div>
           <div style="display:flex;gap:8px;flex-wrap:wrap">
-            <sc-for list="{{ statusFilters }}" as="f" hint-placeholder-count="3">
-              <button sc-camel-on-click="{{ f.select }}" style="padding:6px 12px;border-radius:var(--radius-full);border:none;cursor:pointer;font-family:var(--font-sans);font-size:var(--text-base);font-weight:500;background:{{ f.bg }};color:{{ f.color }};box-shadow:{{ f.ring }}">{{ f.label }}</button>
-            </sc-for>
-            <span style="width:1px;background:var(--ui-border);margin:4px 4px"></span>
             <sc-for list="{{ typeFilters }}" as="f" hint-placeholder-count="3">
               <button sc-camel-on-click="{{ f.select }}" style="padding:6px 12px;border-radius:var(--radius-full);border:none;cursor:pointer;font-family:var(--font-sans);font-size:var(--text-base);font-weight:500;background:{{ f.bg }};color:{{ f.color }};box-shadow:{{ f.ring }}">{{ f.label }}</button>
             </sc-for>
@@ -6308,7 +6313,6 @@ code,kbd,pre,samp{font-family:var(--font-mono)}
                   <sc-raw-th style="text-align:left;padding:10px 16px;font-size:var(--text-sm);font-weight:500;color:var(--ui-text-muted);white-space:nowrap">Size · qty</sc-raw-th>
                   <sc-raw-th style="text-align:right;padding:10px 16px;font-size:var(--text-sm);font-weight:500;color:var(--ui-text-muted);white-space:nowrap">Price</sc-raw-th>
                   <sc-raw-th style="text-align:left;padding:10px 16px;font-size:var(--text-sm);font-weight:500;color:var(--ui-text-muted);white-space:nowrap">Type</sc-raw-th>
-                  <sc-raw-th style="text-align:left;padding:10px 12px;font-size:var(--text-sm);font-weight:500;color:var(--ui-text-muted);white-space:nowrap">Status</sc-raw-th>
                   <sc-raw-th style="width:48px;padding:10px 8px"></sc-raw-th>
                 </sc-raw-tr>
               </sc-raw-thead>
@@ -6322,23 +6326,18 @@ code,kbd,pre,samp{font-family:var(--font-mono)}
                     <sc-raw-td style="padding:10px 16px">
                       <x-import component-from-global-scope="NuxtUIV4DesignSystem_b75bb6.Badge" color="{{ s.typeColor }}" variant="subtle" size="sm" hint-size="70px,22px">{{ s.typeLabel }}</x-import>
                     </sc-raw-td>
-                    <sc-raw-td style="padding:10px 12px">
-                      <x-import component-from-global-scope="NuxtUIV4DesignSystem_b75bb6.Badge" color="{{ s.statusColor }}" variant="{{ s.statusVariant }}" size="sm" rounded="{{ true }}" hint-size="80px,22px">{{ s.statusLabel }}</x-import>
-                    </sc-raw-td>
                     <sc-raw-td style="padding:10px 8px;text-align:right;position:relative">
                       <sc-if value="{{ s.menuOpen }}" hint-placeholder-val="{{ false }}">
                         <div sc-camel-on-click="{{ s.closeMenu }}" style="position:fixed;inset:0;z-index:69"></div>
                         <div style="position:absolute;top:100%;right:16px;margin-top:4px;width:170px;background:var(--ui-bg);border-radius:var(--radius-lg);box-shadow:var(--shadow-lg);padding:6px;display:flex;flex-direction:column;gap:2px;z-index:70;text-align:left">
-                          <sc-if value="{{ s.showMarkDelivered }}" hint-placeholder-val="{{ false }}">
-                            <button sc-camel-on-click="{{ s.markDelivered }}" style="display:flex;align-items:center;gap:10px;width:100%;padding:8px 10px;background:transparent;border:none;border-radius:var(--radius-md);cursor:pointer;font-family:var(--font-sans);font-size:var(--text-sm);color:var(--ui-text);text-align:left" style-hover="background:var(--ui-bg-muted)">
-                              <x-import component-from-global-scope="NuxtUIV4DesignSystem_b75bb6.Icon" name="Truck" size="16" hint-size="16px,16px"></x-import>Mark delivered
-                            </button>
-                          </sc-if>
                           <button sc-camel-on-click="{{ s.editSale }}" style="display:flex;align-items:center;gap:10px;width:100%;padding:8px 10px;background:transparent;border:none;border-radius:var(--radius-md);cursor:pointer;font-family:var(--font-sans);font-size:var(--text-sm);color:var(--ui-text);text-align:left" style-hover="background:var(--ui-bg-muted)">
                             <x-import component-from-global-scope="NuxtUIV4DesignSystem_b75bb6.Icon" name="Pencil" size="16" hint-size="16px,16px"></x-import>Edit
                           </button>
-                          <button sc-camel-on-click="{{ s.deleteSale }}" style="display:flex;align-items:center;gap:10px;width:100%;padding:8px 10px;background:transparent;border:none;border-radius:var(--radius-md);cursor:pointer;font-family:var(--font-sans);font-size:var(--text-sm);color:var(--ui-error);text-align:left" style-hover="background:var(--ui-bg-muted)">
-                            <x-import component-from-global-scope="NuxtUIV4DesignSystem_b75bb6.Icon" name="Trash2" size="16" hint-size="16px,16px"></x-import>Delete
+                          <button sc-camel-on-click="{{ s.printInvoice }}" style="display:flex;align-items:center;gap:10px;width:100%;padding:8px 10px;background:transparent;border:none;border-radius:var(--radius-md);cursor:pointer;font-family:var(--font-sans);font-size:var(--text-sm);color:var(--ui-text);text-align:left" style-hover="background:var(--ui-bg-muted)">
+                            <x-import component-from-global-scope="NuxtUIV4DesignSystem_b75bb6.Icon" name="Printer" size="16" hint-size="16px,16px"></x-import>Print invoice
+                          </button>
+                          <button sc-camel-on-click="{{ s.voidSale }}" style="display:flex;align-items:center;gap:10px;width:100%;padding:8px 10px;background:transparent;border:none;border-radius:var(--radius-md);cursor:pointer;font-family:var(--font-sans);font-size:var(--text-sm);color:var(--ui-error);text-align:left" style-hover="background:var(--ui-bg-muted)">
+                            <x-import component-from-global-scope="NuxtUIV4DesignSystem_b75bb6.Icon" name="Ban" size="16" hint-size="16px,16px"></x-import>Void sale
                           </button>
                         </div>
                       </sc-if>
@@ -6357,59 +6356,132 @@ code,kbd,pre,samp{font-family:var(--font-mono)}
 
         <sc-if value="{{ screenIsInventory }}" hint-placeholder-val="{{ false }}">
         <div style="display:flex;flex-direction:column;gap:16px;max-width:1120px;margin:0 auto">
-          <div style="display:grid;grid-template-columns:{{ invSummaryCols }};gap:14px">
-            <div style="background:var(--ui-bg);border-radius:var(--radius-2xl);box-shadow:var(--ring-inset);padding:24px;text-align:center;display:flex;flex-direction:column;gap:14px">
-              <div>
-                <div style="font-size:var(--text-base);color:var(--ui-text-muted);font-weight:500">Total on hand</div>
-                <div style="font-size:var(--text-4xl);font-weight:700;color:var(--ui-text-highlighted);margin-top:4px">{{ totalOnHandQty }}</div>
-              </div>
-              <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;padding-top:14px;box-shadow:inset 0 1px 0 var(--ui-border)">
-                <div>
-                  <div style="font-size:var(--text-sm);color:var(--ui-text-muted);font-weight:500">Sellable</div>
-                  <div style="font-size:var(--text-lg);font-weight:700;color:var(--ui-success);margin-top:2px">{{ sellableQty }}</div>
-                </div>
-                <div>
-                  <div style="font-size:var(--text-sm);color:var(--ui-warning);font-weight:500">For delivery</div>
-                  <div style="font-size:var(--text-lg);font-weight:700;color:var(--ui-warning);margin-top:2px">{{ totalPendingQty }}</div>
-                </div>
-              </div>
+          <sc-if value="{{ inventoryEmpty }}" hint-placeholder-val="{{ false }}">
+            <div style="display:flex;flex-direction:column;align-items:center;gap:8px;text-align:center;padding:48px 16px">
+              <x-import component-from-global-scope="NuxtUIV4DesignSystem_b75bb6.Icon" name="Package" size="32" style="color:var(--ui-text-muted)" hint-size="32px,32px"></x-import>
+              <div style="font-size:var(--text-lg);font-weight:700;color:var(--ui-text-highlighted)">No inventory yet</div>
+              <div style="font-size:var(--text-base);color:var(--ui-text-muted)">Log production to see stock.</div>
+              <div style="margin-top:8px"><x-import component-from-global-scope="NuxtUIV4DesignSystem_b75bb6.Button" color="primary" size="md" sc-camel-on-click="{{ goProduction }}" hint-size="150px,40px">Go to Production</x-import></div>
             </div>
-            <sc-if value="{{ showPendingCard }}" hint-placeholder-val="{{ true }}">
-              <div style="background:var(--ui-bg);border-radius:var(--radius-2xl);box-shadow:var(--ring-inset);padding:24px;text-align:center">
-                <div style="font-size:var(--text-base);color:var(--ui-warning);font-weight:500">Pending delivery</div>
-                <div style="font-size:var(--text-4xl);font-weight:700;color:var(--ui-text-highlighted);margin-top:4px">{{ totalPendingQty }}</div>
+          </sc-if>
+          <sc-if value="{{ inventoryFilled }}" hint-placeholder-val="{{ true }}">
+          <div style="background:var(--ui-bg);border-radius:var(--radius-2xl);box-shadow:var(--ring-inset);padding:24px;text-align:center;display:flex;flex-direction:column;gap:14px">
+            <div>
+              <div style="font-size:var(--text-base);color:var(--ui-text-muted);font-weight:500">Total on hand</div>
+              <div style="font-size:var(--text-4xl);font-weight:700;color:var(--ui-text-highlighted);margin-top:4px">{{ totalOnHandQty }}</div>
+              <div style="font-size:var(--text-sm);color:var(--ui-text-muted);margin-top:2px">{{ totalOnHandEggs }} eggs</div>
+            </div>
+            <div style="display:flex;flex-direction:column;align-items:center;gap:6px;padding-top:14px;box-shadow:inset 0 1px 0 var(--ui-border)">
+              <div style="display:flex;align-items:center;gap:6px;font-size:var(--text-sm);color:var(--ui-text-muted);font-weight:500">
+                <x-import component-from-global-scope="NuxtUIV4DesignSystem_b75bb6.Icon" name="Truck" size="14" hint-size="14px,14px"></x-import>Owed on open orders
               </div>
-            </sc-if>
+              <div style="font-size:var(--text-lg);font-weight:700;color:var(--ui-text-highlighted)">{{ totalOwedQty }}</div>
+              <sc-if value="{{ hasTotalShort }}" hint-placeholder-val="{{ false }}">
+                <div style="display:flex;align-items:center;gap:6px;font-size:var(--text-sm);font-weight:600;color:color-mix(in oklab, var(--ui-warning) 65%, black)">
+                  <x-import component-from-global-scope="NuxtUIV4DesignSystem_b75bb6.Icon" name="TriangleAlert" size="14" hint-size="14px,14px"></x-import>Short by {{ totalShortQty }}
+                </div>
+              </sc-if>
+            </div>
           </div>
           <div style="display:grid;grid-template-columns:{{ invCols }};gap:14px">
             <sc-for list="{{ inventory }}" as="inv" hint-placeholder-count="4">
               <div style="background:var(--ui-bg);border-radius:var(--radius-lg);box-shadow:var(--ring-inset);padding:18px;display:flex;flex-direction:column;gap:8px">
-                <div style="display:flex;align-items:center;gap:8px;color:var(--ui-text-muted);height:26px">
+                <div style="display:flex;align-items:center;gap:8px;color:var(--ui-text-muted);min-height:26px;flex-wrap:wrap">
                   <x-import component-from-global-scope="NuxtUIV4DesignSystem_b75bb6.Icon" name="Circle" size="{{ inv.iconSize }}" hint-size="18px,18px"></x-import>
                   <span style="font-size:var(--text-base);font-weight:500">{{ inv.size }}</span>
-                </div>
-                <div style="font-size:var(--text-2xl);font-weight:700;color:var(--ui-text-highlighted)">{{ inv.qty }}</div>
-                <div style="font-size:var(--text-sm);color:var(--ui-text-dimmed)">{{ inv.eggs }} eggs on hand</div>
-                <div style="margin-top:4px;padding-top:8px;box-shadow:inset 0 1px 0 var(--ui-border);display:flex;flex-direction:column;gap:4px">
-                  <div style="display:flex;align-items:center;justify-content:space-between">
-                    <span style="display:flex;align-items:center;gap:5px;font-size:var(--text-sm);color:var(--ui-success);font-weight:500">
-                      <x-import component-from-global-scope="NuxtUIV4DesignSystem_b75bb6.Icon" name="Leaf" size="12" hint-size="12px,12px"></x-import>Sellable
-                    </span>
-                    <span style="font-size:var(--text-sm);color:var(--ui-success);font-weight:600">{{ inv.sellableQty }}</span>
-                  </div>
-                  <sc-if value="{{ inv.hasPending }}" hint-placeholder-val="{{ false }}">
-                    <div style="display:flex;align-items:center;justify-content:space-between">
-                      <span style="display:flex;align-items:center;gap:5px;font-size:var(--text-sm);color:var(--ui-warning);font-weight:500">
-                        <x-import component-from-global-scope="NuxtUIV4DesignSystem_b75bb6.Icon" name="Truck" size="12" hint-size="12px,12px"></x-import>For delivery
-                      </span>
-                      <span style="font-size:var(--text-sm);color:var(--ui-warning);font-weight:600">{{ inv.pendingQty }}</span>
-                    </div>
+                  <sc-if value="{{ inv.inactive }}" hint-placeholder-val="{{ false }}">
+                    <x-import component-from-global-scope="NuxtUIV4DesignSystem_b75bb6.Badge" color="neutral" variant="outline" size="sm" hint-size="auto,22px">Inactive size</x-import>
                   </sc-if>
                 </div>
+                <div style="font-size:var(--text-2xl);font-weight:700;color:var(--ui-text-highlighted)">{{ inv.qty }}</div>
+                <div style="font-size:var(--text-sm);color:var(--ui-text-muted)">{{ inv.eggs }} eggs on hand</div>
+                <sc-if value="{{ inv.negative }}" hint-placeholder-val="{{ false }}">
+                  <div style="display:flex;align-items:flex-start;gap:6px;font-size:var(--text-sm);font-weight:600;color:color-mix(in oklab, var(--ui-warning) 65%, black)">
+                    <x-import component-from-global-scope="NuxtUIV4DesignSystem_b75bb6.Icon" name="TriangleAlert" size="14" style="flex-shrink:0;margin-top:2px" hint-size="14px,14px"></x-import>Sales are ahead of logged production
+                  </div>
+                </sc-if>
+                <sc-if value="{{ inv.hasOwed }}" hint-placeholder-val="{{ false }}">
+                  <div style="margin-top:4px;padding-top:8px;box-shadow:inset 0 1px 0 var(--ui-border);display:flex;flex-direction:column;gap:4px">
+                    <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
+                      <span style="display:flex;align-items:center;gap:5px;font-size:var(--text-sm);color:var(--ui-text-muted);font-weight:500">
+                        <x-import component-from-global-scope="NuxtUIV4DesignSystem_b75bb6.Icon" name="Truck" size="12" hint-size="12px,12px"></x-import>Owed on orders
+                      </span>
+                      <span style="font-size:var(--text-sm);color:var(--ui-text);font-weight:600">{{ inv.owedQty }}</span>
+                    </div>
+                    <sc-if value="{{ inv.hasShort }}" hint-placeholder-val="{{ false }}">
+                      <div style="display:flex;align-items:center;gap:6px;font-size:var(--text-sm);font-weight:600;color:color-mix(in oklab, var(--ui-warning) 65%, black)">
+                        <x-import component-from-global-scope="NuxtUIV4DesignSystem_b75bb6.Icon" name="TriangleAlert" size="14" hint-size="14px,14px"></x-import>Short by {{ inv.shortQty }}
+                      </div>
+                    </sc-if>
+                  </div>
+                </sc-if>
               </div>
             </sc-for>
           </div>
-          <div style="font-size:var(--text-sm);color:var(--ui-text-dimmed);text-align:center">On-hand = sellable eggs produced minus eggs delivered. Pending deliveries are reserved but not yet subtracted from on-hand.</div>
+          <div style="font-size:var(--text-sm);color:var(--ui-text-muted);text-align:center">On hand is good eggs produced minus eggs sold. Owed eggs are shown for information and are not taken off.</div>
+          </sc-if>
+        </div>
+        </sc-if>
+
+        <sc-if value="{{ screenIsInvoice }}" hint-placeholder-val="{{ false }}">
+        <div style="display:flex;flex-direction:column;gap:16px;max-width:680px;margin:0 auto">
+          <div class="print-hide" style="display:flex;align-items:center;justify-content:space-between;gap:8px">
+            <x-import component-from-global-scope="NuxtUIV4DesignSystem_b75bb6.Button" color="neutral" variant="ghost" size="md" icon="ArrowLeft" sc-camel-on-click="{{ backToSales }}" hint-size="90px,40px">Back</x-import>
+            <sc-if value="{{ !isMobile }}" hint-placeholder-val="{{ true }}">
+              <x-import component-from-global-scope="NuxtUIV4DesignSystem_b75bb6.Button" color="primary" size="md" icon="Printer" sc-camel-on-click="{{ printInvoice }}" hint-size="100px,40px">Print</x-import>
+            </sc-if>
+          </div>
+          <sc-if value="{{ invoiceVoided }}" hint-placeholder-val="{{ false }}">
+            <div class="print-hide" style="display:flex;align-items:center;gap:8px;background:var(--ui-bg-elevated);box-shadow:inset 0 0 0 1px var(--ui-border);border-radius:var(--radius-md);padding:10px 12px;font-size:var(--text-base);color:var(--ui-text)">
+              <x-import component-from-global-scope="NuxtUIV4DesignSystem_b75bb6.Icon" name="Info" size="16" style="flex-shrink:0" hint-size="16px,16px"></x-import>This sale was voided. It is not a valid invoice.
+            </div>
+          </sc-if>
+          <section class="invoice-sheet" style="position:relative;background:var(--ui-bg);border-radius:var(--radius-xl);box-shadow:var(--ring-inset),var(--shadow-sm);padding:28px;display:flex;flex-direction:column;gap:20px;overflow:hidden">
+            <div>
+              <div style="font-size:var(--text-lg);font-weight:700;color:var(--ui-text-highlighted)">{{ invoice.farm }}</div>
+              <h1 style="margin:4px 0 0;font-size:var(--text-2xl);font-weight:700;color:var(--ui-text-highlighted)">Invoice #{{ invoice.num }}</h1>
+            </div>
+            <sc-if value="{{ invoiceVoided }}" hint-placeholder-val="{{ false }}">
+              <div style="position:absolute;top:42%;left:50%;transform:translate(-50%,-50%) rotate(-15deg);border:3px solid var(--ui-text-muted);border-radius:var(--radius-md);padding:4px 20px;font-size:48px;font-weight:700;letter-spacing:.08em;color:var(--ui-text-muted);opacity:.55;pointer-events:none">VOID</div>
+            </sc-if>
+            <dl style="margin:0;display:grid;grid-template-columns:auto 1fr;gap:6px 20px;font-size:var(--text-base)">
+              <dt style="color:var(--ui-text-muted)">Date</dt><dd style="margin:0;color:var(--ui-text);font-weight:500">{{ invoice.dateLabel }}</dd>
+              <dt style="color:var(--ui-text-muted)">Type</dt>
+              <dd style="margin:0;color:var(--ui-text);font-weight:500">{{ invoice.typeLabel }}<sc-if value="{{ invoiceWalkIn }}" hint-placeholder-val="{{ false }}"> · Walk-in sale</sc-if></dd>
+              <sc-if value="{{ invoiceHasClient }}" hint-placeholder-val="{{ true }}">
+                <dt style="color:var(--ui-text-muted)">Bill to</dt><dd style="margin:0;color:var(--ui-text);font-weight:500">{{ invoice.client }}</dd>
+              </sc-if>
+            </dl>
+            <div style="overflow-x:auto">
+              <sc-raw-table style="width:100%;border-collapse:collapse;font-size:var(--text-base)">
+                <sc-raw-thead>
+                  <sc-raw-tr style="box-shadow:inset 0 -1px 0 var(--ui-border-accented)">
+                    <sc-raw-th style="text-align:left;padding:8px 8px 8px 0;font-size:var(--text-sm);font-weight:600;color:var(--ui-text-muted)">Size</sc-raw-th>
+                    <sc-raw-th style="text-align:left;padding:8px;font-size:var(--text-sm);font-weight:600;color:var(--ui-text-muted)">Quantity</sc-raw-th>
+                    <sc-raw-th style="text-align:right;padding:8px;font-size:var(--text-sm);font-weight:600;color:var(--ui-text-muted);white-space:nowrap">Price per tray</sc-raw-th>
+                    <sc-raw-th style="text-align:right;padding:8px 0 8px 8px;font-size:var(--text-sm);font-weight:600;color:var(--ui-text-muted)">Total</sc-raw-th>
+                  </sc-raw-tr>
+                </sc-raw-thead>
+                <sc-raw-tbody>
+                  <sc-raw-tr style="box-shadow:inset 0 -1px 0 var(--ui-border)">
+                    <sc-raw-td style="padding:12px 8px 12px 0;color:var(--ui-text);font-weight:600">{{ invoice.size }}</sc-raw-td>
+                    <sc-raw-td style="padding:12px 8px;color:var(--ui-text)">{{ invoice.qty }}</sc-raw-td>
+                    <sc-raw-td style="padding:12px 8px;text-align:right;color:var(--ui-text);white-space:nowrap">{{ invoice.perTray }}</sc-raw-td>
+                    <sc-raw-td style="padding:12px 0 12px 8px;text-align:right;color:var(--ui-text);font-weight:600;white-space:nowrap">{{ invoice.total }}</sc-raw-td>
+                  </sc-raw-tr>
+                  <sc-raw-tr>
+                    <sc-raw-td colspan="3" style="padding:14px 8px 0 0;text-align:right;font-size:var(--text-lg);font-weight:700;color:var(--ui-text-highlighted)">Total</sc-raw-td>
+                    <sc-raw-td style="padding:14px 0 0 8px;text-align:right;font-size:var(--text-xl);font-weight:700;color:var(--ui-text-highlighted);white-space:nowrap">{{ invoice.total }}</sc-raw-td>
+                  </sc-raw-tr>
+                </sc-raw-tbody>
+              </sc-raw-table>
+            </div>
+          </section>
+          <sc-if value="{{ isMobile }}" hint-placeholder-val="{{ false }}">
+            <div class="print-hide" style="position:sticky;bottom:0;padding:8px 0">
+              <x-import component-from-global-scope="NuxtUIV4DesignSystem_b75bb6.Button" color="primary" size="xl" block="{{ true }}" icon="Printer" sc-camel-on-click="{{ printInvoice }}" hint-size="100%,48px">Print</x-import>
+            </div>
+          </sc-if>
         </div>
         </sc-if>
 
@@ -6569,7 +6641,7 @@ code,kbd,pre,samp{font-family:var(--font-mono)}
           </div>
           <sc-if value="{{ inventoryHint }}" hint-placeholder-val="{{ false }}"><div style="font-size:var(--text-sm);color:var(--ui-text-dimmed)">{{ inventoryHint }} on hand for this size.</div></sc-if>
           <div style="display:flex;flex-direction:column;gap:6px">
-            <label style="font-size:var(--text-base);font-weight:500;color:var(--ui-text)">Date ordered</label>
+            <label style="font-size:var(--text-base);font-weight:500;color:var(--ui-text)">Date</label>
             <x-import component-from-global-scope="NuxtUIV4DesignSystem_b75bb6.Input" type="date" value="{{ todayIso }}" hint-size="180px,36px"></x-import>
           </div>
         </div>
@@ -6614,7 +6686,7 @@ code,kbd,pre,samp{font-family:var(--font-mono)}
 </sc-if>
 
 </x-dc>
-<script type="text/x-dc" data-dc-script="" data-props="{&quot;showPendingCard&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:false,&quot;tsType&quot;:&quot;boolean&quot;,&quot;section&quot;:&quot;Inventory&quot;}}">
+<script type="text/x-dc" data-dc-script="" data-props="{&quot;showEmptyInventory&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:false,&quot;tsType&quot;:&quot;boolean&quot;,&quot;section&quot;:&quot;Inventory&quot;},&quot;showNegativeStock&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:false,&quot;tsType&quot;:&quot;boolean&quot;,&quot;section&quot;:&quot;Inventory&quot;},&quot;showVoidedInvoice&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:false,&quot;tsType&quot;:&quot;boolean&quot;,&quot;section&quot;:&quot;Invoice&quot;}}">
 const EGGS_PER_TRAY = 30;
 const SIZES = ['Small', 'Medium', 'Large', 'Jumbo'];
 const TODAY_ISO = '2026-08-04';
@@ -6646,10 +6718,19 @@ function toTrays(eggs) {
   return { trays, loose };
 }
 function fmtQty(eggs) {
-  const { trays, loose } = toTrays(eggs);
+  const neg = eggs < 0;
+  const { trays, loose } = toTrays(Math.abs(eggs));
   let s = trays + (trays === 1 ? ' tray' : ' trays');
   if (loose) s += ' + ' + loose;
-  return s;
+  return (neg ? '-' : '') + s;
+}
+// Invoice quantity: "3 trays + 12 eggs (102 eggs)", "3 trays (90 eggs)", "1 tray (30 eggs)", "12 eggs"
+function fmtInvoiceQty(eggs) {
+  const { trays, loose } = toTrays(eggs);
+  if (trays === 0) return loose + (loose === 1 ? ' egg' : ' eggs');
+  let s = trays + (trays === 1 ? ' tray' : ' trays');
+  if (loose) s += ' + ' + loose + (loose === 1 ? ' egg' : ' eggs');
+  return s + ' (' + eggs + ' eggs)';
 }
 function fmtDate(iso) {
   const d = new Date(iso + 'T00:00:00');
@@ -6666,14 +6747,13 @@ class Component extends DCLogic {
     modal: null,
     toast: null,
     expandedDays: { '2026-08-04': true },
-    salesStatus: 'all',
     salesType: 'all',
     salesDateFrom: '', salesDateTo: '',
     prodFilter: 'week', prodDateFrom: '', prodDateTo: '',
     darkMode: false, profileMenuOpen: false, mobileNavOpen: false,
     isDelivery: true,
     clientSearch: '', clientStatus: 'all', openClientMenu: null, openSaleMenu: null,
-    sales: null
+    sales: null, invoiceSaleId: null
   };
 
   constructor(props) {
@@ -6695,19 +6775,24 @@ class Component extends DCLogic {
       { date: '2026-07-29', label: 'Jul 29', sizes: { Small: 33, Medium: 145, Large: 240, Jumbo: 30 }, rejects: 5 }
     ];
     this.salesSeed = [
-      { id: 1, date: '2026-08-04', client: 'Maple Street Market', type: 'delivery', size: 'Large', eggs: 240, price: 48.0, status: 'pending' },
-      { id: 2, date: '2026-08-04', client: 'Walk-in', type: 'onsite', size: 'Medium', eggs: 30, price: 7.0, status: 'complete' },
-      { id: 3, date: '2026-08-03', client: 'The Green Table Café', type: 'delivery', size: 'Jumbo', eggs: 90, price: 21.75, status: 'pending' },
-      { id: 4, date: '2026-08-03', client: 'Linda Ferris', type: 'onsite', size: 'Large', eggs: 60, price: 12.0, status: 'complete' },
-      { id: 5, date: '2026-08-02', client: 'Oakhill Bakery', type: 'delivery', size: 'Large', eggs: 300, price: 60.0, status: 'complete' },
-      { id: 6, date: '2026-08-02', client: 'Sam & Dana Coyle', type: 'onsite', size: 'Medium', eggs: 30, price: 7.0, status: 'complete' },
-      { id: 7, date: '2026-08-01', client: 'Maple Street Market', type: 'delivery', size: 'Medium', eggs: 180, price: 36.0, status: 'complete' },
-      { id: 8, date: '2026-07-31', client: 'Walk-in', type: 'onsite', size: 'Small', eggs: 12, price: 2.5, status: 'complete' },
-      { id: 9, date: '2026-07-31', client: 'The Green Table Café', type: 'delivery', size: 'Large', eggs: 210, price: 42.0, status: 'pending' },
-      { id: 10, date: '2026-07-30', client: 'Linda Ferris', type: 'onsite', size: 'Jumbo', eggs: 30, price: 7.25, status: 'complete' },
-      { id: 11, date: '2026-07-29', client: 'Oakhill Bakery', type: 'delivery', size: 'Medium', eggs: 150, price: 30.0, status: 'complete' },
-      { id: 12, date: '2026-07-29', client: 'Sam & Dana Coyle', type: 'onsite', size: 'Small', eggs: 18, price: 3.5, status: 'complete' }
+      // Sales have no status: every sale has already left the farm. `num` is the sale number (also the invoice number).
+      { id: 1, num: 1052, date: '2026-08-04', client: 'Maple Street Market', type: 'delivery', size: 'Large', eggs: 240, price: 48.0 },
+      { id: 2, num: 1051, date: '2026-08-04', client: 'Walk-in', type: 'onsite', size: 'Medium', eggs: 30, price: 7.0 },
+      { id: 3, num: 1050, date: '2026-08-03', client: 'The Green Table Café', type: 'delivery', size: 'Jumbo', eggs: 90, price: 21.75 },
+      { id: 4, num: 1049, date: '2026-08-03', client: 'Linda Ferris', type: 'onsite', size: 'Large', eggs: 60, price: 12.0 },
+      { id: 5, num: 1048, date: '2026-08-02', client: 'Oakhill Bakery', type: 'delivery', size: 'Large', eggs: 300, price: 60.0 },
+      { id: 6, num: 1047, date: '2026-08-02', client: 'Sam & Dana Coyle', type: 'onsite', size: 'Medium', eggs: 30, price: 7.0 },
+      { id: 7, num: 1046, date: '2026-08-01', client: 'Maple Street Market', type: 'delivery', size: 'Medium', eggs: 180, price: 36.0 },
+      { id: 8, num: 1045, date: '2026-07-31', client: 'Walk-in', type: 'onsite', size: 'Small', eggs: 12, price: 2.5 },
+      { id: 9, num: 1044, date: '2026-07-31', client: 'The Green Table Café', type: 'delivery', size: 'Large', eggs: 210, price: 42.0 },
+      { id: 10, num: 1043, date: '2026-07-30', client: 'Linda Ferris', type: 'onsite', size: 'Jumbo', eggs: 30, price: 7.25 },
+      { id: 11, num: 1042, date: '2026-07-29', client: 'Oakhill Bakery', type: 'delivery', size: 'Medium', eggs: 150, price: 30.0 },
+      { id: 12, num: 1041, date: '2026-07-29', client: 'Sam & Dana Coyle', type: 'onsite', size: 'Small', eggs: 18, price: 3.5 }
     ];
+    // Open orders: eggs still owed per size. Information only; they never change on-hand.
+    this.owedSeed = { Medium: 90, Large: 300, Jumbo: 150 };
+    // An archived size that still has stock: shown with the "Inactive size" badge.
+    this.inactiveSizes = [{ size: 'Extra small', eggs: 15, owed: 0 }];
     this.productionByDate = {};
     this.production.forEach(d => { this.productionByDate[d.date] = d; });
     this.navMeta = [
@@ -6760,43 +6845,53 @@ class Component extends DCLogic {
     const navItems = this.navMeta.map(n => ({
       ...n,
       select: () => this.setState({ screen: n.key, mobileNavOpen: false }),
-      bg: s.screen === n.key ? 'color-mix(in oklab, var(--ui-primary) 12%, transparent)' : 'transparent',
-      color: s.screen === n.key ? 'var(--ui-primary)' : 'var(--ui-text-muted)'
+      bg: (s.screen === n.key || (n.key === 'sales' && s.screen === 'invoice')) ? 'color-mix(in oklab, var(--ui-primary) 12%, transparent)' : 'transparent',
+      color: (s.screen === n.key || (n.key === 'sales' && s.screen === 'invoice')) ? 'var(--ui-primary)' : 'var(--ui-text-muted)'
     }));
 
-    const titles = { dashboard: 'Dashboard', production: 'Production', sales: 'Sales', inventory: 'Inventory', clients: 'Clients' };
+    const titles = { dashboard: 'Dashboard', production: 'Production', sales: 'Sales', inventory: 'Inventory', clients: 'Clients', invoice: 'Invoice' };
     const subtitles = {
       dashboard: 'Today, Aug 4',
       production: 'Logged by day, most recent first',
       sales: 'Deliveries and on-site sales',
-      inventory: 'Live view — produced minus sold',
-      clients: this.clients.length + ' customers'
+      inventory: 'Live view, produced minus sold',
+      clients: this.clients.length + ' customers',
+      invoice: ''
     };
     const addLabels = { production: 'Add production', sales: 'Add sale', clients: 'Add client' };
 
-    // Inventory: produced - sold(complete)
+    // Inventory: good production minus every sale. Owed on open orders is shown for information and never subtracted.
+    // On-hand can be negative (sales ahead of logged production); the true value is shown, never clamped to 0.
     const producedBySize = {}; SIZES.forEach(sz => producedBySize[sz] = 0);
     this.production.forEach(day => SIZES.forEach(sz => producedBySize[sz] += (day.sizes[sz] || 0)));
+    if (this.props.showNegativeStock) producedBySize.Small -= 314;
     const soldBySize = {}; SIZES.forEach(sz => soldBySize[sz] = 0);
-    sales.forEach(sale => { if (sale.status === 'complete') soldBySize[sale.size] += sale.eggs; });
-    const pendingBySize = {}; SIZES.forEach(sz => pendingBySize[sz] = 0);
-    sales.forEach(sale => { if (sale.status === 'pending') pendingBySize[sale.size] += sale.eggs; });
-    const inventory = SIZES.map(sz => {
-      const eggs = Math.max(0, producedBySize[sz] - soldBySize[sz]);
-      const pendingEggs = pendingBySize[sz];
-      const sellableEggs = Math.max(0, eggs - pendingEggs);
-      return { size: sz, eggs, qty: fmtQty(eggs), pendingEggs, pendingQty: fmtQty(pendingEggs), hasPending: pendingEggs > 0, sellableEggs, sellableQty: fmtQty(sellableEggs), iconSize: SIZE_ICON_PX[sz] };
-    });
+    sales.forEach(sale => { soldBySize[sale.size] += sale.eggs; });
+    const invCard = (sz, eggs, owedEggs, inactive) => {
+      const shortEggs = owedEggs > eggs ? owedEggs - eggs : 0;
+      return {
+        size: sz, eggs, qty: fmtQty(eggs), negative: eggs < 0,
+        owedEggs, owedQty: fmtQty(owedEggs), hasOwed: owedEggs > 0,
+        shortQty: fmtQty(shortEggs), hasShort: shortEggs > 0,
+        inactive, iconSize: SIZE_ICON_PX[sz] || 14
+      };
+    };
+    const activeInv = this.props.showEmptyInventory ? [] : SIZES.map(sz => invCard(sz, producedBySize[sz] - soldBySize[sz], this.owedSeed[sz] || 0, false));
+    // Inactive sizes only show when they still hold eggs or are owed; at 0 and 0 they are hidden.
+    const inactiveInv = this.props.showEmptyInventory ? [] : this.inactiveSizes.filter(x => x.eggs !== 0 || x.owed !== 0).map(x => invCard(x.size, x.eggs, x.owed, true));
+    const inventory = activeInv.concat(inactiveInv);
+    const inventoryEmpty = inventory.length === 0;
     const totalOnHandEggs = inventory.reduce((a, b) => a + b.eggs, 0);
-    const totalPendingEggs = inventory.reduce((a, b) => a + b.pendingEggs, 0);
-    const sellableEggs = Math.max(0, totalOnHandEggs - totalPendingEggs);
+    const totalOwedEggs = inventory.reduce((a, b) => a + b.owedEggs, 0);
+    const totalShortEggs = totalOwedEggs > totalOnHandEggs ? totalOwedEggs - totalOnHandEggs : 0;
 
     const today = this.production[0];
     const todayTotalEggs = SIZES.reduce((a, sz) => a + (today.sizes[sz] || 0), 0);
     const todayBySize = SIZES.filter(sz => today.sizes[sz]).map(sz => ({ label: sz + ' ' + fmtQty(today.sizes[sz]) }));
 
-    const pending = sales.filter(x => x.type === 'delivery' && x.status === 'pending').sort((a, b) => b.date.localeCompare(a.date));
-    const pendingPreview = pending.slice(0, 3).map(p => ({ client: p.client, qty: fmtQty(p.eggs) }));
+    // Dashboard "Owed on open orders": per-size amounts still owed (information only).
+    const owedPreview = inventory.filter(x => x.hasOwed).slice(0, 3).map(x => ({ size: x.size, qty: x.owedQty }));
+    const owedTotalQty = fmtQty(totalOwedEggs);
 
     const recentSales = sales.slice().sort((a, b) => b.date.localeCompare(a.date)).slice(0, 4)
       .map(x => ({ client: x.client, qty: fmtQty(x.eggs), price: '$' + x.price.toFixed(2) }));
@@ -6854,7 +6949,6 @@ class Component extends DCLogic {
     const chartLabels = chartDays.map((d, i) => ({ xPct: xPct(i), label: fmtDate(d.date).split(' ')[1] }));
 
     let filteredSales = sales.slice().sort((a, b) => b.date.localeCompare(a.date));
-    if (s.salesStatus !== 'all') filteredSales = filteredSales.filter(x => x.status === s.salesStatus);
     if (s.salesType !== 'all') filteredSales = filteredSales.filter(x => x.type === s.salesType);
     if (s.salesDateFrom) filteredSales = filteredSales.filter(x => x.date >= s.salesDateFrom);
     if (s.salesDateTo) filteredSales = filteredSales.filter(x => x.date <= s.salesDateTo);
@@ -6863,11 +6957,6 @@ class Component extends DCLogic {
       color: active ? 'var(--ui-text-inverted)' : 'var(--ui-text-muted)',
       ring: active ? 'none' : 'inset 0 0 0 1px var(--ui-border)'
     });
-    const statusFilters = ['all', 'pending', 'complete'].map(v => ({
-      label: v === 'all' ? 'All' : v[0].toUpperCase() + v.slice(1),
-      select: () => this.setState({ salesStatus: v }),
-      ...chipStyle(s.salesStatus === v)
-    }));
     const typeFilters = ['all', 'delivery', 'onsite'].map(v => ({
       label: v === 'all' ? 'All types' : v === 'delivery' ? 'Delivery' : 'On-site',
       select: () => this.setState({ salesType: v }),
@@ -6879,23 +6968,16 @@ class Component extends DCLogic {
       price: '$' + x.price.toFixed(2),
       typeLabel: x.type === 'delivery' ? 'Delivery' : 'On-site',
       typeColor: x.type === 'delivery' ? 'info' : 'neutral',
-      statusLabel: x.status === 'pending' ? 'Pending' : 'Complete',
-      statusColor: x.status === 'pending' ? 'warning' : 'success',
-      statusVariant: x.status === 'pending' ? 'soft' : 'subtle',
-      showMarkDelivered: x.status === 'pending',
-      markDelivered: () => {
-        const next = (s.sales || this.salesSeed).map(row => row.id === x.id ? { ...row, status: 'complete' } : row);
-        this.setState({ sales: next, openSaleMenu: null });
-        this.showToast('Marked delivered — inventory updated');
-      },
+      printInvoice: () => this.setState({ screen: 'invoice', invoiceSaleId: x.id, openSaleMenu: null }),
       menuOpen: s.openSaleMenu === x.id,
       toggleMenu: () => this.setState({ openSaleMenu: s.openSaleMenu === x.id ? null : x.id }),
       closeMenu: () => this.setState({ openSaleMenu: null }),
       editSale: () => { this.setState({ openSaleMenu: null }); this.showToast('Editing sale'); },
-      deleteSale: () => {
+      // A sale is never deleted. Void keeps it (hidden by default) and puts the eggs back on hand.
+      voidSale: () => {
         const next = (s.sales || this.salesSeed).filter(row => row.id !== x.id);
         this.setState({ sales: next, openSaleMenu: null });
-        this.showToast('Sale deleted');
+        this.showToast('Sale #' + x.num + ' voided');
       }
     }));
 
@@ -6922,9 +7004,20 @@ class Component extends DCLogic {
 
     const isDesktop = s.viewport === 'desktop';
     const dashCols = isMobile ? '1fr' : isTablet ? 'repeat(2, 1fr)' : 'repeat(4, 1fr)';
-    const invCols = isMobile ? 'repeat(2, 1fr)' : 'repeat(4, 1fr)';
-    const showPendingCard = this.props.showPendingCard ?? true;
-    const invSummaryCols = (isMobile || !showPendingCard) ? '1fr' : 'repeat(2, 1fr)';
+    // One size card per row on phones (two per row would cut off "12 trays + 15").
+    const invCols = isMobile ? '1fr' : isTablet ? 'repeat(2, 1fr)' : 'repeat(4, 1fr)';
+
+    // ---- invoice (print page for one sale) ----
+    const invSale = sales.find(x => x.id === s.invoiceSaleId) || this.salesSeed[0];
+    const invTrays = invSale.eggs / EGGS_PER_TRAY;
+    const invoice = {
+      farm: 'Hendricks Farm', num: invSale.num, dateLabel: fmtDate(invSale.date) + ', 2026',
+      typeLabel: invSale.type === 'delivery' ? 'Delivery' : 'On-site',
+      walkIn: invSale.client === 'Walk-in', client: invSale.client,
+      size: invSale.size, qty: fmtInvoiceQty(invSale.eggs),
+      perTray: '$' + (invSale.price / invTrays).toFixed(2), total: '$' + invSale.price.toFixed(2),
+      voided: !!this.props.showVoidedInvoice
+    };
 
     return {
       authed: s.authed, email: s.email, password: s.password, authError: s.authError, authLoading: s.authLoading,
@@ -6961,17 +7054,20 @@ class Component extends DCLogic {
       screenIsSales: s.screen === 'sales',
       screenIsInventory: s.screen === 'inventory',
       screenIsClients: s.screen === 'clients',
+      screenIsInvoice: s.screen === 'invoice',
 
-      dashCols, invCols, invSummaryCols, showPendingCard, trendSpan: isMobile ? 'span 1' : isTablet ? 'span 2' : 'span 2',
+      dashCols, invCols, trendSpan: isMobile ? 'span 1' : isTablet ? 'span 2' : 'span 2',
       todayQty: fmtQty(todayTotalEggs), todayBySize, todayRejects: today.rejects,
-      inventory, totalOnHandQty: fmtQty(totalOnHandEggs),
-      totalPendingQty: fmtQty(totalPendingEggs), hasPendingTotal: totalPendingEggs > 0,
-      sellableQty: fmtQty(sellableEggs),
-      pendingCount: pending.length, pendingPreview, pendingEmpty: pending.length === 0,
+      inventory, inventoryEmpty, inventoryFilled: !inventoryEmpty,
+      totalOnHandQty: fmtQty(totalOnHandEggs), totalOnHandEggs,
+      totalOwedQty: fmtQty(totalOwedEggs), totalShortQty: fmtQty(totalShortEggs), hasTotalShort: totalShortEggs > 0,
+      owedCount: owedPreview.length, owedPreview, owedEmpty: owedPreview.length === 0, owedTotalQty,
       recentSales, weekBars,
+      invoice, invoiceVoided: invoice.voided, invoiceWalkIn: invoice.walkIn, invoiceHasClient: !invoice.walkIn,
+      backToSales: () => this.setState({ screen: 'sales' }),
+      printInvoice: () => window.print(),
       goProduction: () => this.setState({ screen: 'production' }),
       goInventory: () => this.setState({ screen: 'inventory' }),
-      goPendingSales: () => this.setState({ screen: 'sales', salesStatus: 'pending' }),
       goSales: () => this.setState({ screen: 'sales' }),
 
       prodFilterOptions, filteredDays,
@@ -6983,7 +7079,7 @@ class Component extends DCLogic {
       filteredDaysEmpty: filteredDays.length === 0,
       chartSeries, chartLegend, chartLabels,
 
-      statusFilters, typeFilters, filteredSales: filteredSalesRows, salesEmpty: filteredSalesRows.length === 0,
+      typeFilters, filteredSales: filteredSalesRows, salesEmpty: filteredSalesRows.length === 0,
       salesDateFrom: s.salesDateFrom, salesDateTo: s.salesDateTo,
       onSalesDateFromChange: e => this.setState({ salesDateFrom: e.target.value }),
       onSalesDateToChange: e => this.setState({ salesDateTo: e.target.value }),
@@ -7015,7 +7111,7 @@ class Component extends DCLogic {
       fulfillOnsiteColor: !s.isDelivery ? 'var(--ui-text-inverted)' : 'var(--ui-text-muted)',
       clientOptions, sizeOptions,
       inventoryHint: inventory.length ? inventory[2].qty : '',
-      saveSale: () => { this.setState({ modal: null }); this.showToast(s.isDelivery ? 'Delivery logged as pending' : 'Sale recorded'); },
+      saveSale: () => { this.setState({ modal: null }); this.showToast('Sale #1053 recorded'); },
 
       saveClient: () => { this.setState({ modal: null }); this.showToast('Client added'); },
 
