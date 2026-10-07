@@ -60,7 +60,12 @@ export default defineNuxtConfig({
   //   supabase.secretKey (private, server-only)  <- NUXT_SUPABASE_SECRET_KEY
   // v1 does not use the secret key at app runtime (D8); only `bun run provision` reads it from .env.
   // Never set it in Vercel and never prefix it with NUXT_PUBLIC_. See .env.example.
-  runtimeConfig: {},
+  // Audit M1: the module otherwise copies SUPABASE_SECRET_KEY / SUPABASE_SERVICE_ROLE_KEY / etc. from
+  // the build environment into the bundle. Pin both to empty so a local build with .env present can't
+  // bake a key into .output. (provision.ts reads process.env itself.) `bun run check:build` verifies.
+  runtimeConfig: {
+    supabase: { secretKey: '', serviceKey: '' },
+  },
 
   routeRules: {
     '/**': { headers: securityHeaders },

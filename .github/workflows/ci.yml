@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: bun-${{ runner.os }}-
+      - run: bun install --frozen-lockfile
+      - run: bun run lint
+      - run: bun run typecheck
+      - run: bun run test:unit
+      # Production build with fake placeholder env only; then fail if any secret material is in the output.
+      - run: bun run build
+        env:
+          NUXT_PUBLIC_SUPABASE_URL: http://127.0.0.1:54321
+          NUXT_PUBLIC_SUPABASE_KEY: ci-placeholder-publishable-key
+      - run: bun run check:build
+      # Non-blocking: the remaining advisories are dev-only/no-fix transitive ones (see docs/deploy-runbook.md).
+      - run: bun audit
+        continue-on-error: true
