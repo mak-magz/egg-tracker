@@ -51,6 +51,11 @@ export function formatWeekdayDate(date: IsoDate, today: IsoDate): string {
     : { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })
 }
 
+/** "Oct 7, 2026": always with the year (the invoice, feature 07 D8). */
+export function formatFullDate(date: IsoDate): string {
+  return format(date, { month: 'short', day: 'numeric', year: 'numeric' })
+}
+
 /** Month abbreviation + day number parts for chart labels ("Aug", 29). */
 export function dayParts(date: IsoDate): { month: string, day: number } {
   return { month: format(date, { month: 'short' }), day: parts(date).d }

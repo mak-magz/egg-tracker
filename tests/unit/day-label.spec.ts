@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { formatDateHint, formatDayLabel, formatDayPhrase, formatShortDate, formatWeekdayDate } from '../../app/utils/day-label'
+import { formatDateHint, formatDayLabel, formatDayPhrase, formatFullDate, formatShortDate, formatWeekdayDate } from '../../app/utils/day-label'
 
 const TODAY = '2026-09-25'
 
@@ -24,6 +24,11 @@ describe('day labels (UX R3, AC16)', () => {
   it('gives the short weekday date for a wanted-by line', () => {
     expect(formatWeekdayDate('2026-10-09', TODAY)).toBe('Fri, Oct 9')
     expect(formatWeekdayDate('2027-01-01', TODAY)).toBe('Fri, Jan 1, 2027')
+  })
+
+  it('gives the full date with the year', () => {
+    expect(formatFullDate('2026-10-07')).toBe('Oct 7, 2026')
+    expect(formatFullDate('2025-01-01')).toBe('Jan 1, 2025')
   })
 
   it('never shifts the day with the device time zone', () => {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { formatLabelledQty, formatQty, splitEggs, toEggs } from '../../shared/utils/quantity'
+import { formatLabelledQty, formatQty, formatQtyWithEggs, splitEggs, toEggs } from '../../shared/utils/quantity'
 
 // Tray sizes are test inputs here, never app constants: every case runs at two farm settings.
 const TRAY_30 = 30
@@ -90,5 +90,24 @@ describe('invalid eggsPerTray', () => {
       expect(() => formatQty(10, bad)).toThrow(RangeError)
       expect(() => formatLabelledQty('Good', 10, bad)).toThrow(RangeError)
     }
+  })
+})
+
+describe('formatQtyWithEggs (invoice, feature 07 AC9)', () => {
+  it.each([
+    [102, 30, '3 trays + 12 eggs (102 eggs)'],
+    [90, 30, '3 trays (90 eggs)'],
+    [30, 30, '1 tray (30 eggs)'],
+    [12, 30, '12 eggs'],
+    [1, 30, '1 egg'],
+    [0, 30, '0 eggs'],
+    [31, 30, '1 tray + 1 egg (31 eggs)'],
+    [90, 12, '7 trays + 6 eggs (90 eggs)'],
+    [36000, 30, '1,200 trays (36,000 eggs)'],
+  ])('%i eggs at %i per tray', (eggs, per, out) => {
+    expect(formatQtyWithEggs(eggs, per, 'en-US')).toBe(out)
+  })
+  it('rejects a bad tray size', () => {
+    expect(() => formatQtyWithEggs(5, 0)).toThrow(RangeError)
   })
 })

@@ -1,0 +1,23 @@
+// Copy for the invoice page and its entry button (feature 07 §2.5 "Copy"). Display text only.
+export const INVOICE_COPY = {
+  printInvoice: 'Print invoice',
+  back: 'Back',
+  backToSales: 'Back to sales',
+  print: 'Print',
+  date: 'Date',
+  type: 'Type',
+  billTo: 'Bill to',
+  walkIn: 'Walk-in sale',
+  headSize: 'Size',
+  headQuantity: 'Quantity',
+  headPrice: 'Price per tray',
+  headTotal: 'Total',
+  total: 'Total',
+  loading: 'Getting your invoice...',
+  voidedNotice: 'This sale was voided. It is not a valid invoice.',
+  notFoundTitle: 'Invoice not found',
+  notFoundBody: 'It may have been removed, or the link is wrong.',
+  errorBody: 'We couldn\'t load this invoice. Check your connection and try again.',
+  tryAgain: 'Try again',
+  void: 'VOID',
+} as const

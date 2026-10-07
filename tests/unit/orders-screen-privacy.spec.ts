@@ -47,7 +47,7 @@ const appOrdersFiles = [
   ...walk(join(ROOT, 'app', 'composables')).filter(f => /\/use(Orders|OrderMutations|DetailStack)\.ts$/.test(rel(f))),
   ...walk(join(ROOT, 'app', 'utils')).filter(f => /\/order-[a-z-]+\.ts$/.test(rel(f))),
   join(ROOT, 'app', 'pages', 'orders.vue'),
-  join(ROOT, 'app', 'pages', 'sales.vue'),
+  join(ROOT, 'app', 'pages', 'sales', 'index.vue'),
 ].filter(isFile)
 
 describe('orders screen code', () => {

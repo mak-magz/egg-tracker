@@ -4,7 +4,7 @@
   tray, line total) and the sale total, with the actions that apply: Edit and Void sale only (no Mark delivered,
   no Mark as pending, no Delete). A bottom sheet on phones, a right-hand slide-over on desktop (detailUi()); an
   overlay, not a page, so the filters/scroll position underneath survive and nothing goes in the address bar
-  (AC60). This component only renders and emits: sales.vue owns every dialog the actions open.
+  (AC60). Print invoice (feature 07) is a link to /sales/:id/invoice on every footer, voided and read-only included. This component only renders and emits: sales.vue owns every dialog the actions open.
   `readonly` (opened from the Orders screen on top of an order, feature 05 D10/U2): no actions, one "Open in Sales"
   link to the screen that owns them.
 -->
@@ -13,6 +13,7 @@ import type { IsoDate, Sale } from '#shared/types/api'
 import { formatQty } from '#shared/utils/quantity'
 import { formatShortDate } from '~/utils/day-label'
 import { SALE_COPY } from '~/utils/sale-copy'
+import { INVOICE_COPY } from '~/utils/invoice-copy'
 import type { SaleMutations } from '~/composables/useSaleMutations'
 
 const props = defineProps<{
@@ -158,6 +159,15 @@ const ui = detailUi()
           class="flex shrink-0 gap-3 border-t border-default p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] sm:px-5 md:pb-4"
         >
           <UButton
+            :to="`/sales/${sale.id}/invoice`"
+            color="neutral"
+            variant="outline"
+            size="xl"
+            icon="i-lucide-printer"
+            class="min-h-11 flex-1 justify-center"
+            :label="INVOICE_COPY.printInvoice"
+          />
+          <UButton
             size="xl"
             class="min-h-11 flex-1 justify-center"
             icon="i-lucide-external-link"
@@ -166,10 +176,11 @@ const ui = detailUi()
           />
         </div>
         <div
-          v-else-if="!sale.voidedAt"
+          v-else
           class="flex shrink-0 gap-3 border-t border-default p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] sm:px-5 md:pb-4"
         >
           <UButton
+            v-if="!sale.voidedAt"
             color="neutral"
             variant="outline"
             size="xl"
@@ -177,6 +188,15 @@ const ui = detailUi()
             :label="SALE_COPY.edit"
             :disabled="busy"
             @click="emit('edit', sale)"
+          />
+          <UButton
+            :to="`/sales/${sale.id}/invoice`"
+            color="neutral"
+            variant="outline"
+            size="xl"
+            icon="i-lucide-printer"
+            class="min-h-11 flex-1 justify-center"
+            :label="INVOICE_COPY.printInvoice"
           />
         </div>
       </div>

@@ -43,7 +43,7 @@ const appSalesFiles = [
   ...walk(join(ROOT, 'app', 'components')).filter(f => /\/(Sale[A-Za-z]*|ClientPicker|SizeChipPicker|StockShortfallDialog)\.vue$/.test(rel(f))),
   ...walk(join(ROOT, 'app', 'composables')).filter(f => /\/use(Sale[A-Za-z]*|OnHand)\.ts$/.test(rel(f))),
   ...walk(join(ROOT, 'app', 'utils')).filter(f => /\/sale-[a-z-]+\.ts$/.test(rel(f))),
-  join(ROOT, 'app', 'pages', 'sales.vue'),
+  join(ROOT, 'app', 'pages', 'sales', 'index.vue'),
 ].filter((f) => {
   try {
     return statSync(f).isFile()
@@ -116,5 +116,57 @@ describe('sales screen code (whichever files exist)', () => {
     const src = code(join(ROOT, 'app', 'composables', 'useMe.ts'))
     expect(src).toMatch(/startsWith\(['"]sales:['"]\)/)
     expect(src).toMatch(/startsWith\(['"]on-hand:['"]\)/)
+  })
+})
+
+// Feature 07's invoice (AC22, AC23): page, sheet, composable and helpers.
+const invoicePage = join(ROOT, 'app', 'pages', 'sales', '[id]', 'invoice.vue')
+const invoiceFiles = [
+  invoicePage,
+  ...walk(join(ROOT, 'app', 'components')).filter(f => /\/Invoice[A-Za-z]*\.vue$/.test(rel(f))),
+  join(ROOT, 'app', 'composables', 'useInvoice.ts'),
+  ...walk(join(ROOT, 'app', 'utils')).filter(f => /\/invoice-[a-z-]+\.ts$/.test(rel(f))),
+]
+
+describe('invoice code (feature 07, AC22, AC23)', () => {
+  it('finds the invoice sources', () => {
+    expect(invoiceFiles.map(rel).sort()).toEqual([
+      'app/components/InvoiceSheet.vue',
+      'app/composables/useInvoice.ts',
+      'app/pages/sales/[id]/invoice.vue',
+      'app/utils/invoice-copy.ts',
+      'app/utils/invoice-load.ts',
+      'app/utils/invoice-view.ts',
+    ])
+  })
+
+  it('loads after mount only: no SSR data helpers, no $fetch', () => {
+    const offenders = invoiceFiles.filter(f => /\buseAsyncData\b|\buseLazyAsyncData\b|\buseFetch\b|\buseLazyFetch\b|\$fetch\b/.test(code(f)))
+    expect(offenders.map(rel)).toEqual([])
+  })
+
+  it('no storage, cookie, console or query string, and no useState for the invoice', () => {
+    const forbidden = /route\.query|\bgetQuery\b|localStorage|sessionStorage|useStorage|useCookie|document\.cookie|indexedDB|console\.|useState\(/
+    expect(invoiceFiles.filter(f => forbidden.test(code(f))).map(rel)).toEqual([])
+  })
+
+  it('no currency symbol literal: prices go through formatPrice', () => {
+    const offenders = invoiceFiles.filter(f => /[₱€£¥]|\$\s?\d/.test(code(f)))
+    expect(offenders.map(rel)).toEqual([])
+  })
+
+  it('the page title never comes from a client name', () => {
+    const heads = [...code(invoicePage).matchAll(/useHead\([\s\S]*?\)\)/g)].map(m => m[0])
+    expect(heads.length).toBeGreaterThan(0)
+    for (const h of heads) expect(h).not.toMatch(/client|billTo|name/i)
+  })
+
+  it('window.print is called once, in a click handler only, never at mount', () => {
+    const src = code(invoicePage)
+    expect(src.match(/window\.print\(/g)).toHaveLength(1)
+    expect(src).toMatch(/function print\(\) \{\s*window\.print\(\)\s*\}/)
+    expect(src).toMatch(/@click="print"/)
+    const mounted = [...src.matchAll(/onMounted\(\(\) => \{[\s\S]*?\n\}\)/g)].map(m => m[0]).join('\n')
+    expect(mounted).not.toMatch(/print/)
   })
 })

@@ -49,3 +49,8 @@
     background-color: color-mix(in oklab, var(--ui-primary) 8%, transparent);
   }
 }
+
+/* The invoice prints on the browser's paper size with a plain margin (feature 07). */
+@page {
+  margin: 15mm;
+}

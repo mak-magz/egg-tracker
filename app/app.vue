@@ -7,13 +7,19 @@ import type { AppProps } from '@nuxt/ui'
 //   - screens with no tab bar (sign-in, reset): the default bottom offset.
 const route = useRoute()
 const { hasFab } = usePrimaryAction()
-const hasTabs = computed(() => route.meta.auth === undefined || route.meta.auth === 'farm')
+// The invoice layout has no tab bar (feature 07), and a toast must never print or cover its Print button.
+const hasTabs = computed(() => (route.meta.auth === undefined || route.meta.auth === 'farm') && route.meta.layout !== 'invoice')
 const toaster = computed<AppProps['toaster']>(() => ({
   position: 'bottom-center',
   duration: 2600,
   ui: hasFab.value
-    ? { viewport: 'bottom-[calc(4rem+env(safe-area-inset-bottom)+84px)] md:bottom-4' }
-    : hasTabs.value ? { viewport: 'bottom-[calc(4rem+env(safe-area-inset-bottom)+1rem)] md:bottom-4' } : undefined,
+    ? { viewport: 'print:hidden bottom-[calc(4rem+env(safe-area-inset-bottom)+84px)] md:bottom-4' }
+    : hasTabs.value
+      ? { viewport: 'print:hidden bottom-[calc(4rem+env(safe-area-inset-bottom)+1rem)] md:bottom-4' }
+      : route.meta.layout === 'invoice'
+        // Above the fixed Print bar (48px + padding + safe area) on phones.
+        ? { viewport: 'print:hidden bottom-[calc(5.5rem+env(safe-area-inset-bottom))] md:bottom-4' }
+        : { viewport: 'print:hidden' },
 }))
 </script>
 
