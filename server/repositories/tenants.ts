@@ -1,6 +1,7 @@
 import type { Database } from '../../shared/types/database.types'
 import type { FarmSize, FarmSummary } from '../../shared/types/api'
 import type { TenantDb } from '../utils/db'
+import { RepositoryError } from '../utils/errors'
 
 type TenantRow = Database['public']['Tables']['tenants']['Row']
 type SizeRow = Database['public']['Tables']['sizes']['Row']
@@ -51,6 +52,6 @@ export async function getCurrentFarm(db: TenantDb): Promise<FarmSummary | null> 
     .eq('id', db.tenantId)
     .maybeSingle()
 
-  if (error) throw error
+  if (error) throw new RepositoryError('farm lookup failed', error.code)
   return data ? toFarmSummary(data) : null
 }

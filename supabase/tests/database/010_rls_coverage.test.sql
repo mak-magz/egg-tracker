@@ -1,7 +1,7 @@
 -- 010_rls_coverage: meta-guards over the whole `public` schema (docs/features/00-project-scaffold.md §3.7).
 -- A new table that forgets RLS, updated_at, tenant_id, its index, or its isolation-registry row fails here.
 begin;
-select plan(57);
+select plan(58);
 
 -- Ordinary + partitioned tables in public.
 create temp view _public_tables as
@@ -479,6 +479,16 @@ select ok(
   and not has_column_privilege('authenticated', 'public.order_lines', 'size_id', 'update')
   and not exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'sales' and column_name in ('status')),
   'order_id is insertable but never updatable on sales; an order line''s size can not be updated; sales has no status column');
+
+select is(
+  (select count(*)::int from pg_default_acl d
+   cross join lateral aclexplode(d.defaclacl) a
+   where d.defaclnamespace = 'public'::regnamespace
+     and d.defaclrole = 'postgres'::regrole
+     and a.grantee in (select oid from pg_roles where rolname in ('anon', 'authenticated'))
+     and not (d.defaclobjtype = 'f' and a.grantee = (select oid from pg_roles where rolname = 'authenticated'))),
+  0,
+  'default privileges for postgres in public grant nothing on new tables or sequences to anon/authenticated, nor functions to anon');
 
 select * from finish();
 rollback;

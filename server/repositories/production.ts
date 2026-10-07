@@ -52,7 +52,7 @@ export function mapProductionDbError(error: Pick<PostgrestError, 'code' | 'messa
       return apiError(400, 'validation_failed', { [PRODUCTION_FIELDS.amounts]: PRODUCTION_MESSAGES.tooLarge })
     case 'TM006': // p_tenant_id disagrees with the session: only a server bug can cause this
     default:
-      console.error('[production] database error', error.code, error.message)
+      console.error(`[production] database error ${typeof error.code === 'string' ? error.code : 'unknown'}`)
       return apiError(500, 'internal')
   }
 }
@@ -60,7 +60,7 @@ export function mapProductionDbError(error: Pick<PostgrestError, 'code' | 'messa
 function parseResult<T>(schema: z.ZodType<T>, data: unknown): T {
   const parsed = schema.safeParse(data)
   if (!parsed.success) {
-    console.error('[production] unexpected function result', parsed.error.issues)
+    console.error('[production] unexpected function result')
     throw apiError(500, 'internal')
   }
   return parsed.data

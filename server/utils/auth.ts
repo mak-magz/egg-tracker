@@ -26,11 +26,17 @@ declare module 'h3' {
   }
 }
 
-function isTransientAuthFailure(error: { status?: number } | null): boolean {
+/** Only the name and code of an error, never its message or details. */
+function safeErrorId(e: unknown): string {
+  const o = (e ?? {}) as { name?: unknown, code?: unknown }
+  return `${typeof o.name === 'string' ? o.name : 'unknown'} ${typeof o.code === 'string' ? o.code : 'unknown'}`
+}
+
+export function isTransientAuthFailure(error: { status?: number } | null): boolean {
   if (!error) return false
   if (isAuthRetryableFetchError(error)) return true
   const status = error.status ?? 0
-  return status === 0 || status >= 500
+  return status === 0 || status === 429 || status >= 500
 }
 
 async function resolveAuth(event: H3Event): Promise<AuthContext | null> {
@@ -45,13 +51,13 @@ async function resolveAuth(event: H3Event): Promise<AuthContext | null> {
     result = await client.auth.getUser()
   }
   catch (e) {
-    console.error('[auth] getUser threw', e)
+    console.error('[auth] getUser threw', safeErrorId(e))
     throw apiError(500, 'internal')
   }
   const { data, error } = result
   if (error) {
     if (isTransientAuthFailure(error)) {
-      console.error('[auth] auth service unreachable', error)
+      console.error('[auth] auth service unreachable', error.status ?? 'unknown', safeErrorId(error))
       throw apiError(500, 'internal')
     }
     return null // no session, or an invalid, expired or revoked one

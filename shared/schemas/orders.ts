@@ -149,7 +149,7 @@ export const ordersQuerySchema = z
     from: optionalQueryDate,
     to: optionalQueryDate,
     limit: z.coerce.number().int().min(1).max(100).optional().default(25),
-    offset: z.coerce.number().int().min(0).optional().default(0),
+    offset: z.coerce.number().int().min(0).max(1_000_000).optional().default(0),
   })
   .refine(v => !isIsoDate(v.from) || !isIsoDate(v.to) || compareIsoDates(v.from, v.to) <= 0, {
     error: ORDER_MESSAGES.endBeforeStart,

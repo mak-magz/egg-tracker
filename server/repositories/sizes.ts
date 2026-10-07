@@ -32,21 +32,21 @@ const addResultSchema = z.object({ changedId: z.string(), replayed: z.boolean() 
 const reorderResultSchema = z.object({ changed: z.boolean() })
 const nameMatchSchema = z.object({ id: z.string(), name: z.string(), archived: z.boolean() })
 
-function internalError(scope: string, detail: unknown): H3Error<ApiErrorData> {
-  console.error(`[sizes] ${scope}`, detail)
+function internalError(scope: string, code?: string | null): H3Error<ApiErrorData> {
+  console.error(`[sizes] ${scope} ${typeof code === 'string' ? code : 'unknown'}`)
   return apiError(500, 'internal')
 }
 
 function parseResult<T>(schema: z.ZodType<T>, data: unknown): T {
   const parsed = schema.safeParse(data)
-  if (!parsed.success) throw internalError('unexpected function result', parsed.error.issues)
+  if (!parsed.success) throw internalError('unexpected function result')
   return parsed.data
 }
 
 /** The farm's sizes, all of them (active first, then archived), through the mapper `/api/me` uses. */
 export async function listSizes(db: TenantDb): Promise<FarmSize[]> {
   const { data, error } = await db.scoped('sizes').select(SIZE_COLUMNS)
-  if (error) throw internalError('list failed', error)
+  if (error) throw internalError('list failed', error.code)
   return toFarmSizes(data as unknown as Parameters<typeof toFarmSizes>[0])
 }
 
@@ -112,11 +112,11 @@ export async function mapSizeDbError(
       if (operation === undefined || operation === 'add' || operation === 'rename') {
         return apiError(400, 'validation_failed', { [SIZE_FIELDS.name]: SIZE_MESSAGES.nameInvalid })
       }
-      return internalError(`database error ${error.code}`, error.message)
+      return internalError('database error', error.code)
     case 'TM006': // p_tenant_id disagrees with the session: only a server bug can cause this
     case 'TM014': // tenant_id or color_slot changed: unreachable from our routes
     default: // includes the 23505 / 23514 backstops (the functions check first, under the lock)
-      return internalError(`database error ${error.code}`, error.message)
+      return internalError('database error', error.code)
   }
 }
 

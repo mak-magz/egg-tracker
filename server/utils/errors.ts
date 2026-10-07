@@ -45,6 +45,16 @@ export function isApiError(e: unknown): e is H3Error<ApiErrorData> {
   return typeof code === 'string' && (API_ERROR_CODES as readonly string[]).includes(code)
 }
 
+/** A database failure that carries only the SQLSTATE (Postgres error details can hold row values). */
+export class RepositoryError extends Error {
+  readonly code: string | undefined
+  constructor(scope: string, code?: string | null) {
+    super(scope)
+    this.name = 'RepositoryError'
+    this.code = typeof code === 'string' ? code : undefined
+  }
+}
+
 /**
  * Maps anything thrown inside a handler to an ApiErrorData error. Our own errors pass through;
  * h3 client errors keep their meaning; everything else is logged and becomes a generic 500
@@ -57,7 +67,8 @@ export function toApiError(e: unknown): H3Error<ApiErrorData> {
     if (e.statusCode === 401) return apiError(401, 'unauthenticated')
     if (e.statusCode === 404) return apiError(404, 'not_found')
   }
-  console.error('[api] unexpected error', e)
+  const o = (e ?? {}) as { name?: unknown, code?: unknown }
+  console.error('[api] unexpected error', typeof o.name === 'string' ? o.name : 'unknown', typeof o.code === 'string' ? o.code : 'unknown')
   return apiError(500, 'internal')
 }
 

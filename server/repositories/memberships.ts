@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Database } from '../../shared/types/database.types'
 import type { FarmSummary } from '../../shared/types/api'
+import { RepositoryError } from '../utils/errors'
 import { toFarmSummary } from './tenants'
 
 export interface MembershipWithFarm {
@@ -28,7 +29,7 @@ export async function findMembershipWithFarm(
     .eq('user_id', userId)
     .maybeSingle()
 
-  if (error) throw error
+  if (error) throw new RepositoryError('membership lookup failed', error.code)
   if (!data) return null
   if (!data.tenants) {
     // Membership visible but its farm isn't: RLS and memberships disagree. Never guess.

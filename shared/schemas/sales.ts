@@ -128,7 +128,7 @@ export const salesListQuerySchema = z
     type: z.enum(['delivery', 'on_site']).optional(),
     clientId: z.uuid().optional(),
     limit: z.coerce.number().int().min(1).max(100).optional().default(25),
-    offset: z.coerce.number().int().min(0).optional().default(0),
+    offset: z.coerce.number().int().min(0).max(1_000_000).optional().default(0),
     includeVoided: queryBoolean(false),
   })
   .refine(v => !isIsoDate(v.from) || !isIsoDate(v.to) || compareIsoDates(v.from, v.to) <= 0, {
@@ -138,7 +138,7 @@ export const salesListQuerySchema = z
 
 /** GET /api/sales/on-hand?sizeId=...&sizeId=... (repeated) -- omit to get every size of the farm. */
 export const onHandQuerySchema = z.object({
-  sizeId: z.preprocess(v => (v === undefined ? [] : Array.isArray(v) ? v : [v]), z.array(z.uuid())).optional().default([]),
+  sizeId: z.preprocess(v => (v === undefined ? [] : Array.isArray(v) ? v : [v]), z.array(z.uuid()).max(50)).optional().default([]),
 })
 
 export type SaleLineInputBody = z.infer<typeof saleLineInputSchema>
