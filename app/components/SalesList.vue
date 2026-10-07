@@ -30,6 +30,13 @@ const emit = defineEmits<{
   'open-order': [sale: Sale]
 }>()
 
+/** Desktop table: a click anywhere on the row opens the detail; the controls inside it (the sale number button, the
+ *  ⋮ menu, the "From order" pill) keep their own behaviour. Keyboard users use the sale number button. */
+function onRowClick(event: MouseEvent, sale: Sale) {
+  if ((event.target as HTMLElement).closest('button, a, [role="button"], [role="menuitem"]')) return
+  emit('open', sale)
+}
+
 const { sorted: allClients } = useClients()
 const { sizeById, trayEggs, formatPrice } = useFarm()
 
@@ -153,8 +160,9 @@ const flash = 'animate-[size-row-flash_1.5s_ease-out] motion-reduce:animate-none
               v-for="sale in sales"
               :key="sale.id"
               :data-sale-row="sale.id"
-              class="border-b border-default transition-colors last:border-b-0 hover:bg-muted"
+              class="cursor-pointer border-b border-default transition-colors last:border-b-0 hover:bg-muted"
               :class="highlightedId === sale.id ? flash : ''"
+              @click="onRowClick($event, sale)"
             >
               <td class="px-4 py-1.5">
                 <button
