@@ -119,14 +119,14 @@ const td = 'block px-0 py-0.5 before:me-2 before:text-sm before:text-neutral-700
             </td>
             <td
               :class="td"
-              class="sm:text-right"
+              class="sm:text-right print:text-right"
               :data-label="`${INVOICE_COPY.headPrice}:`"
             >
               {{ line.price }}
             </td>
             <td
               :class="td"
-              class="font-semibold sm:text-right"
+              class="font-semibold sm:text-right print:text-right"
               :data-label="`${INVOICE_COPY.headTotal}:`"
             >
               {{ line.total }}
