@@ -51,6 +51,19 @@ export function formatQtySigned(eggs: number, eggsPerTray: number, locale?: stri
   return eggs < 0 ? `-${formatQty(-eggs, eggsPerTray, locale)}` : formatQty(eggs, eggsPerTray, locale)
 }
 
+/**
+ * The invoice's own format (feature 07 AC9, D18): `3 trays + 12 eggs (102 eggs)`, `3 trays (90 eggs)`,
+ * `1 tray (30 eggs)`, `12 eggs`, `1 egg`. Under one tray there is no bracket (it would repeat itself).
+ */
+export function formatQtyWithEggs(eggs: number, eggsPerTray: number, locale?: string): string {
+  const { trays, loose } = splitEggs(eggs, eggsPerTray)
+  const nf = new Intl.NumberFormat(locale, { maximumFractionDigits: 0 })
+  const eggWord = (n: number) => `${nf.format(n)} ${n === 1 ? 'egg' : 'eggs'}`
+  if (trays === 0) return eggWord(loose)
+  const traysPart = `${nf.format(trays)} ${trays === 1 ? 'tray' : 'trays'}`
+  return `${loose === 0 ? traysPart : `${traysPart} + ${eggWord(loose)}`} (${eggWord(eggs)})`
+}
+
 export type QuantityLabel = 'Good' | 'Rejects'
 
 /** Label first, then the R1 amount: `Good: 16 trays + 14`, `Rejects: 5 eggs`. */

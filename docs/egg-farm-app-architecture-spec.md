@@ -230,6 +230,13 @@ An **order** is a promise to deliver; a sale is eggs that have left. Full design
 - Referenced by sales via nullable `client_id` (null = on-site sale; there is no "Walk-in" client row).
 - Sales picker offers **active** clients only, and reuses the Add client form (feature 03 AC34).
 
+### Invoice (feature 07, designed 2026-10-07)
+A **printable invoice** is a read-only page for one sale, `/sales/:id/invoice` (opaque id only in the address). Full design: `docs/features/07-invoice.md` §3.
+- **No new data, no migration, no new server route.** The page reads `GET /api/sales/:id` (`get_sale`: header, frozen lines, voided or not; another farm's id and a missing id both answer 404), the farm's name, eggs-per-tray, currency and sizes from the existing `me.farm` (`useFarm`), and, for a sale with a client, the client's name from the client list that `useClients` fetches on the client. A sale still carries only `clientId`, never a name, and nothing personal is added to `/api/me`, the SSR payload or any response.
+- **Invoice number = the sale number**, shown plainly as `#1042` (no prefix; a prefix or numbering setting is a later feature). Everything printed is frozen on the sale (egg counts, `price_per_tray`, `line_total`, sale total); only names (client, size, farm) and the tray split of the egg count follow the farm's current settings.
+- **Print is the browser's**: a **Print** button calls `window.print()` (never automatic on load: iOS Safari only honours it from a tap), and Save as PDF is the browser's. The app builds no PDF and sends nothing. A voided sale prints with a text VOID mark and is never presented as valid. No payment, tax, due date, balance, address or logo.
+- **Privacy:** the page title and suggested PDF file name are `Invoice {number}`; the sale and client name live only in the page's local state (not `useState`, not the SSR payload, no storage, no logging), fetched after mount.
+
 ---
 
 ## 6. Dashboard / Metrics
@@ -280,6 +287,7 @@ The data model (the expensive-to-reverse part) is settled. Remaining work is mec
 - **Categories as data** (size, quality, fulfillment_type are values, not columns). **Sizes are per-farm rows** in `sizes`, referenced by `size_id` with a composite `(tenant_id, size_id)` FK; never hardcode the list. **Rejects are always unsized.**
 - **One `status` field** in v1, on **orders** (`requested`/`confirmed`/`ready`/`partially_fulfilled`/`fulfilled`/`cancelled`); sales have none (feature 05). Add a second axis only when payment arrives.
 - **Sales are void-only; orders are cancel/close-only.** No sale and no order is ever deleted. Delivered-so-far on an order is computed from its non-voided deliveries, never stored.
+- **The invoice is a read-only view of one saved sale** (feature 07): no new data, no payment fields, nothing in the address, title or file name but the opaque sale id and the sale number; the client's name is joined on the client from the client list and never stored on the sale or sent by the server.
 - **`updated_at` on every table** — cheap hedge; do not design *against* a future offline/sync layer.
 
 ---
