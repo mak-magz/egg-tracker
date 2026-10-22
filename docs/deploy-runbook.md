@@ -9,7 +9,7 @@
 - GitHub Actions (`.github/workflows/ci.yml`):
   1. `checks` job runs lint, typecheck, unit tests, and production build secret checks on PRs & main.
   2. `migrate` job automatically pushes Supabase migrations (`supabase db push --include-all`) only on push to `main`.
-- Required GitHub Repository Secrets (for database migrations in CI):
+- Required GitHub Secrets (under the `production` Environment or Repository Secrets):
   - `SUPABASE_PROJECT_ID`: Reference ID of your hosted Supabase project.
   - `SUPABASE_ACCESS_TOKEN`: Personal Access Token generated from Supabase Dashboard Account Settings.
   - `SUPABASE_DB_PASSWORD`: Database password for your Supabase project.
