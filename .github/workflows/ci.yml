@@ -1,4 +1,4 @@
-name: CI
+name: CI/CD
 
 on:
   pull_request:
@@ -14,6 +14,7 @@ concurrency:
 
 jobs:
   checks:
+    name: Lint, Test & Build Check
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -33,12 +34,35 @@ jobs:
       - run: bun run lint
       - run: bun run typecheck
       - run: bun run test:unit
-      # Production build with fake placeholder env only; then fail if any secret material is in the output.
+      # Production build check with placeholder env, then assert no secret material is in the output
       - run: bun run build
         env:
           NUXT_PUBLIC_SUPABASE_URL: http://127.0.0.1:54321
           NUXT_PUBLIC_SUPABASE_KEY: ci-placeholder-publishable-key
       - run: bun run check:build
-      # Non-blocking: the remaining advisories are dev-only/no-fix transitive ones (see docs/deploy-runbook.md).
+      # Non-blocking audit
       - run: bun audit
         continue-on-error: true
+
+  migrate:
+    name: Supabase Database Migrations
+    needs: [checks]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Push Database Migrations
+        run: |
+          supabase link --project-ref "$SUPABASE_PROJECT_ID"
+          supabase db push --include-all
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+          SUPABASE_PROJECT_ID: ${{ secrets.SUPABASE_PROJECT_ID }}

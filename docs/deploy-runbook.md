@@ -1,13 +1,19 @@
 # Deploy runbook
 
 ## Vercel
-- Set only these variables: `NUXT_PUBLIC_SUPABASE_URL` and `NUXT_PUBLIC_SUPABASE_KEY` (the publishable key). See `.env.example`.
+- Connect the repository directly in the Vercel dashboard. Vercel automatically detects Nuxt 4 and builds on push.
+- Set only these variables in Vercel: `NUXT_PUBLIC_SUPABASE_URL` and `NUXT_PUBLIC_SUPABASE_KEY` (the publishable key). See `.env.example`.
 - Do NOT add any secret variable: no `SUPABASE_*` or `NUXT_SUPABASE_*` secret (`SUPABASE_SECRET_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_SERVICE_KEY`, `NUXT_SUPABASE_SECRET_KEY`). The app does not use the service-role key at runtime; only `bun run provision` does, from a local `.env`.
 - Do NOT install the Supabase-Vercel integration: it injects those variables automatically.
 - `nuxt.config.ts` pins `runtimeConfig.supabase.secretKey/serviceKey` to empty so builds can't bake a key in, but a runtime `NUXT_SUPABASE_*` variable would still override it. Keep them unset.
-- Before releasing, run `bun run build` then `bun run check:build` (CI does this too). Delete `.output` afterwards.
-- Migrations are applied by an explicit manual step (`supabase db push`), never by the app.
-- CI has no database job yet, so `bun run test:db` and the Playwright e2e suite (`bun run test:e2e`, needs the local Supabase stack) run only on a developer machine. Adding a Supabase service to CI would cover both.
+- GitHub Actions (`.github/workflows/ci.yml`):
+  1. `checks` job runs lint, typecheck, unit tests, and production build secret checks on PRs & main.
+  2. `migrate` job automatically pushes Supabase migrations (`supabase db push --include-all`) only on push to `main`.
+- Required GitHub Repository Secrets (for database migrations in CI):
+  - `SUPABASE_PROJECT_ID`: Reference ID of your hosted Supabase project.
+  - `SUPABASE_ACCESS_TOKEN`: Personal Access Token generated from Supabase Dashboard Account Settings.
+  - `SUPABASE_DB_PASSWORD`: Database password for your Supabase project.
+
 
 ## Hosted Supabase checklist (audit L2)
 - [ ] Authentication > Sign In / Providers: disable "Allow new users to sign up". Create owners with `bun run provision`.
