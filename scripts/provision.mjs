@@ -31,11 +31,14 @@ function readHidden(question) {
         stdin.removeListener('data', onData)
         process.stdout.write('\n')
         resolve(value)
-      } else if (ch === '\u0003') {
+      }
+      else if (ch === '\u0003') {
         process.exit(1)
-      } else if (ch === '\u0008' || ch === '\u007f') {
+      }
+      else if (ch === '\u0008' || ch === '\u007f') {
         value = value.slice(0, -1)
-      } else {
+      }
+      else {
         value += ch
       }
     }
@@ -53,17 +56,23 @@ function parseArgs(args) {
     const arg = args[i]
     if (arg === 'reset-password') {
       parsed.command = 'reset-password'
-    } else if (arg === '--farm') {
+    }
+    else if (arg === '--farm') {
       parsed.farm = args[++i]
-    } else if (arg === '--email') {
+    }
+    else if (arg === '--email') {
       parsed.email = args[++i]
-    } else if (arg === '--password') {
+    }
+    else if (arg === '--password') {
       parsed.password = args[++i]
-    } else if (arg === '--eggs-per-tray') {
+    }
+    else if (arg === '--eggs-per-tray') {
       parsed.eggsPerTray = parseInt(args[++i], 10)
-    } else if (arg === '--update') {
+    }
+    else if (arg === '--update') {
       parsed.update = true
-    } else if (arg === '--yes') {
+    }
+    else if (arg === '--yes') {
       parsed.yes = true
     }
   }
@@ -114,13 +123,14 @@ async function main() {
 
     if (userId) {
       if (args.password) console.log('Note: the account already exists; --password was ignored.')
-    } else {
+    }
+    else {
       let password = args.password
       if (!password) {
         password = await readHidden('New password: ')
         const confirm = await readHidden('Confirm password: ')
         if (password !== confirm) {
-          console.error("The passwords don't match.")
+          console.error('The passwords don\'t match.')
           process.exit(1)
         }
       }
@@ -153,7 +163,8 @@ async function main() {
     if (!row) throw new Error('provision_farm returned no row.')
 
     console.log(`Success! Farm "${row.farm_name}" (eggs per tray: ${row.eggs_per_tray}) provisioned for ${args.email}. Outcome: ${row.outcome}`)
-  } else if (args.command === 'reset-password') {
+  }
+  else if (args.command === 'reset-password') {
     const userId = await findUserId(admin, args.email)
     if (!userId) throw new Error(`No account found for ${args.email}`)
     let password = args.password
@@ -161,7 +172,7 @@ async function main() {
       password = await readHidden('New password: ')
       const confirm = await readHidden('Confirm password: ')
       if (password !== confirm) {
-        console.error("The passwords don't match.")
+        console.error('The passwords don\'t match.')
         process.exit(1)
       }
     }
