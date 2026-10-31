@@ -1,5 +1,5 @@
 <!--
-  Reset-link callback (T19, AC8a; §3.5 D9). SSR renders only "Checking your link…". verifyOtp runs in
+  Reset-link callback (T19, AC8a; §3.5 D9). SSR renders only "Checking your link…". verifyRecovery runs in
   onMounted (client-side), so email link scanners that don't run JS can't use up the one-time token.
   The token is then removed from the URL and history.
 -->
@@ -38,8 +38,10 @@ async function check() {
 }
 
 onMounted(async () => {
-  const { token_hash: hash, type } = route.query
-  tokenHash.value = typeof hash === 'string' && hash && type === 'recovery' ? hash : null
+  const { oobCode, mode, token_hash: hash, type } = route.query
+  const firebaseCode = typeof oobCode === 'string' && oobCode && (!mode || mode === 'resetPassword') ? oobCode : null
+  const legacyHash = typeof hash === 'string' && hash && type === 'recovery' ? hash : null
+  tokenHash.value = firebaseCode ?? legacyHash
   await router.replace({ query: {} })
   await check()
 })

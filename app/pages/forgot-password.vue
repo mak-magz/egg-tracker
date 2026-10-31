@@ -31,7 +31,7 @@ async function send(email: string): Promise<boolean> {
 
 async function onSubmit(event: FormSubmitEvent<ForgotPasswordInput>) {
   submitting.value = true
-  // Same confirmation whether or not the account exists (AC8a): Supabase doesn't tell us either.
+  // Same confirmation whether or not the account exists (AC8a): Firebase Auth doesn't tell us either.
   if (await send(event.data.email)) sent.value = true
   submitting.value = false
 }

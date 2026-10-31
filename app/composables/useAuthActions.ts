@@ -1,5 +1,14 @@
-// Every Supabase Auth call the UI makes (§3.5, §3.8). Browser → Supabase Auth with the publishable key;
-// @supabase/ssr keeps the session in cookies so SSR sees it. Errors come back as UI "kinds", never raw.
+// Every Firebase Auth / VueFire call the UI makes (§3.5, §3.8). Browser → Firebase Auth;
+// nuxt-vuefire's `/api/__session` keeps the session in an HttpOnly cookie so SSR sees it.
+// Errors come back as UI "kinds", never raw.
+import {
+  confirmPasswordReset,
+  sendPasswordResetEmail,
+  signInWithEmailAndPassword,
+  signOut as firebaseSignOut,
+  updatePassword as firebaseUpdatePassword,
+  verifyPasswordResetCode,
+} from 'firebase/auth'
 import {
   mapAuthError,
   mapResetRequestError,
@@ -19,51 +28,52 @@ type Result<K> = { ok: true } | { ok: false, kind: K }
 let signInInFlight: Promise<Result<SignInErrorKind>> | null = null
 
 /**
- * Removes the Supabase auth cookies directly. Used when signOut() couldn't reach the server:
- * supabase-js keeps the local session on a network error, but sign-out must always finish (AC14).
+ * Removes the session cookie locally or via `/api/__session`. Used when signOut() couldn't reach
+ * the server: sign-out must always finish (AC14).
  */
-function clearAuthCookiesLocally(prefix: string) {
+async function clearSessionCookie() {
   if (!import.meta.client) return
-  for (const part of document.cookie.split(';')) {
-    const name = part.split('=')[0]?.trim()
-    if (name && name.startsWith(prefix)) {
-      document.cookie = `${name}=; Max-Age=0; path=/; SameSite=Lax`
-    }
+  try {
+    await $fetch('/api/__session', { method: 'POST', body: { token: null } })
+  }
+  catch {
+    document.cookie = '__session=; Max-Age=0; path=/; SameSite=Lax'
   }
 }
 
 export function useAuthActions() {
-  const supabase = useSupabaseClient()
-  const supabaseUser = useSupabaseUser()
-  const supabaseSession = useSupabaseSession()
+  const auth = useFirebaseAuth()
+  const currentUser = useCurrentUser()
   const hint = useSessionHint()
   const { ensure, clear } = useMe()
   const router = useRouter()
-  const cookiePrefix = useRuntimeConfig().public.supabase.cookiePrefix as string | undefined
   /** True while the user's own sign-out runs, so the session plugin doesn't treat it as "expired". */
   const signingOut = useState('auth:signingOut', () => false)
   const expiring = useState('auth:expiring', () => false)
+  /** Holds the verified oobCode and email from `verifyRecovery` so `updatePassword` can complete reset and sign in. */
+  const recoveryState = useState<{ oobCode: string, email: string } | null>('auth:recoveryState', () => null)
 
-  /** The module updates useSupabaseUser asynchronously; the middleware needs it now. */
-  async function syncUserState() {
-    const [{ data: sessionData }, { data: claimsData }] = await Promise.all([
-      supabase.auth.getSession(),
-      supabase.auth.getClaims(),
-    ])
-    supabaseSession.value = sessionData.session
-    supabaseUser.value = claimsData?.claims ?? null
+  async function syncSessionCookie() {
+    if (!auth?.currentUser) return
+    try {
+      const token = await auth.currentUser.getIdToken(true)
+      await $fetch('/api/__session', { method: 'POST', body: { token } })
+    }
+    catch {
+      // If session cookie minting isn't enabled or fails, client Bearer token fallback still works.
+    }
   }
 
   async function doSignIn(email: string, password: string): Promise<Result<SignInErrorKind>> {
+    if (!auth) return { ok: false, kind: 'unknown' }
     try {
-      const { error } = await supabase.auth.signInWithPassword({ email, password })
-      if (error) return { ok: false, kind: mapAuthError(error) }
+      await signInWithEmailAndPassword(auth, email, password)
     }
     catch (e) {
       return { ok: false, kind: mapAuthError(e) }
     }
     hint.value = '1'
-    await syncUserState()
+    await syncSessionCookie()
     // A failure here isn't a sign-in failure: the middleware/layout show the farm-load state.
     await ensure({ force: true })
     return { ok: true }
@@ -78,17 +88,18 @@ export function useAuthActions() {
     return signInInFlight
   }
 
-  /** Local-only sign-out (D15) that always completes, even offline. Does not navigate. */
+  /** Local sign-out (D15) that always completes, even offline. Does not navigate. */
   async function endSessionLocally() {
-    try {
-      const { error } = await supabase.auth.signOut({ scope: 'local' })
-      if (error && cookiePrefix) clearAuthCookiesLocally(cookiePrefix)
+    if (auth) {
+      try {
+        await firebaseSignOut(auth)
+      }
+      catch {
+        // Proceed with clearing cookies and state even if Firebase signOut fails.
+      }
     }
-    catch {
-      if (cookiePrefix) clearAuthCookiesLocally(cookiePrefix)
-    }
-    supabaseSession.value = null
-    supabaseUser.value = null
+    await clearSessionCookie()
+    recoveryState.value = null
     clear()
   }
 
@@ -117,10 +128,9 @@ export function useAuthActions() {
   }
 
   async function requestPasswordReset(email: string): Promise<Result<ResetRequestErrorKind>> {
+    if (!auth) return { ok: false, kind: 'unknown' }
     try {
-      // The link target comes from the recovery email template (token_hash flow, D9).
-      const { error } = await supabase.auth.resetPasswordForEmail(email)
-      if (error) return { ok: false, kind: mapResetRequestError(error) }
+      await sendPasswordResetEmail(auth, email)
       return { ok: true }
     }
     catch (e) {
@@ -128,29 +138,41 @@ export function useAuthActions() {
     }
   }
 
-  /** Run client-side only (onMounted), so link scanners can't use up the one-time token (§3.5). */
-  async function verifyRecovery(tokenHash: string): Promise<VerifyRecoveryResult> {
+  /** Run client-side only (onMounted), so link scanners can't use up the one-time action code (§3.5). */
+  async function verifyRecovery(oobCode: string): Promise<VerifyRecoveryResult> {
+    if (!auth) return 'expired'
     try {
-      const { error } = await supabase.auth.verifyOtp({ type: 'recovery', token_hash: tokenHash })
-      if (error) return mapVerifyRecoveryError(error)
+      const email = await verifyPasswordResetCode(auth, oobCode)
+      recoveryState.value = { oobCode, email }
+      return 'valid'
     }
     catch (e) {
+      recoveryState.value = null
       return mapVerifyRecoveryError(e)
     }
-    await syncUserState()
-    return 'valid'
   }
 
   async function updatePassword(password: string): Promise<Result<UpdatePasswordErrorKind>> {
+    if (!auth) return { ok: false, kind: 'unknown' }
     try {
-      const { error } = await supabase.auth.updateUser({ password })
-      if (error) return { ok: false, kind: mapUpdatePasswordError(error) }
+      if (recoveryState.value) {
+        const { oobCode, email } = recoveryState.value
+        await confirmPasswordReset(auth, oobCode, password)
+        recoveryState.value = null
+        await signInWithEmailAndPassword(auth, email, password)
+      }
+      else if (currentUser.value) {
+        await firebaseUpdatePassword(currentUser.value, password)
+      }
+      else {
+        return { ok: false, kind: 'unknown' }
+      }
     }
     catch (e) {
       return { ok: false, kind: mapUpdatePasswordError(e) }
     }
     hint.value = '1'
-    await syncUserState()
+    await syncSessionCookie()
     await ensure({ force: true })
     return { ok: true }
   }

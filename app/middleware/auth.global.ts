@@ -1,16 +1,17 @@
 // Route guard (§3.8, D11). Runs on SSR too, so redirects are 302s and no farm content flashes (AC9).
 // Level comes from definePageMeta({ auth }); the default is 'farm' (deny by default).
+import { signOut as firebaseSignOut } from 'firebase/auth'
 import { safeReturnTo } from '#shared/utils/return-to'
 
 export default defineNuxtRouteMiddleware(async (to) => {
   const level = to.meta.auth ?? 'farm'
-  const user = useSupabaseUser()
+  const user = await getCurrentUser()
   const hint = useSessionHint()
   const { me, ensure } = useMe()
   const needsUser = level === 'farm' || level === 'user'
 
   // 1–2. Signed out.
-  if (!user.value) {
+  if (!user) {
     if (needsUser) return navigateTo(loginLocation(to.fullPath, !!hint.value))
     return
   }
@@ -20,9 +21,8 @@ export default defineNuxtRouteMiddleware(async (to) => {
 
   if (result === 'unauthenticated') {
     // The cookie had a session the server no longer accepts (revoked or expired): end it here.
-    await useSupabaseClient().auth.signOut({ scope: 'local' }).catch(() => {})
-    user.value = null
-    useSupabaseSession().value = null
+    const auth = useFirebaseAuth()
+    if (auth) await firebaseSignOut(auth).catch(() => {})
     if (needsUser) return navigateTo(loginLocation(to.fullPath, true))
     return
   }

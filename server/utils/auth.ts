@@ -1,8 +1,12 @@
 // Identity and tenant resolution for server routes (docs/features/00-project-scaffold.md §3.4).
 // The tenant ALWAYS comes from the signed-in user's membership, never from the request (AC23).
+// Verifies the Firebase session cookie (`__session`) or `Authorization: Bearer <idToken>` via Firebase Admin Auth,
+// then looks up the user's membership and farm in the Turso Control DB + Tenant DB.
+import { getCookie, getRequestHeader } from 'h3'
 import type { H3Event } from 'h3'
-import { isAuthRetryableFetchError } from '@supabase/supabase-js'
-import { serverSupabaseClient } from '#supabase/server'
+import { getApps, initializeApp, cert } from 'firebase-admin/app'
+import type { App as AdminApp } from 'firebase-admin/app'
+import { getAuth as getAdminAuth } from 'firebase-admin/auth'
 import type { FarmSummary } from '../../shared/types/api'
 import { findMembershipWithFarm } from '../repositories/memberships'
 import type { MembershipWithFarm } from '../repositories/memberships'
@@ -23,6 +27,7 @@ declare module 'h3' {
     /** Per-request caches (promises, so concurrent callers share one lookup). */
     tamagoAuth?: Promise<AuthContext | null>
     tamagoMembership?: Promise<MembershipWithFarm | null>
+    firebaseApp?: AdminApp
   }
 }
 
@@ -32,39 +37,65 @@ function safeErrorId(e: unknown): string {
   return `${typeof o.name === 'string' ? o.name : 'unknown'} ${typeof o.code === 'string' ? o.code : 'unknown'}`
 }
 
-export function isTransientAuthFailure(error: { status?: number } | null): boolean {
+export function isTransientAuthFailure(error: { status?: number, code?: string, name?: string } | null): boolean {
   if (!error) return false
-  if (isAuthRetryableFetchError(error)) return true
+  if (error.name === 'AuthRetryableFetchError') return true
+  if (error.code === 'auth/internal-error' || error.code === 'auth/network-request-failed') return true
   const status = error.status ?? 0
   return status === 0 || status === 429 || status >= 500
 }
 
+function getOrInitAdminApp(event: H3Event): AdminApp {
+  if (event.context.firebaseApp) return event.context.firebaseApp
+  const existing = getApps()[0]
+  if (existing) return existing
+
+  const rawServiceAccount = process.env.FIREBASE_SERVICE_ACCOUNT?.trim()
+  const projectId = process.env.NUXT_PUBLIC_FIREBASE_PROJECT_ID?.trim() || 'placeholder-project-id'
+
+  if (rawServiceAccount && rawServiceAccount.startsWith('{')) {
+    return initializeApp({
+      credential: cert(JSON.parse(rawServiceAccount)),
+      projectId,
+    })
+  }
+  return initializeApp({ projectId })
+}
+
 async function resolveAuth(event: H3Event): Promise<AuthContext | null> {
-  const client = await serverSupabaseClient(event)
-  let result: Awaited<ReturnType<typeof client.auth.getUser>>
+  const sessionCookie = getCookie(event, '__session')
+  const authHeader = getRequestHeader(event, 'authorization')
+  const bearerToken = authHeader?.startsWith('Bearer ') ? authHeader.slice(7).trim() : null
+
+  if (!sessionCookie && !bearerToken) {
+    return null
+  }
+
   try {
-    // getUser(), not getClaims(): Supabase signs JWTs with asymmetric keys (ES256, also on the local stack),
-    // so getClaims() only verifies the signature locally and a revoked session (sign-out elsewhere,
-    // `provision reset-password`) would keep working until the JWT expires (up to 1 h). getUser() asks
-    // Auth, which rejects revoked sessions immediately. One Auth round trip per API request.
-    // It refreshes an expired access token first (the new cookies are written to the response).
-    result = await client.auth.getUser()
+    const adminApp = getOrInitAdminApp(event)
+    const adminAuth = getAdminAuth(adminApp)
+    // checkRevoked = true ensures revoked sessions (e.g. from `provision reset-password`) are rejected immediately.
+    const decoded = sessionCookie
+      ? await adminAuth.verifySessionCookie(sessionCookie, true)
+      : await adminAuth.verifyIdToken(bearerToken!, true)
+
+    if (!decoded.uid) return null
+    return { userId: decoded.uid, email: decoded.email ?? '' }
   }
   catch (e) {
-    console.error('[auth] getUser threw', safeErrorId(e))
+    const code = (e as { code?: string })?.code ?? ''
+    if (
+      code.startsWith('auth/session-cookie-')
+      || code.startsWith('auth/id-token-')
+      || code === 'auth/argument-error'
+      || code === 'auth/user-not-found'
+      || code === 'auth/user-disabled'
+    ) {
+      return null
+    }
+    console.error('[auth] token verification failed', safeErrorId(e))
     throw apiError(500, 'internal')
   }
-  const { data, error } = result
-  if (error) {
-    if (isTransientAuthFailure(error)) {
-      console.error('[auth] auth service unreachable', error.status ?? 'unknown', safeErrorId(error))
-      throw apiError(500, 'internal')
-    }
-    return null // no session, or an invalid, expired or revoked one
-  }
-  const user = data.user
-  if (!user?.id || user.role !== 'authenticated') return null
-  return { userId: user.id, email: user.email ?? '' }
 }
 
 /** The signed-in user, or null. Throws 500 `internal` only when Auth is unreachable. */
@@ -83,7 +114,7 @@ export async function requireAuth(event: H3Event): Promise<AuthContext> {
 /** The signed-in user's membership + farm, or null when they have none (AC12). */
 export async function getMembership(event: H3Event): Promise<MembershipWithFarm | null> {
   const auth = await requireAuth(event)
-  event.context.tamagoMembership ??= serverSupabaseClient(event).then(client => findMembershipWithFarm(client, auth.userId))
+  event.context.tamagoMembership ??= findMembershipWithFarm(auth.userId)
   return event.context.tamagoMembership
 }
 

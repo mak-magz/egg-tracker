@@ -1,8 +1,11 @@
 // Node.js fallback runner for provisioning (when bun is blocked by Windows App Control/Device Guard).
 // Usage:
 //   node --env-file=.env.production.local scripts/provision.mjs --farm "Magcanta Farm" --email "magcantaeggfarm@gmail.com" --password "admin1234"
+import { randomUUID } from 'node:crypto'
 import { createInterface } from 'node:readline'
-import { createClient } from '@supabase/supabase-js'
+import { createClient } from '@libsql/client'
+import { cert, getApps, initializeApp } from 'firebase-admin/app'
+import { getAuth } from 'firebase-admin/auth'
 
 function readLine(question) {
   const rl = createInterface({ input: process.stdin, output: process.stdout })
@@ -61,7 +64,7 @@ function parseArgs(args) {
       parsed.farm = args[++i]
     }
     else if (arg === '--email') {
-      parsed.email = args[++i]
+      parsed.email = args[++i]?.toLowerCase().trim()
     }
     else if (arg === '--password') {
       parsed.password = args[++i]
@@ -79,39 +82,124 @@ function parseArgs(args) {
   return parsed
 }
 
-async function findUserId(admin, email) {
-  const { data, error } = await admin.rpc('admin_user_id_by_email', { p_email: email })
-  if (error) throw new Error(`Couldn't look up ${email}: ${error.message}`)
-  return data ?? null
+function getFirebaseAdminAuth() {
+  const existing = getApps()[0]
+  if (existing) return getAuth(existing)
+
+  const rawServiceAccount = process.env.FIREBASE_SERVICE_ACCOUNT?.trim()
+  const projectId = process.env.NUXT_PUBLIC_FIREBASE_PROJECT_ID?.trim()
+
+  if (rawServiceAccount && rawServiceAccount.startsWith('{')) {
+    const app = initializeApp({
+      credential: cert(JSON.parse(rawServiceAccount)),
+      ...(projectId ? { projectId } : {}),
+    })
+    return getAuth(app)
+  }
+
+  if (process.env.GOOGLE_APPLICATION_CREDENTIALS?.trim() || process.env.FIREBASE_AUTH_EMULATOR_HOST?.trim()) {
+    const app = initializeApp(projectId ? { projectId } : undefined)
+    return getAuth(app)
+  }
+
+  throw new Error('FIREBASE_SERVICE_ACCOUNT or GOOGLE_APPLICATION_CREDENTIALS must be set in your env file.')
+}
+
+async function findUserId(adminAuth, email) {
+  try {
+    const user = await adminAuth.getUserByEmail(email)
+    return user.uid
+  }
+  catch (e) {
+    if (e.code === 'auth/user-not-found') return null
+    throw new Error(`Couldn't look up ${email}: ${e.message}`, { cause: e })
+  }
+}
+
+async function createTenantTursoDatabase(tenantId) {
+  const tursoApiToken = process.env.TURSO_API_TOKEN?.trim()
+  const tursoOrg = process.env.TURSO_ORG?.trim()
+  const tursoGroup = process.env.TURSO_GROUP?.trim() || 'default'
+
+  if (!tursoApiToken || !tursoOrg) {
+    return { dbUrl: `file:local-tenant-${tenantId}.db`, dbAuthToken: null }
+  }
+
+  const dbName = `tamago-${tenantId.replace(/[^a-z0-9-]/gi, '').toLowerCase().slice(0, 32)}`
+  const createRes = await fetch(`https://api.turso.tech/v1/organizations/${tursoOrg}/databases`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${tursoApiToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ name: dbName, group: tursoGroup }),
+  })
+  if (!createRes.ok) {
+    const body = await createRes.text()
+    throw new Error(`Couldn't create Turso database ${dbName}: ${createRes.status} ${body}`)
+  }
+  const createJson = await createRes.json()
+  const hostname = createJson.database?.Hostname
+  if (!hostname) throw new Error('Turso API did not return a database Hostname.')
+
+  const tokenRes = await fetch(
+    `https://api.turso.tech/v1/organizations/${tursoOrg}/databases/${dbName}/auth/tokens`,
+    {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${tursoApiToken}` },
+    },
+  )
+  if (!tokenRes.ok) {
+    const body = await tokenRes.text()
+    throw new Error(`Couldn't mint Turso database token for ${dbName}: ${tokenRes.status} ${body}`)
+  }
+  const tokenJson = await tokenRes.json()
+  if (!tokenJson.jwt) throw new Error('Turso API did not return a database JWT.')
+
+  return { dbUrl: `libsql://${hostname}`, dbAuthToken: tokenJson.jwt }
 }
 
 async function main() {
   const args = parseArgs(process.argv.slice(2))
-  const url = process.env.NUXT_PUBLIC_SUPABASE_URL?.trim()
-  const secretKey = process.env.NUXT_SUPABASE_SECRET_KEY?.trim()
-
-  if (!url || !secretKey) {
-    console.error('Error: NUXT_PUBLIC_SUPABASE_URL and NUXT_SUPABASE_SECRET_KEY must be set in your env file.')
-    process.exit(1)
-  }
+  const controlUrl = process.env.NUXT_TURSO_CONTROL_URL?.trim() || 'file:local-control.db'
+  const controlToken = process.env.NUXT_TURSO_CONTROL_AUTH_TOKEN?.trim() || undefined
 
   if (!args.email) {
     console.error('Error: --email is required.')
     process.exit(1)
   }
 
-  console.log(`Target: ${url}`)
-  if (!args.yes && !url.includes('127.0.0.1') && !url.includes('localhost')) {
-    const ans = await readLine('This is NOT the local stack. Continue? [y/N] ')
+  console.log(`Target: ${controlUrl}`)
+  if (!args.yes && !controlUrl.startsWith('file:') && !controlUrl.includes('127.0.0.1') && !controlUrl.includes('localhost')) {
+    const ans = await readLine('This is NOT a local target. Continue? [y/N] ')
     if (ans.trim().toLowerCase() !== 'y') {
       console.log('Aborted.')
       process.exit(0)
     }
   }
 
-  const admin = createClient(url, secretKey, {
-    auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
-  })
+  const adminAuth = getFirebaseAdminAuth()
+  const controlClient = createClient({ url: controlUrl, authToken: controlToken })
+
+  await controlClient.executeMultiple(`
+    CREATE TABLE IF NOT EXISTS tenants (
+      id TEXT PRIMARY KEY NOT NULL,
+      name TEXT NOT NULL,
+      eggs_per_tray INTEGER NOT NULL DEFAULT 30,
+      currency TEXT NOT NULL DEFAULT 'PHP',
+      db_url TEXT NOT NULL,
+      db_auth_token TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS memberships (
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      user_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      PRIMARY KEY (tenant_id, user_id)
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS memberships_user_id_key ON memberships (user_id);
+  `)
 
   if (args.command === 'provision') {
     if (!args.farm) {
@@ -119,7 +207,7 @@ async function main() {
       process.exit(1)
     }
 
-    let userId = await findUserId(admin, args.email)
+    let userId = await findUserId(adminAuth, args.email)
 
     if (userId) {
       if (args.password) console.log('Note: the account already exists; --password was ignored.')
@@ -139,33 +227,86 @@ async function main() {
         process.exit(1)
       }
 
-      const { data, error } = await admin.auth.admin.createUser({
+      const created = await adminAuth.createUser({
         email: args.email,
         password,
-        email_confirm: true,
+        emailVerified: true,
       })
-      if (error && error.code !== 'email_exists') {
-        throw new Error(`Couldn't create account: ${error.message}`)
-      }
-      userId = data?.user?.id ?? await findUserId(admin, args.email)
-      if (!userId) throw new Error('Could not find user id after creating account.')
-      if (!error) console.log(`Created account ${args.email}.`)
+      userId = created.uid
+      console.log(`Created account ${args.email}.`)
     }
 
-    const { data, error } = await admin.rpc('provision_farm', {
-      p_user_id: userId,
-      p_farm_name: args.farm,
-      ...(args.eggsPerTray !== undefined ? { p_eggs_per_tray: args.eggsPerTray } : {}),
-      p_update: args.update,
+    const memRes = await controlClient.execute({
+      sql: 'SELECT tenant_id FROM memberships WHERE user_id = ?',
+      args: [userId],
     })
-    if (error) throw new Error(`Couldn't provision farm: ${error.message}`)
-    const row = data?.[0]
-    if (!row) throw new Error('provision_farm returned no row.')
+    const existingTenantId = memRes.rows[0]?.tenant_id
 
-    console.log(`Success! Farm "${row.farm_name}" (eggs per tray: ${row.eggs_per_tray}) provisioned for ${args.email}. Outcome: ${row.outcome}`)
+    if (existingTenantId) {
+      const tenantRes = await controlClient.execute({
+        sql: 'SELECT id, name, eggs_per_tray FROM tenants WHERE id = ?',
+        args: [existingTenantId],
+      })
+      const existingTenant = tenantRes.rows[0]
+      if (args.update) {
+        const farmName = args.farm.trim()
+        const eggsPerTray = args.eggsPerTray ?? Number(existingTenant.eggs_per_tray)
+        await controlClient.execute({
+          sql: 'UPDATE tenants SET name = ?, eggs_per_tray = ?, updated_at = ? WHERE id = ?',
+          args: [farmName, eggsPerTray, new Date().toISOString(), existingTenantId],
+        })
+        console.log(`Updated farm "${farmName}" (eggs per tray: ${eggsPerTray}) for ${args.email}.`)
+      }
+      else {
+        console.log(`${args.email} already has farm "${existingTenant.name}" (eggs per tray: ${existingTenant.eggs_per_tray}). No changes made.`)
+      }
+    }
+    else {
+      const tenantId = randomUUID()
+      const { dbUrl, dbAuthToken } = await createTenantTursoDatabase(tenantId)
+      const farmName = args.farm.trim()
+      const eggsPerTray = args.eggsPerTray ?? 30
+      const now = new Date().toISOString()
+
+      await controlClient.execute({
+        sql: 'INSERT INTO tenants (id, name, eggs_per_tray, currency, db_url, db_auth_token, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+        args: [tenantId, farmName, eggsPerTray, 'PHP', dbUrl, dbAuthToken, now, now],
+      })
+      await controlClient.execute({
+        sql: 'INSERT INTO memberships (tenant_id, user_id, created_at) VALUES (?, ?, ?)',
+        args: [tenantId, userId, now],
+      })
+
+      const tenantClient = createClient({ url: dbUrl, authToken: dbAuthToken ?? undefined })
+      await tenantClient.executeMultiple(`
+        CREATE TABLE IF NOT EXISTS sizes (
+          id TEXT PRIMARY KEY NOT NULL,
+          tenant_id TEXT NOT NULL,
+          name TEXT NOT NULL,
+          sort_order INTEGER NOT NULL,
+          color_slot INTEGER NOT NULL,
+          archived_at TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+      `)
+      const defaults = [
+        { name: 'Small', sortOrder: 0, colorSlot: 0 },
+        { name: 'Medium', sortOrder: 1, colorSlot: 1 },
+        { name: 'Large', sortOrder: 2, colorSlot: 2 },
+        { name: 'Jumbo', sortOrder: 3, colorSlot: 3 },
+      ]
+      for (const s of defaults) {
+        await tenantClient.execute({
+          sql: 'INSERT INTO sizes (id, tenant_id, name, sort_order, color_slot, archived_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, NULL, ?, ?)',
+          args: [randomUUID(), tenantId, s.name, s.sortOrder, s.colorSlot, now, now],
+        })
+      }
+      console.log(`Created farm "${farmName}" (eggs per tray: ${eggsPerTray}) for ${args.email}.`)
+    }
   }
   else if (args.command === 'reset-password') {
-    const userId = await findUserId(admin, args.email)
+    const userId = await findUserId(adminAuth, args.email)
     if (!userId) throw new Error(`No account found for ${args.email}`)
     let password = args.password
     if (!password) {
@@ -176,9 +317,8 @@ async function main() {
         process.exit(1)
       }
     }
-    const { error } = await admin.auth.admin.updateUserById(userId, { password })
-    if (error) throw new Error(`Couldn't update password: ${error.message}`)
-    await admin.rpc('admin_revoke_sessions', { p_user_id: userId })
+    await adminAuth.updateUser(userId, { password })
+    await adminAuth.revokeRefreshTokens(userId)
     console.log(`Password updated for ${args.email}. All sessions revoked.`)
   }
 }

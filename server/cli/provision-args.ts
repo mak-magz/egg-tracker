@@ -39,11 +39,11 @@ email never creates a second farm or account: it reports "No changes made" unles
 updates the farm name and (if given) eggs per tray. It never changes an existing password.
 
 reset-password: sets a new password for an existing owner and signs out ALL their devices
-(Supabase Auth always revokes sessions on an admin password change).
+(Firebase Auth revokes refresh tokens on an admin password reset).
 
 --password is optional: without it you're prompted (hidden input), which keeps it out of shell history.
 --eggs-per-tray must be a whole number >= 1. Without it a new farm gets the database default (30).
-The target is NUXT_PUBLIC_SUPABASE_URL; a non-local target asks for confirmation unless --yes.
+The target is NUXT_TURSO_CONTROL_URL; a non-local target asks for confirmation unless --yes.
 Use --env-file=.env.production.local (bun --env-file=... server/cli/provision.ts) for production.`
 
 type FlagSpec = Record<string, 'string' | 'boolean'>

@@ -2,11 +2,17 @@
 //   bun run provision -- --farm "Hendricks Farm" --email owner@example.com [--password <pw>] [--eggs-per-tray 30] [--update] [--yes]
 //   bun run provision -- reset-password --email owner@example.com [--password <pw>] [--yes]
 // `bun run provision` = `bun --env-file=.env server/cli/provision.ts`. Nitro never bundles this file.
-// It is the ONLY code that uses the secret (service-role) key. docs/features/00-project-scaffold.md §3.6.
+// Provisions the owner in Firebase Admin Auth, initializes the tenant's Turso/libSQL database with
+// Drizzle schema + default egg sizes, and records the tenant & membership in the Turso Control DB.
+import { randomUUID } from 'node:crypto'
 import { createInterface } from 'node:readline'
-import { createClient } from '@supabase/supabase-js'
-import type { SupabaseClient } from '@supabase/supabase-js'
-import type { Database } from '../../shared/types/database.types'
+import { createClient } from '@libsql/client'
+import { eq } from 'drizzle-orm'
+import { cert, getApps, initializeApp } from 'firebase-admin/app'
+import { getAuth } from 'firebase-admin/auth'
+import type { Auth } from 'firebase-admin/auth'
+import * as controlSchema from '../db/schema/control'
+import { getControlDb, initControlDbSchema, initTenantDbSchema } from '../db/turso'
 import {
   USAGE,
   isLocalTarget,
@@ -16,9 +22,7 @@ import {
 } from './provision-args'
 import type { ProvisionCommand, ProvisionOutcome, ResetPasswordCommand } from './provision-args'
 
-type Admin = SupabaseClient<Database>
-
-class CliError extends Error {}
+class CliError extends Error { }
 
 function readLine(question: string): Promise<string> {
   const rl = createInterface({ input: process.stdin, output: process.stdout })
@@ -76,67 +80,215 @@ async function promptNewPassword(): Promise<string> {
   return pw
 }
 
-function env(name: string): string {
-  const value = process.env[name]?.trim()
-  if (!value) throw new CliError(`${name} is not set. Run with --env-file (bun run provision uses .env); see .env.example.`)
-  return value
+function getFirebaseAdminAuth(): Auth {
+  const existing = getApps()[0]
+  if (existing) return getAuth(existing)
+
+  const rawServiceAccount = process.env.FIREBASE_SERVICE_ACCOUNT?.trim()
+  const projectId = process.env.NUXT_PUBLIC_FIREBASE_PROJECT_ID?.trim()
+
+  if (rawServiceAccount && rawServiceAccount.startsWith('{')) {
+    const app = initializeApp({
+      credential: cert(JSON.parse(rawServiceAccount)),
+      ...(projectId ? { projectId } : {}),
+    })
+    return getAuth(app)
+  }
+
+  if (process.env.GOOGLE_APPLICATION_CREDENTIALS?.trim() || process.env.FIREBASE_AUTH_EMULATOR_HOST?.trim()) {
+    const app = initializeApp(projectId ? { projectId } : undefined)
+    return getAuth(app)
+  }
+
+  throw new CliError(
+    'FIREBASE_SERVICE_ACCOUNT or GOOGLE_APPLICATION_CREDENTIALS is not set. Run with --env-file (bun run provision uses .env); see .env.example.',
+  )
 }
 
-async function confirmTarget(url: string, yes: boolean) {
-  console.log(`Target: ${url}`)
-  if (isLocalTarget(url) || yes) return
-  const answer = await readLine('This is NOT the local stack. Continue? [y/N] ')
+async function confirmTarget(targetUrl: string, yes: boolean) {
+  console.log(`Target: ${targetUrl}`)
+  if (targetUrl.startsWith('file:') || isLocalTarget(targetUrl) || yes) return
+  const answer = await readLine('This is NOT a local target. Continue? [y/N] ')
   if (answer.trim().toLowerCase() !== 'y') throw new CliError('Aborted.')
 }
 
-async function findUserId(admin: Admin, email: string): Promise<string | null> {
-  const { data, error } = await admin.rpc('admin_user_id_by_email', { p_email: email })
-  if (error) throw new CliError(`Couldn't look up ${email}: ${error.message}`)
-  return data ?? null
+async function findUserId(adminAuth: Auth, email: string): Promise<string | null> {
+  try {
+    const user = await adminAuth.getUserByEmail(email)
+    return user.uid
+  }
+  catch (e) {
+    const code = (e as { code?: string })?.code
+    if (code === 'auth/user-not-found') return null
+    throw new CliError(`Couldn't look up ${email}: ${(e as Error).message}`)
+  }
 }
 
-async function provision(admin: Admin, cmd: ProvisionCommand) {
-  let userId = await findUserId(admin, cmd.email)
+async function createTenantTursoDatabase(tenantId: string): Promise<{ dbUrl: string, dbAuthToken: string }> {
+  const tursoApiToken = process.env.TURSO_API_TOKEN?.trim()
+  const tursoOrg = process.env.TURSO_ORG?.trim()
+  const tursoGroup = process.env.TURSO_GROUP?.trim() || 'default'
+
+  if (!tursoApiToken || !tursoOrg) {
+    return { dbUrl: `file:local-tenant-${tenantId}.db`, dbAuthToken: '' }
+  }
+
+  const dbName = `tamago-${tenantId.replace(/[^a-z0-9-]/gi, '').toLowerCase().slice(0, 32)}`
+  const createRes = await fetch(`https://api.turso.tech/v1/organizations/${tursoOrg}/databases`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${tursoApiToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ name: dbName, group: tursoGroup }),
+  })
+  if (!createRes.ok) {
+    const body = await createRes.text()
+    throw new CliError(`Couldn't create Turso database ${dbName}: ${createRes.status} ${body}`)
+  }
+  const createJson = await createRes.json() as { database?: { Hostname?: string } }
+  const hostname = createJson.database?.Hostname
+  if (!hostname) throw new CliError('Turso API did not return a database Hostname.')
+
+  const tokenRes = await fetch(
+    `https://api.turso.tech/v1/organizations/${tursoOrg}/databases/${dbName}/auth/tokens`,
+    {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${tursoApiToken}` },
+    },
+  )
+  if (!tokenRes.ok) {
+    const body = await tokenRes.text()
+    throw new CliError(`Couldn't mint Turso database token for ${dbName}: ${tokenRes.status} ${body}`)
+  }
+  const tokenJson = await tokenRes.json() as { jwt?: string }
+  if (!tokenJson.jwt) throw new CliError('Turso API did not return a database JWT.')
+
+  return { dbUrl: `libsql://${hostname}`, dbAuthToken: tokenJson.jwt }
+}
+
+async function provision(adminAuth: Auth, cmd: ProvisionCommand) {
+  let userId = await findUserId(adminAuth, cmd.email)
 
   if (userId) {
     if (cmd.password) console.log('Note: the account already exists; --password was ignored (use reset-password to change it).')
   }
   else {
     const password = cmd.password ?? await promptNewPassword()
-    const { data, error } = await admin.auth.admin.createUser({ email: cmd.email, password, email_confirm: true })
-    if (error && error.code !== 'email_exists') {
-      throw new CliError(`Couldn't create the account for ${cmd.email}: ${error.message}`)
+    try {
+      const created = await adminAuth.createUser({
+        email: cmd.email,
+        password,
+        emailVerified: true,
+      })
+      userId = created.uid
+      console.log(`Created account ${cmd.email}.`)
     }
-    userId = data?.user?.id ?? await findUserId(admin, cmd.email)
+    catch (e) {
+      const code = (e as { code?: string })?.code
+      if (code === 'auth/email-already-exists') {
+        userId = await findUserId(adminAuth, cmd.email)
+      }
+      else {
+        throw new CliError(`Couldn't create the account for ${cmd.email}: ${(e as Error).message}`)
+      }
+    }
     if (!userId) throw new CliError(`The account for ${cmd.email} could not be found after creating it.`)
-    if (!error) console.log(`Created account ${cmd.email}.`)
   }
 
-  const { data, error } = await admin.rpc('provision_farm', {
-    p_user_id: userId,
-    p_farm_name: cmd.farm,
-    // Omitted when not given, so the column default applies (the default lives only in the DB).
-    ...(cmd.eggsPerTray !== undefined ? { p_eggs_per_tray: cmd.eggsPerTray } : {}),
-    p_update: cmd.update,
-  })
-  if (error) throw new CliError(`Couldn't provision the farm: ${error.message}`)
-  const row = data?.[0]
-  if (!row) throw new CliError('provision_farm returned no row.')
-  console.log(outcomeMessage(row.outcome as ProvisionOutcome, cmd.email, row.farm_name, row.eggs_per_tray))
+  const controlUrl = process.env.NUXT_TURSO_CONTROL_URL?.trim() || 'file:local-control.db'
+  const controlToken = process.env.NUXT_TURSO_CONTROL_AUTH_TOKEN?.trim() || undefined
+  const rawControlClient = createClient({ url: controlUrl, authToken: controlToken })
+  await initControlDbSchema(rawControlClient)
+
+  const controlDb = getControlDb()
+  const [existingMembership] = await controlDb
+    .select()
+    .from(controlSchema.memberships)
+    .where(eq(controlSchema.memberships.userId, userId))
+
+  let outcome: ProvisionOutcome
+  let farmName: string
+  let eggsPerTray: number
+
+  if (existingMembership) {
+    const [existingTenant] = await controlDb
+      .select()
+      .from(controlSchema.tenants)
+      .where(eq(controlSchema.tenants.id, existingMembership.tenantId))
+    if (!existingTenant) throw new CliError('Membership exists without a tenant row.')
+
+    if (cmd.update) {
+      farmName = cmd.farm.trim()
+      eggsPerTray = cmd.eggsPerTray ?? existingTenant.eggsPerTray
+      await controlDb
+        .update(controlSchema.tenants)
+        .set({
+          name: farmName,
+          eggsPerTray,
+          updatedAt: new Date().toISOString(),
+        })
+        .where(eq(controlSchema.tenants.id, existingTenant.id))
+      outcome = 'updated'
+    }
+    else {
+      farmName = existingTenant.name
+      eggsPerTray = existingTenant.eggsPerTray
+      outcome = 'unchanged'
+    }
+  }
+  else {
+    const tenantId = randomUUID()
+    const { dbUrl, dbAuthToken } = await createTenantTursoDatabase(tenantId)
+    farmName = cmd.farm.trim()
+    eggsPerTray = cmd.eggsPerTray ?? 30
+    const now = new Date().toISOString()
+
+    await controlDb.insert(controlSchema.tenants).values({
+      id: tenantId,
+      name: farmName,
+      eggsPerTray,
+      currency: 'PHP',
+      dbUrl,
+      dbAuthToken,
+      createdAt: now,
+      updatedAt: now,
+    })
+
+    await controlDb.insert(controlSchema.memberships).values({
+      id: randomUUID(),
+      tenantId,
+      userId,
+      createdAt: now,
+      updatedAt: now,
+    })
+
+    const rawTenantClient = createClient({ url: dbUrl, authToken: dbAuthToken || undefined })
+    await initTenantDbSchema(rawTenantClient)
+    outcome = 'created'
+  }
+
+  console.log(outcomeMessage(outcome, cmd.email, farmName, eggsPerTray))
 }
 
-async function resetPassword(admin: Admin, cmd: ResetPasswordCommand) {
-  const userId = await findUserId(admin, cmd.email)
+async function resetPassword(adminAuth: Auth, cmd: ResetPasswordCommand) {
+  const userId = await findUserId(adminAuth, cmd.email)
   if (!userId) throw new CliError(`There is no account for ${cmd.email}.`)
   const password = cmd.password ?? await promptNewPassword()
 
-  const { error } = await admin.auth.admin.updateUserById(userId, { password })
-  if (error) throw new CliError(`Couldn't update the password for ${cmd.email}: ${error.message}`)
+  try {
+    await adminAuth.updateUser(userId, { password })
+  }
+  catch (e) {
+    throw new CliError(`Couldn't update the password for ${cmd.email}: ${(e as Error).message}`)
+  }
 
-  // Supabase Auth already revokes every session on an admin password change (verified locally, CLI 2.117).
-  // This explicit revoke is a backstop in case that behaviour ever changes; it normally finds nothing left.
-  const { error: revokeError } = await admin.rpc('admin_revoke_sessions', { p_user_id: userId })
-  if (revokeError) throw new CliError(`Password updated, but signing out devices failed: ${revokeError.message}`)
+  try {
+    await adminAuth.revokeRefreshTokens(userId)
+  }
+  catch (e) {
+    throw new CliError(`Password updated, but signing out devices failed: ${(e as Error).message}`)
+  }
   console.log(`Password updated for ${cmd.email}. All their devices are signed out.`)
 }
 
@@ -152,16 +304,13 @@ async function main(argv: string[]): Promise<number> {
     return 0
   }
 
-  const url = env('NUXT_PUBLIC_SUPABASE_URL')
-  const secretKey = env('NUXT_SUPABASE_SECRET_KEY')
-  await confirmTarget(url, cmd.yes)
+  const controlUrl = process.env.NUXT_TURSO_CONTROL_URL?.trim() || 'file:local-control.db'
+  await confirmTarget(controlUrl, cmd.yes)
 
-  const admin: Admin = createClient<Database>(url, secretKey, {
-    auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
-  })
+  const adminAuth = getFirebaseAdminAuth()
 
-  if (cmd.command === 'provision') await provision(admin, cmd)
-  else await resetPassword(admin, cmd)
+  if (cmd.command === 'provision') await provision(adminAuth, cmd)
+  else await resetPassword(adminAuth, cmd)
   return 0
 }
 

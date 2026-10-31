@@ -1,10 +1,12 @@
 // Mid-session loss detection (§3.5 "Session expired", AC11, AC14).
-// - The Supabase module re-checks the claims on every page:start; if they vanish, or Supabase emits
-//   SIGNED_OUT, and the user didn't sign out themselves, run the session-expired flow.
+// - VueFire tracks `useCurrentUser()`; if the user was signed in and becomes null without signing out
+//   themselves, run the session-expired flow.
 // - bfcache: a page restored from the back/forward cache after sign-out reloads (then the guard runs).
+import { onAuthStateChanged } from 'firebase/auth'
+
 export default defineNuxtPlugin(() => {
-  const supabase = useSupabaseClient()
-  const user = useSupabaseUser()
+  const auth = useFirebaseAuth()
+  const user = useCurrentUser()
   const router = useRouter()
   const signingOut = useState('auth:signingOut', () => false)
 
@@ -15,18 +17,29 @@ export default defineNuxtPlugin(() => {
     useAuthActions().handleSessionExpired()
   }
 
-  supabase.auth.onAuthStateChange((event) => {
-    if (event === 'SIGNED_OUT') onSessionLost()
-  })
+  let hadUser = !!user.value
+  if (auth) {
+    onAuthStateChanged(auth, (firebaseUser) => {
+      if (firebaseUser) {
+        hadUser = true
+      }
+      else if (hadUser) {
+        hadUser = false
+        onSessionLost()
+      }
+    })
+  }
 
   watch(user, (now, before) => {
-    if (before && !now) onSessionLost()
+    if (now) hadUser = true
+    if (before && !now) {
+      hadUser = false
+      onSessionLost()
+    }
   })
 
   window.addEventListener('pageshow', (event) => {
     if (!event.persisted) return
-    supabase.auth.getSession().then(({ data }) => {
-      if (!data.session) window.location.reload()
-    })
+    if (!auth?.currentUser) window.location.reload()
   })
 })
