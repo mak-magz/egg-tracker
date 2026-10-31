@@ -1,6 +1,10 @@
 import { defineConfig } from '@playwright/test'
 
-// End-to-end tests against the LOCAL stack (bun run db:start, a .env). Not part of `bun run test`, not in CI yet.
+// End-to-end tests against the LOCAL stack (local SQLite DB + local Firebase Auth emulator).
+const emulatorHost = process.env.FIREBASE_AUTH_EMULATOR_HOST || '127.0.0.1:9099'
+const controlDbUrl = process.env.NUXT_TURSO_CONTROL_URL || 'file:local-control.db'
+const projectId = process.env.NUXT_PUBLIC_FIREBASE_PROJECT_ID || 'demo-no-project'
+
 export default defineConfig({
   testDir: 'tests/e2e',
   globalSetup: './tests/e2e/global-setup.ts',
@@ -14,12 +18,25 @@ export default defineConfig({
     storageState: 'tests/e2e/.auth/state.json',
     trace: 'on-first-retry',
   },
-  webServer: {
-    command: 'bun run dev',
-    url: 'http://localhost:3000',
-    reuseExistingServer: true,
-    timeout: 120_000,
-  },
+  webServer: [
+    {
+      command: 'bun run emulator',
+      url: `http://${emulatorHost}`,
+      reuseExistingServer: true,
+      timeout: 120_000,
+    },
+    {
+      command: 'bun run dev',
+      url: 'http://localhost:3000',
+      reuseExistingServer: true,
+      timeout: 120_000,
+      env: {
+        FIREBASE_AUTH_EMULATOR_HOST: emulatorHost,
+        NUXT_PUBLIC_FIREBASE_PROJECT_ID: projectId,
+        NUXT_TURSO_CONTROL_URL: controlDbUrl,
+      },
+    },
+  ],
   projects: [
     { name: 'desktop', use: { viewport: { width: 1280, height: 800 } } },
     { name: 'mobile', use: { viewport: { width: 375, height: 812 }, hasTouch: true } },

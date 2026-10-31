@@ -4,7 +4,7 @@
 // `bun run provision` = `bun --env-file=.env server/cli/provision.ts`. Nitro never bundles this file.
 // Provisions the owner in Firebase Admin Auth, initializes the tenant's Turso/libSQL database with
 // Drizzle schema + default egg sizes, and records the tenant & membership in the Turso Control DB.
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { createInterface } from 'node:readline'
 import { createClient } from '@libsql/client'
 import { eq } from 'drizzle-orm'
@@ -85,23 +85,23 @@ function getFirebaseAdminAuth(): Auth {
   if (existing) return getAuth(existing)
 
   const rawServiceAccount = process.env.FIREBASE_SERVICE_ACCOUNT?.trim()
-  const projectId = process.env.NUXT_PUBLIC_FIREBASE_PROJECT_ID?.trim()
+  const projectId = process.env.NUXT_PUBLIC_FIREBASE_PROJECT_ID?.trim() || 'demo-no-project'
 
   if (rawServiceAccount && rawServiceAccount.startsWith('{')) {
     const app = initializeApp({
       credential: cert(JSON.parse(rawServiceAccount)),
-      ...(projectId ? { projectId } : {}),
+      projectId,
     })
     return getAuth(app)
   }
 
   if (process.env.GOOGLE_APPLICATION_CREDENTIALS?.trim() || process.env.FIREBASE_AUTH_EMULATOR_HOST?.trim()) {
-    const app = initializeApp(projectId ? { projectId } : undefined)
+    const app = initializeApp({ projectId })
     return getAuth(app)
   }
 
   throw new CliError(
-    'FIREBASE_SERVICE_ACCOUNT or GOOGLE_APPLICATION_CREDENTIALS is not set. Run with --env-file (bun run provision uses .env); see .env.example.',
+    'FIREBASE_SERVICE_ACCOUNT, GOOGLE_APPLICATION_CREDENTIALS, or FIREBASE_AUTH_EMULATOR_HOST is not set. Run with --env-file (bun run provision uses .env); see .env.example.',
   )
 }
 
@@ -175,8 +175,10 @@ async function provision(adminAuth: Auth, cmd: ProvisionCommand) {
   }
   else {
     const password = cmd.password ?? await promptNewPassword()
+    const deterministicUid = createHash('sha256').update(cmd.email.trim().toLowerCase()).digest('hex').slice(0, 28)
     try {
       const created = await adminAuth.createUser({
+        uid: deterministicUid,
         email: cmd.email,
         password,
         emailVerified: true,

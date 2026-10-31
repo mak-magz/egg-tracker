@@ -1,7 +1,7 @@
 // Node.js fallback runner for provisioning (when bun is blocked by Windows App Control/Device Guard).
 // Usage:
 //   node --env-file=.env.production.local scripts/provision.mjs --farm "Magcanta Farm" --email "magcantaeggfarm@gmail.com" --password "admin1234"
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { createInterface } from 'node:readline'
 import { createClient } from '@libsql/client'
 import { cert, getApps, initializeApp } from 'firebase-admin/app'
@@ -87,22 +87,22 @@ function getFirebaseAdminAuth() {
   if (existing) return getAuth(existing)
 
   const rawServiceAccount = process.env.FIREBASE_SERVICE_ACCOUNT?.trim()
-  const projectId = process.env.NUXT_PUBLIC_FIREBASE_PROJECT_ID?.trim()
+  const projectId = process.env.NUXT_PUBLIC_FIREBASE_PROJECT_ID?.trim() || 'demo-no-project'
 
   if (rawServiceAccount && rawServiceAccount.startsWith('{')) {
     const app = initializeApp({
       credential: cert(JSON.parse(rawServiceAccount)),
-      ...(projectId ? { projectId } : {}),
+      projectId,
     })
     return getAuth(app)
   }
 
   if (process.env.GOOGLE_APPLICATION_CREDENTIALS?.trim() || process.env.FIREBASE_AUTH_EMULATOR_HOST?.trim()) {
-    const app = initializeApp(projectId ? { projectId } : undefined)
+    const app = initializeApp({ projectId })
     return getAuth(app)
   }
 
-  throw new Error('FIREBASE_SERVICE_ACCOUNT or GOOGLE_APPLICATION_CREDENTIALS must be set in your env file.')
+  throw new Error('FIREBASE_SERVICE_ACCOUNT, GOOGLE_APPLICATION_CREDENTIALS, or FIREBASE_AUTH_EMULATOR_HOST must be set in your env file.')
 }
 
 async function findUserId(adminAuth, email) {
@@ -227,7 +227,9 @@ async function main() {
         process.exit(1)
       }
 
+      const deterministicUid = createHash('sha256').update(args.email.trim().toLowerCase()).digest('hex').slice(0, 28)
       const created = await adminAuth.createUser({
+        uid: deterministicUid,
         email: args.email,
         password,
         emailVerified: true,

@@ -46,20 +46,28 @@ export function isTransientAuthFailure(error: { status?: number, code?: string, 
 }
 
 function getOrInitAdminApp(event: H3Event): AdminApp {
-  if (event.context.firebaseApp) return event.context.firebaseApp
-  const existing = getApps()[0]
+  if (process.env.NODE_ENV !== 'production' && !process.env.FIREBASE_SERVICE_ACCOUNT?.trim()) {
+    process.env.FIREBASE_AUTH_EMULATOR_HOST ||= '127.0.0.1:9099'
+  }
+  if (
+    event.context.firebaseApp
+    && (!('options' in event.context.firebaseApp) || Boolean(event.context.firebaseApp.options?.projectId))
+  ) {
+    return event.context.firebaseApp
+  }
+  const existing = getApps().find(app => !('options' in app) || Boolean(app.options?.projectId))
   if (existing) return existing
 
   const rawServiceAccount = process.env.FIREBASE_SERVICE_ACCOUNT?.trim()
-  const projectId = process.env.NUXT_PUBLIC_FIREBASE_PROJECT_ID?.trim() || 'placeholder-project-id'
+  const projectId = process.env.NUXT_PUBLIC_FIREBASE_PROJECT_ID?.trim() || 'demo-no-project'
 
   if (rawServiceAccount && rawServiceAccount.startsWith('{')) {
     return initializeApp({
       credential: cert(JSON.parse(rawServiceAccount)),
       projectId,
-    })
+    }, 'tamago-admin')
   }
-  return initializeApp({ projectId })
+  return initializeApp({ projectId }, 'tamago-admin')
 }
 
 async function resolveAuth(event: H3Event): Promise<AuthContext | null> {

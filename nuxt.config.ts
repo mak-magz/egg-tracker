@@ -31,7 +31,43 @@ const securityHeaders: Record<string, string> = {
 export default defineNuxtConfig({
   // @nuxt/ui registers @nuxt/fonts, @nuxt/icon and @nuxtjs/color-mode itself.
   // Don't add them here; configure them through `fonts`, `icon` and `colorMode`.
-  modules: ['@nuxt/ui', 'nuxt-vuefire', '@nuxt/eslint'],
+  modules: [
+    function (_options, nuxt) {
+      if (process.env.FIREBASE_SERVICE_ACCOUNT?.trim() && !process.env.GOOGLE_APPLICATION_CREDENTIALS?.trim()) {
+        process.env.GOOGLE_APPLICATION_CREDENTIALS = process.env.FIREBASE_SERVICE_ACCOUNT.trim()
+      }
+      if (!isProd && !process.env.GOOGLE_APPLICATION_CREDENTIALS?.trim()) {
+        process.env.FIREBASE_AUTH_EMULATOR_HOST ||= '127.0.0.1:9099'
+      }
+      const emulatorHost = !isProd ? process.env.FIREBASE_AUTH_EMULATOR_HOST?.trim() : undefined
+      if (!emulatorHost) return
+      // Allow nuxt-vuefire to configure the Auth emulator from FIREBASE_AUTH_EMULATOR_HOST even if
+      // the Emulator Hub (:4400) starts concurrently or after Nuxt boots.
+      const origFetch = globalThis.fetch
+      globalThis.fetch = async (input, init) => {
+        try {
+          return await origFetch(input, init)
+        }
+        catch (err) {
+          const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
+          if (url.endsWith(':4400/emulators')) {
+            const [host = '127.0.0.1', portStr = '9099'] = emulatorHost.split(':')
+            return new Response(JSON.stringify({ auth: { host, port: Number(portStr) } }), {
+              status: 200,
+              headers: { 'content-type': 'application/json' },
+            })
+          }
+          throw err
+        }
+      }
+      nuxt.hook('modules:done', () => {
+        globalThis.fetch = origFetch
+      })
+    },
+    '@nuxt/ui',
+    'nuxt-vuefire',
+    '@nuxt/eslint',
+  ],
 
   devtools: { enabled: true },
 
@@ -84,8 +120,14 @@ export default defineNuxtConfig({
   },
 
   vuefire: {
+    admin: {
+      options: {
+        projectId: process.env.NUXT_PUBLIC_FIREBASE_PROJECT_ID ?? 'demo-no-project',
+      },
+    },
     auth: {
       enabled: true,
+      persistence: ['browserLocal'],
       sessionCookie: {
         maxAge: 60 * 60 * 24 * 5 * 1000,
         sameSite: 'lax',
@@ -97,9 +139,9 @@ export default defineNuxtConfig({
     emulators: !isProd ? { enabled: true, host: '127.0.0.1' } : false,
     config: {
       apiKey: process.env.NUXT_PUBLIC_FIREBASE_API_KEY ?? 'placeholder-api-key',
-      authDomain: process.env.NUXT_PUBLIC_FIREBASE_AUTH_DOMAIN ?? 'placeholder.firebaseapp.com',
-      projectId: process.env.NUXT_PUBLIC_FIREBASE_PROJECT_ID ?? 'placeholder-project-id',
-      storageBucket: process.env.NUXT_PUBLIC_FIREBASE_STORAGE_BUCKET ?? 'placeholder.appspot.com',
+      authDomain: process.env.NUXT_PUBLIC_FIREBASE_AUTH_DOMAIN ?? 'demo-no-project.firebaseapp.com',
+      projectId: process.env.NUXT_PUBLIC_FIREBASE_PROJECT_ID ?? 'demo-no-project',
+      storageBucket: process.env.NUXT_PUBLIC_FIREBASE_STORAGE_BUCKET ?? 'demo-no-project.appspot.com',
       messagingSenderId: process.env.NUXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID ?? '000000000000',
       appId: process.env.NUXT_PUBLIC_FIREBASE_APP_ID ?? '1:000000000000:web:000000000000',
     },

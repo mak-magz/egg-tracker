@@ -21,7 +21,7 @@
     "db:push:control": "drizzle-kit push --config=drizzle.control.config.ts",
     "db:push:tenant": "drizzle-kit push --config=drizzle.tenant.config.ts",
     "provision": "bun --env-file=.env server/cli/provision.ts",
-    "emulator": "npx firebase-tools emulators:start --only auth",
+    "emulator": "firebase emulators:start --only auth --project demo-no-project",
     "check:build": "node scripts/check-build-secrets.mjs"
   },
   "dependencies": {
