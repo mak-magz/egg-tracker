@@ -1,6 +1,8 @@
-import type { SupabaseClient } from '@supabase/supabase-js'
-import type { Database } from '../../shared/types/database.types'
+import { eq } from 'drizzle-orm'
 import type { FarmSummary } from '../../shared/types/api'
+import { getControlDb, getTenantDrizzleDb } from '../db/turso'
+import * as controlSchema from '../db/schema/control'
+import * as tenantSchema from '../db/schema/tenant'
 import { RepositoryError } from '../utils/errors'
 import { toFarmSummary } from './tenants'
 
@@ -10,30 +12,54 @@ export interface MembershipWithFarm {
 }
 
 /**
- * The only query that runs BEFORE the tenant is known. Scoped by user_id (and by RLS:
- * memberships_select_own / tenants_select_own), and embeds the farm in one round trip.
+ * The only query that runs BEFORE the tenant is known. Scoped by userId in the Turso Control DB,
+ * and loads the farm's metadata and sizes from its dedicated Turso Tenant DB.
  * Returns null when the user has no membership (AC12). Throws on DB errors.
- *
- * The `sizes!sizes_tenant_id_fkey` FK hint is required as of feature 04: `sale_lines` added a second FK path
- * from `tenants` to `sizes`, so PostgREST can no longer infer a single relationship for a bare `sizes ( ... )`
- * embed (PGRST201, "more than one relationship was found") — this query runs on every sign-in, so the
- * ambiguity broke login. See `tenants.ts`'s `FARM_SUMMARY_COLUMNS` for the same fix.
  */
 export async function findMembershipWithFarm(
-  client: SupabaseClient<Database>,
   userId: string,
 ): Promise<MembershipWithFarm | null> {
-  const { data, error } = await client
-    .from('memberships')
-    .select('tenant_id, tenants ( id, name, eggs_per_tray, currency, sizes!sizes_tenant_id_fkey ( id, name, sort_order, color_slot, archived_at ) )')
-    .eq('user_id', userId)
-    .maybeSingle()
+  try {
+    const controlDb = getControlDb()
+    const [membership] = await controlDb
+      .select()
+      .from(controlSchema.memberships)
+      .where(eq(controlSchema.memberships.userId, userId))
+    if (!membership) return null
 
-  if (error) throw new RepositoryError('membership lookup failed', error.code)
-  if (!data) return null
-  if (!data.tenants) {
-    // Membership visible but its farm isn't: RLS and memberships disagree. Never guess.
-    throw new Error('membership without a visible farm')
+    const [tenant] = await controlDb
+      .select()
+      .from(controlSchema.tenants)
+      .where(eq(controlSchema.tenants.id, membership.tenantId))
+    if (!tenant) {
+      throw new Error('membership without a visible farm')
+    }
+
+    const tenantDb = getTenantDrizzleDb(tenant.dbUrl, tenant.dbAuthToken || undefined)
+    const sizes = await tenantDb
+      .select({
+        id: tenantSchema.sizes.id,
+        name: tenantSchema.sizes.name,
+        sort_order: tenantSchema.sizes.sortOrder,
+        color_slot: tenantSchema.sizes.colorSlot,
+        archived_at: tenantSchema.sizes.archivedAt,
+      })
+      .from(tenantSchema.sizes)
+
+    return {
+      tenantId: tenant.id,
+      farm: toFarmSummary({
+        id: tenant.id,
+        name: tenant.name,
+        eggs_per_tray: tenant.eggsPerTray,
+        currency: tenant.currency,
+        sizes,
+      }),
+    }
   }
-  return { tenantId: data.tenant_id, farm: toFarmSummary(data.tenants) }
+  catch (e) {
+    if (e instanceof Error && e.message === 'membership without a visible farm') throw e
+    const code = (e as { code?: string })?.code ?? 'XX000'
+    throw new RepositoryError('membership lookup failed', code)
+  }
 }

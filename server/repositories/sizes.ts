@@ -2,7 +2,6 @@
 // Every write is ONE security invoker Postgres function called through TenantDb.rpc, which sets p_tenant_id from
 // the server context (never from input). The functions return only what they changed; every write then re-reads
 // the whole list through the same mapper /api/me uses, so there is one list shape and one order in the code.
-import type { PostgrestError } from '@supabase/supabase-js'
 import type { H3Error } from 'h3'
 import { z } from 'zod'
 import { SIZE_FIELDS, SIZE_MESSAGES } from '../../shared/constants/sizes'
@@ -14,7 +13,7 @@ import type {
   SizeChangeResponse,
   SizeNameMatch,
 } from '../../shared/types/api'
-import type { TenantDb } from '../utils/db'
+import type { DbError, TenantDb } from '../utils/db'
 import { apiError } from '../utils/errors'
 import { toFarmSizes } from './tenants'
 
@@ -78,7 +77,7 @@ function parseNameMatch(details: string | null | undefined): SizeNameMatch | und
  */
 export async function mapSizeDbError(
   db: TenantDb,
-  error: Pick<PostgrestError, 'code' | 'message'> & { details?: string | null },
+  error: Pick<DbError, 'code' | 'message'> & { details?: string | null },
   operation?: SizeOperation,
 ): Promise<H3Error<ApiErrorData>> {
   switch (error.code) {

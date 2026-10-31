@@ -7,7 +7,6 @@
 // sales.ts: never log a raw error object, `message`, `details` or `hint` -- `internalError` logs only
 // `[orders] <scope> <SQLSTATE>`. TM037's detail (the shortfall) and TM051's detail ({"sizeIds":[..]}) carry only
 // ids and egg counts; the order re-read on a conflict carries only ids, dates, eggs and prices-per-tray.
-import type { PostgrestError } from '@supabase/supabase-js'
 import type { H3Error } from 'h3'
 import { z } from 'zod'
 import { ORDER_FIELDS, ORDER_MESSAGES } from '../../shared/constants/orders'
@@ -23,7 +22,7 @@ import type {
   OrdersListResponse,
   OrdersView,
 } from '../../shared/types/api'
-import type { TenantDb, TenantRpcArgs } from '../utils/db'
+import type { DbError, TenantDb, TenantRpcArgs } from '../utils/db'
 import { apiError } from '../utils/errors'
 import { orderDetailJsonSchema, orderJsonSchema, toOrder, toOrderDetail } from './order-json'
 import { saleJsonSchema, toSale } from './sales'
@@ -41,7 +40,7 @@ const shortfallDetailSchema = z.object({ shortfall: z.array(shortfallLineSchema)
 const sizeIdsDetailSchema = z.object({ sizeIds: z.array(z.string()) })
 
 /** The error type mapOrderDbError reads: only `code` (and `hint` / `details` for the field choice and the details). */
-export type OrderDbError = Pick<PostgrestError, 'code'> & { message?: string, details?: string | null, hint?: string | null }
+export type OrderDbError = Pick<DbError, 'code'> & { message?: string, details?: string | null, hint?: string | null }
 
 /** Logs the SQLSTATE and the place, never the error object, and returns a bare 500. */
 function internalError(scope: string, code?: string | null): H3Error<ApiErrorData> {

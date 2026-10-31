@@ -9,7 +9,6 @@
 // exposure than clients.ts, but keeps the same discipline: never log a raw error object, `message`, `details` or
 // `hint` -- `internalError` logs only `[sales] <scope> <SQLSTATE>`. TM037's `detail` (the shortfall) and TM036's
 // re-read (`sale`) carry only ids, sizes and egg counts, never a client's name or phone.
-import type { PostgrestError } from '@supabase/supabase-js'
 import type { H3Error } from 'h3'
 import { z } from 'zod'
 import { SALE_FIELDS, SALE_MESSAGES } from '../../shared/constants/sales'
@@ -23,7 +22,7 @@ import type {
   SalesListResponse,
   VoidSaleResponse,
 } from '../../shared/types/api'
-import type { TenantDb, TenantRpcArgs } from '../utils/db'
+import type { DbError, TenantDb, TenantRpcArgs } from '../utils/db'
 import { apiError } from '../utils/errors'
 import { orderDetailJsonSchema, toOrderDetail } from './order-json'
 
@@ -62,7 +61,7 @@ const shortfallLineSchema = z.object({ sizeId: z.string(), onHandEggs: z.number(
 const shortfallDetailSchema = z.object({ shortfall: z.array(shortfallLineSchema) })
 
 /** The error type mapSaleDbError reads: only `code` (and `hint` / `details` for the field choice and the shortfall). */
-export type SaleDbError = Pick<PostgrestError, 'code'> & { message?: string, details?: string | null, hint?: string | null }
+export type SaleDbError = Pick<DbError, 'code'> & { message?: string, details?: string | null, hint?: string | null }
 
 /** Logs the SQLSTATE and the place, never the error object, and returns a bare 500. */
 function internalError(scope: string, code?: string | null): H3Error<ApiErrorData> {
@@ -216,7 +215,7 @@ function toLinesArgs(lines: SaleLineInput[]): { p_size_ids: string[], p_eggs: nu
   }
 }
 
-/** Only the keys that are set: supabase-js types an optional rpc argument as `?: string`, not `string | null`. */
+/** Only the keys that are set: Database types define an optional rpc argument as `?: string`, not `string | null`. */
 function optionalArgs(clientId: string | null | undefined): { p_client_id?: string } {
   return clientId !== null && clientId !== undefined ? { p_client_id: clientId } : {}
 }

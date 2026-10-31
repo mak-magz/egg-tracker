@@ -15,7 +15,7 @@ export const PRODUCTION_FIELDS = {
 /**
  * Integer-safety cap per line (§3.8 D9, ~33,000 trays at 30). Not a UX tray limit.
  * Also enforced by the DB on every stored row (`production_eggs_range check (eggs between 1 and 1000000)` and
- * the `production_bounds` trigger, TM007, in supabase/migrations/*_production_bounds.sql), so a day's line can't
+ * the `production_bounds` trigger, TM007, in server/db/adapter.ts), so a day's line can't
  * grow past it through repeated adds either. Keep the two equal: tests/unit/production-schemas.spec.ts checks it.
  */
 export const MAX_EGGS_PER_LINE = 1_000_000

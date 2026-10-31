@@ -1,7 +1,6 @@
 // Production repository (docs/features/01-production-logging.md §3.3 "Repository and utils").
 // Every call goes through TenantDb.rpc, which sets p_tenant_id from the server context (never from input).
 // Each write is one security invoker Postgres function = one transaction (AC13, AC26).
-import type { PostgrestError } from '@supabase/supabase-js'
 import type { H3Error } from 'h3'
 import { z } from 'zod'
 import { PRODUCTION_FIELDS, PRODUCTION_MESSAGES } from '../../shared/constants/production'
@@ -14,7 +13,7 @@ import type {
   ProductionDay,
   ProductionDaysResponse,
 } from '../../shared/types/api'
-import type { TenantDb } from '../utils/db'
+import type { DbError, TenantDb } from '../utils/db'
 import { apiError } from '../utils/errors'
 
 // The jsonb the functions return (generated type is `Json`), parsed into the contract types.
@@ -30,7 +29,7 @@ const replaceJsonSchema = z.object({ day: dayJsonSchema })
 const deleteJsonSchema = z.object({ removed: dayJsonSchema })
 
 /** Maps the functions' SQLSTATEs (§3.1 M6 table) to API errors. Unknown errors become a logged 500. */
-export function mapProductionDbError(error: Pick<PostgrestError, 'code' | 'message'>): H3Error<ApiErrorData> {
+export function mapProductionDbError(error: Pick<DbError, 'code' | 'message'>): H3Error<ApiErrorData> {
   switch (error.code) {
     case 'TM001':
       return apiError(400, 'validation_failed', { [PRODUCTION_FIELDS.sizes]: PRODUCTION_MESSAGES.sizesChanged })

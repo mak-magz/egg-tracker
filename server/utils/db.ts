@@ -1,12 +1,18 @@
 // Tenant-scoped repository foundation (docs/features/00-project-scaffold.md §3.4, D3).
-// Queries run through supabase-js AS THE SIGNED-IN USER (publishable key + their JWT), so Postgres sees the
-// non-superuser `authenticated` role and RLS applies via app.current_tenant_id(). On top of that, every
-// scoped query injects `tenant_id` here, so a forgotten filter returns nothing instead of leaking.
+// Each tenant's data lives in its own isolated Turso/libSQL database (database-per-tenant),
+// accessed via Drizzle ORM (`createDrizzleBackedClient`). On top of database-per-tenant isolation,
+// every scoped query injects `tenant_id` here, so a forgotten filter returns nothing instead of leaking.
 // Only server/repositories/ should touch `TenantDb.client`; routes call repositories.
+import { eq } from 'drizzle-orm'
 import type { H3Event } from 'h3'
-import type { PostgrestError, SupabaseClient } from '@supabase/supabase-js'
-import { serverSupabaseClient } from '#supabase/server'
 import type { Database } from '../../shared/types/database.types'
+import { createDrizzleBackedClient } from '../db/adapter'
+import type { RpcErrorShape } from '../db/adapter'
+import * as controlSchema from '../db/schema/control'
+import { getControlDb, getTenantDrizzleDb } from '../db/turso'
+import { apiError } from './errors'
+
+export type DbError = RpcErrorShape
 
 type Tables = Database['public']['Tables']
 type Functions = Database['public']['Functions']
@@ -19,19 +25,41 @@ export type TenantRpc = {
 export type TenantRpcArgs<F extends TenantRpc> = Omit<Functions[F]['Args'], 'p_tenant_id'>
 export interface TenantRpcResult<F extends TenantRpc> {
   data: Functions[F]['Returns'] | null
-  error: PostgrestError | null
+  error: DbError | null
 }
 
 /** Tables that carry a `tenant_id` column. `tenants` (root) and `memberships` (resolution) are handled explicitly. */
 export type TenantTable = Exclude<keyof Tables, 'tenants' | 'memberships'>
 
-type Client = SupabaseClient<Database>
-// Single-signature wrapper around the overloaded `client.from`, so `QueryBuilder<T>` can be derived per table.
-function fromTable<T extends keyof Tables>(client: Client, table: T) {
-  return client.from(table)
+export interface QueryResult<R = unknown> {
+  data: R | null
+  error: DbError | null
 }
-/** The exact supabase-js query builder type for table T (per-table Row/Insert/Update typing). */
-export type QueryBuilder<T extends keyof Tables> = ReturnType<typeof fromTable<T>>
+
+export interface TableSelectChain<T extends keyof Tables> extends PromiseLike<QueryResult<Tables[T]['Row'][]>> {
+  eq: (column: string, value: string) => TableSelectChain<T>
+  order: (column: string, opts?: { ascending?: boolean }) => TableSelectChain<T>
+  maybeSingle: () => Promise<QueryResult<Tables[T]['Row'] | null>>
+}
+
+export interface TableMutationChain<T extends keyof Tables> extends PromiseLike<QueryResult<Tables[T]['Row'][]>> {
+  eq: (column: string, value: string) => TableMutationChain<T>
+  select: (columns?: string) => TableSelectChain<T>
+}
+
+export interface TableQueryBuilder<T extends keyof Tables> {
+  select: (columns?: string) => TableSelectChain<T>
+  insert: (rows: Tables[T]['Insert'] | Tables[T]['Insert'][]) => TableMutationChain<T>
+  update: (patch: Tables[T]['Update']) => TableMutationChain<T>
+  delete: () => TableMutationChain<T>
+}
+
+export interface TenantClient {
+  from: <T extends keyof Tables>(table: T) => TableQueryBuilder<T>
+  rpc: <F extends keyof Functions>(fn: F, args: Functions[F]['Args']) => PromiseLike<QueryResult<Functions[F]['Returns']>>
+}
+
+export type QueryBuilder<T extends keyof Tables> = TableQueryBuilder<T>
 
 /** Insert rows WITHOUT tenant_id: the scope adds it, and callers can't override it. */
 export type ScopedInsert<T extends TenantTable> = Omit<Tables[T]['Insert'], 'tenant_id'>
@@ -52,12 +80,12 @@ export interface ScopedTable<T extends TenantTable> {
 
 export interface TenantDb {
   readonly tenantId: string
-  /** The user-JWT client. Use only inside server/repositories/. */
-  readonly client: Client
+  /** The tenant-scoped client. Use only inside server/repositories/. */
+  readonly client: TenantClient
   scoped: <T extends TenantTable>(table: T) => ScopedTable<T>
   /**
    * The RPC form of scoped(): calls a public function with `p_tenant_id` set to this request's tenant.
-   * A smuggled `p_tenant_id` in args is dropped. Each function also asserts it equals app.current_tenant_id().
+   * A smuggled `p_tenant_id` in args is dropped.
    */
   rpc: <F extends TenantRpc>(fn: F, args: TenantRpcArgs<F>) => Promise<TenantRpcResult<F>>
 }
@@ -74,7 +102,7 @@ function stripTenantId<R extends object>(row: R): R {
 // The builder methods are generic over the table's columns, which TS can't resolve for a generic T.
 // Internally we go through this minimal untyped shape; the public ScopedTable<T> types are what callers see.
 interface LooseFilter { eq: (column: string, value: string) => unknown }
-type LooseRpc = (fn: string, args: Record<string, unknown>) => PromiseLike<{ data: unknown, error: PostgrestError | null }>
+type LooseRpc = (fn: string, args: Record<string, unknown>) => PromiseLike<{ data: unknown, error: DbError | null }>
 interface LooseBuilder {
   select: (columns?: string) => LooseFilter
   insert: (rows: object | object[]) => unknown
@@ -82,13 +110,13 @@ interface LooseBuilder {
   delete: () => LooseFilter
 }
 
-export function createTenantDbFromClient(client: Client, tenantId: string): TenantDb {
+export function createTenantDbFromClient(client: TenantClient, tenantId: string): TenantDb {
   if (!tenantId) throw new Error('createTenantDb: tenantId is required')
   return Object.freeze({
     tenantId,
     client,
     scoped<T extends TenantTable>(table: T): ScopedTable<T> {
-      const from = () => fromTable(client, table) as unknown as LooseBuilder
+      const from = () => client.from(table) as unknown as LooseBuilder
       return {
         table,
         select: columns => from().select(columns ?? '*').eq('tenant_id', tenantId) as ReturnType<ScopedTable<T>['select']>,
@@ -110,6 +138,23 @@ export function createTenantDbFromClient(client: Client, tenantId: string): Tena
 }
 
 /** The tenant-scoped DB for this request. `tenantId` must come from requireTenant(), never from input. */
-export async function createTenantDb(event: H3Event, tenantId: string): Promise<TenantDb> {
-  return createTenantDbFromClient(await serverSupabaseClient(event), tenantId)
+export async function createTenantDb(_event: H3Event, tenantId: string): Promise<TenantDb> {
+  const controlDb = getControlDb()
+  const [tenant] = await controlDb
+    .select()
+    .from(controlSchema.tenants)
+    .where(eq(controlSchema.tenants.id, tenantId))
+
+  if (!tenant) {
+    throw apiError(403, 'no_farm')
+  }
+
+  const tenantDrizzle = getTenantDrizzleDb(tenant.dbUrl, tenant.dbAuthToken || undefined)
+  const drizzleClient = createDrizzleBackedClient(tenantDrizzle, {
+    tenantId: tenant.id,
+    name: tenant.name,
+    eggsPerTray: tenant.eggsPerTray,
+    currency: tenant.currency,
+  }) as unknown as TenantClient
+  return createTenantDbFromClient(drizzleClient, tenantId)
 }

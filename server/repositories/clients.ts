@@ -1,14 +1,13 @@
 // Clients repository (docs/features/03-clients.md §3.3 "Repository and server utils").
-// Every write is ONE security invoker Postgres function called through TenantDb.rpc, which sets p_tenant_id from the
+// Every write is ONE function called through TenantDb.rpc, which sets p_tenant_id from the
 // server context (never from input). Each function returns only the id it changed; the repository then re-reads that
 // ONE row through the one mapper (`toClient`), so there is one `Client` shape in the code.
 //
-// PERSONAL DATA (AC29): names, phones and prices never reach a log or an error body by accident. Raw PostgREST errors
+// PERSONAL DATA (AC29): names, phones and prices never reach a log or an error body by accident. Raw DB errors
 // carry values (a 23505 detail holds the key, a 23514 detail the whole failing row, a 22P02 quotes the input), so this
 // file NEVER logs an error object, `message`, `details` or `hint`: `internalError` logs `[clients] <scope> <SQLSTATE>`
 // and throws a bare 500. The only places a name leaves this file are `existing.name` (409 name_taken) and `client`
 // (409 client_changed), both read BY ID for the signed-in owner of the same farm (owner decision, §3.9 point 1).
-import type { PostgrestError } from '@supabase/supabase-js'
 import type { H3Error } from 'h3'
 import { z } from 'zod'
 import { CLIENT_FIELDS, CLIENT_MESSAGES } from '../../shared/constants/clients'
@@ -22,7 +21,7 @@ import type {
   UpdateClientRequest,
 } from '../../shared/types/api'
 import type { Database } from '../../shared/types/database.types'
-import type { TenantDb, TenantRpcArgs } from '../utils/db'
+import type { DbError, TenantDb, TenantRpcArgs } from '../utils/db'
 import { apiError } from '../utils/errors'
 
 /** Which function raised, so an error shared by several (TM005, PGRST102) lands on the right field. */
@@ -42,7 +41,7 @@ const nameMatchDetailSchema = z.object({ id: z.string() })
 const existingRowSchema = z.object({ id: z.string(), name: z.string(), archived_at: z.string().nullable() })
 
 /** The error type mapClientDbError reads: only `code` (and `hint` / `details` for the field choice and TM020's id). */
-export type ClientDbError = Pick<PostgrestError, 'code'> & { message?: string, details?: string | null, hint?: string | null }
+export type ClientDbError = Pick<DbError, 'code'> & { message?: string, details?: string | null, hint?: string | null }
 
 /** Logs the SQLSTATE and the place, never the error object (AC29), and returns a bare 500. */
 function internalError(scope: string, code?: string | null): H3Error<ApiErrorData> {
@@ -56,7 +55,7 @@ function parseResult<T>(scope: string, schema: z.ZodType<T>, data: unknown): T {
   return parsed.data
 }
 
-/** The ONE mapper: a database row to the API's `Client`. `default_price` is a JSON number from PostgREST. */
+/** The ONE mapper: a database row to the API's `Client`. `default_price` is a JSON number. */
 export function toClient(row: ClientRow): Client {
   return {
     id: row.id,
@@ -137,7 +136,7 @@ function priceMessage(hint: string | null | undefined): string {
 }
 
 /**
- * Maps the functions' (and the M12 trigger's) SQLSTATEs (§3.1 table) to API errors. Async because TM020 reads the
+ * Maps the functions' SQLSTATEs (§3.1 table) to API errors. Async because TM020 reads the
  * clashing client's name and status BY ID, and TM022 reads the current client (`clientId`); if either read fails the
  * error is thrown WITHOUT `existing` / `client` (the form then shows the generic message and the screen refreshes on
  * its own). Nothing from `message` is ever used. Returns the error; callers `throw` it.
@@ -178,11 +177,11 @@ export async function mapClientDbError(
       return apiError(400, 'validation_failed', {
         [operation === 'add' ? CLIENT_FIELDS.submissionId : operation === 'update' ? CLIENT_FIELDS.version : CLIENT_FIELDS.id]: CLIENT_MESSAGES.changedElsewhere,
       })
-    // Defence in depth for text Postgres or PostgREST can't take (U+0000, a lone surrogate): the shared schema
+    // Defence in depth for text that can't be stored (U+0000, a lone surrogate): the shared schema
     // refuses these first, so this only runs if a request got past it. Only the name-carrying calls can cause it.
     case '22P05': // untranslatable_character (\u0000 cannot be converted to text)
     case '22021': // character_not_in_repertoire (invalid byte sequence)
-    case 'PGRST102': // PostgREST: invalid request body (lone surrogate in the JSON)
+    case 'PGRST102': // invalid request body (lone surrogate in the JSON)
       if (operation === 'add' || operation === 'update') {
         return apiError(400, 'validation_failed', { [CLIENT_FIELDS.name]: CLIENT_MESSAGES.nameInvalid })
       }
@@ -195,7 +194,7 @@ export async function mapClientDbError(
   }
 }
 
-/** Only the keys that are set: supabase-js types an optional rpc argument as `?: string`, not `string | null`. */
+/** Only the keys that are set: optional rpc arguments are typed as `?: string`, not `string | null`. */
 function optionalArgs(phone: string | null | undefined, defaultPrice: number | null | undefined): { p_phone?: string, p_default_price?: number } {
   const args: { p_phone?: string, p_default_price?: number } = {}
   if (phone !== null && phone !== undefined) args.p_phone = phone

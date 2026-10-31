@@ -53,5 +53,5 @@ export async function getCurrentFarm(db: TenantDb): Promise<FarmSummary | null> 
     .maybeSingle()
 
   if (error) throw new RepositoryError('farm lookup failed', error.code)
-  return data ? toFarmSummary(data) : null
+  return data ? toFarmSummary(data as unknown as FarmSummaryRow) : null
 }
