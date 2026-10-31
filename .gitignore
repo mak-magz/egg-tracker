@@ -23,9 +23,12 @@ pnpm-lock.yaml
 .DS_Store
 Thumbs.db
 
-# Supabase local
-supabase/.temp/
-supabase/.branches/
+# Local SQLite / Turso databases
+*.db
+*.db-journal
+*.db-wal
+local-control.db*
+local-tenant*.db*
 
 # Claude Code local settings
 .claude/settings.local.json
