@@ -2,7 +2,7 @@
 name: frontend-dev
 role: Frontend Developer
 description: Frontend Developer for the Egg Farm Tracker. Implements the [FE] tasks of a designed feature doc — Nuxt pages, layouts, components, composables — with Nuxt UI v4 + Tailwind CSS v4 + VueFire, following the UI spec. Use for any client-side work (app/, pages/, components/, composables/, layouts/).
-model: pro
+model: flash
 effort: medium
 ---
 

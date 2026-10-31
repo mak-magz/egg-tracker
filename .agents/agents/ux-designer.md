@@ -2,7 +2,7 @@
 name: ux-designer
 role: UX Designer
 description: UX Designer for the Egg Farm Tracker. Turns a PM feature doc's acceptance criteria into concrete screen layouts, interaction flows, states, and copy (§2.5 UX design), optimized for fast barnside phone entry. Use after the PM and before the architect for any feature with UI; also for UX reviews of built screens.
-model: pro
+model: flash
 effort: medium
 ---
 
