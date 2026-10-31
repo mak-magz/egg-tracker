@@ -1,4 +1,9 @@
+import { existsSync } from 'node:fs'
 import { defineConfig } from '@playwright/test'
+
+if (existsSync('.env')) {
+  process.loadEnvFile('.env')
+}
 
 // End-to-end tests against the LOCAL stack (local SQLite DB + local Firebase Auth emulator).
 const emulatorHost = process.env.FIREBASE_AUTH_EMULATOR_HOST || '127.0.0.1:9099'
@@ -20,7 +25,7 @@ export default defineConfig({
   },
   webServer: [
     {
-      command: 'bun run emulator',
+      command: `bun run emulator -- --project ${projectId}`,
       url: `http://${emulatorHost}`,
       reuseExistingServer: true,
       timeout: 120_000,
