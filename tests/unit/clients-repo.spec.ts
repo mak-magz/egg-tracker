@@ -1,9 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { SupabaseClient } from '@supabase/supabase-js'
-import type { Database } from '../../shared/types/database.types'
+import type { TenantClient } from '../../server/utils/db'
 import { CLIENT_MESSAGES } from '../../shared/constants/clients'
-
-vi.mock('#supabase/server', () => ({ serverSupabaseClient: vi.fn() }))
 
 const { createTenantDbFromClient } = await import('../../server/utils/db')
 const repo = await import('../../server/repositories/clients')
@@ -24,7 +21,7 @@ const oakhill = { id: OAKHILL, name: 'Oakhill Bakery', phone: null, defaultPrice
 interface SelectCall { table: string, columns: string, eq: [string, string][], order: string[], single: boolean }
 
 /**
- * A fake supabase client. `rpc` replies with `rpcReply`; every `.from(table).select(columns)` chain is recorded and
+ * A fake TenantClient. `rpc` replies with `rpcReply`; every `.from(table).select(columns)` chain is recorded and
  * answered by `read`: a list (awaited after `.eq('tenant_id', ..)` and `.order(..)`) or one row (`.maybeSingle()`).
  */
 function fakeDb(rpcReply: Reply, read: (call: SelectCall) => Reply = call => ({ data: call.single ? mapleRow : [oakhillRow, mapleRow], error: null })) {
@@ -58,7 +55,7 @@ function fakeDb(rpcReply: Reply, read: (call: SelectCall) => Reply = call => ({ 
       },
     }),
   }
-  return { db: createTenantDbFromClient(client as unknown as SupabaseClient<Database>, TENANT), rpcCalls, selects }
+  return { db: createTenantDbFromClient(client as unknown as TenantClient, TENANT), rpcCalls, selects }
 }
 
 function pgError(code: string, extra: { hint?: string, details?: string } = {}) {

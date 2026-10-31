@@ -88,27 +88,33 @@ describe('server guards', () => {
     expect(offenders.map(rel)).toEqual([])
   })
 
-  it('(b) #supabase/server is imported only by server/utils/auth.ts and server/utils/db.ts', () => {
-    const allowed = new Set(['server/utils/auth.ts', 'server/utils/db.ts'])
-    const offenders = [...serverFiles, ...walk(join(ROOT, 'app')), ...walk(join(ROOT, 'shared'))]
-      .filter(f => /['"]#supabase\/server['"]/.test(code(f)) && !allowed.has(rel(f)))
+  it('(b) firebase-admin and server/db/turso are imported only by auth, db, memberships, and cli layers', () => {
+    const allowedAuth = new Set(['server/utils/auth.ts', 'server/cli/provision.ts'])
+    const allowedTurso = new Set(['server/utils/db.ts', 'server/repositories/memberships.ts', 'server/cli/provision.ts'])
+    const allFiles = [...serverFiles, ...walk(join(ROOT, 'app')), ...walk(join(ROOT, 'shared'))]
+    const authOffenders = allFiles.filter(f => /['"]firebase-admin/.test(code(f)) && !allowedAuth.has(rel(f)))
+    const tursoOffenders = allFiles.filter(f => /['"](?:.*\/)?db\/turso['"]/.test(code(f)) && !allowedTurso.has(rel(f)))
+    expect(authOffenders.map(rel)).toEqual([])
+    expect(tursoOffenders.map(rel)).toEqual([])
+  })
+
+  it('(b2) server routes never call database clients directly (repositories do)', () => {
+    const offenders = apiFiles.filter(f => /\bgetControlDrizzleDb\b|\bgetTenantDrizzleDb\b|\.from\s*\(\s*['"]|\.rpc\s*\(/.test(code(f)))
     expect(offenders.map(rel)).toEqual([])
   })
 
-  it('(b2) server routes never call supabase clients directly (repositories do)', () => {
-    const offenders = apiFiles.filter(f => /\bserverSupabase\w+\b|\.from\s*\(\s*['"]|\.rpc\s*\(/.test(code(f)))
-    expect(offenders.map(rel)).toEqual([])
-  })
-
-  it('(c) the service role is never used at app runtime', () => {
-    const offenders = serverFiles.filter(f => /serverSupabaseServiceRole/.test(code(f)))
-    expect(offenders.map(rel)).toEqual([])
-  })
-
-  it('(c2) only the provisioning CLI reads the secret key', () => {
+  it('(c) Turso platform API token is never used at app runtime', () => {
     const offenders = serverFiles
       .filter(f => !rel(f).startsWith('server/cli/'))
-      .filter(f => /SUPABASE_SECRET_KEY|secretKey|SERVICE_ROLE/i.test(code(f)))
+      .filter(f => /TURSO_API_TOKEN|TURSO_ORG/.test(code(f)))
+    expect(offenders.map(rel)).toEqual([])
+  })
+
+  it('(c2) only server/utils/auth.ts and server/cli/ read FIREBASE_SERVICE_ACCOUNT', () => {
+    const allowed = new Set(['server/utils/auth.ts', 'server/cli/provision.ts'])
+    const offenders = serverFiles
+      .filter(f => !allowed.has(rel(f)))
+      .filter(f => /FIREBASE_SERVICE_ACCOUNT/i.test(code(f)))
     expect(offenders.map(rel)).toEqual([])
   })
 

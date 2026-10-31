@@ -1,9 +1,6 @@
-import { describe, expect, it, vi } from 'vitest'
-import type { SupabaseClient } from '@supabase/supabase-js'
-import type { Database } from '../../shared/types/database.types'
+import { describe, expect, it } from 'vitest'
+import type { TenantClient } from '../../server/utils/db'
 import { SIZE_MESSAGES } from '../../shared/constants/sizes'
-
-vi.mock('#supabase/server', () => ({ serverSupabaseClient: vi.fn() }))
 
 const { createTenantDbFromClient } = await import('../../server/utils/db')
 const repo = await import('../../server/repositories/sizes')
@@ -29,7 +26,7 @@ const sizes = [
   { id: JUMBO, name: 'Jumbo', sortOrder: 3, colorSlot: 3, active: false },
 ]
 
-/** A fake supabase client: `rpc` replies with `rpcReply`, `.from('sizes').select().eq()` replies with `listReply`. */
+/** A fake TenantClient: `rpc` replies with `rpcReply`, `.from('sizes').select().eq()` replies with `listReply`. */
 function fakeDb(rpcReply: Reply, listReply: Reply = { data: rows, error: null }) {
   const rpcCalls: [string, Record<string, unknown>][] = []
   const selects: { table: string, columns: string, eq: [string, string][] }[] = []
@@ -51,7 +48,7 @@ function fakeDb(rpcReply: Reply, listReply: Reply = { data: rows, error: null })
       },
     }),
   }
-  return { db: createTenantDbFromClient(client as unknown as SupabaseClient<Database>, TENANT), rpcCalls, selects }
+  return { db: createTenantDbFromClient(client as unknown as TenantClient, TENANT), rpcCalls, selects }
 }
 
 function pgError(code: string, details = '') {

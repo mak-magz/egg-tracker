@@ -89,7 +89,7 @@ describe('isLocalTarget / outcomeMessage', () => {
   it('recognises the local stack only', () => {
     expect(isLocalTarget('http://127.0.0.1:54321')).toBe(true)
     expect(isLocalTarget('http://localhost:54321')).toBe(true)
-    expect(isLocalTarget('https://abc.supabase.co')).toBe(false)
+    expect(isLocalTarget('libsql://abc.turso.io')).toBe(false)
     expect(isLocalTarget('http://127.0.0.1.evil.com')).toBe(false)
     expect(isLocalTarget('not a url')).toBe(false)
   })

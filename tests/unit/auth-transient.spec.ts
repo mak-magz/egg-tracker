@@ -1,6 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
-
-vi.mock('#supabase/server', () => ({ serverSupabaseClient: vi.fn() }))
+import { describe, expect, it } from 'vitest'
 
 const { isTransientAuthFailure } = await import('../../server/utils/auth')
 

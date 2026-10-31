@@ -1,14 +1,11 @@
-import { describe, expect, it, vi } from 'vitest'
-import type { SupabaseClient } from '@supabase/supabase-js'
-import type { Database } from '../../shared/types/database.types'
-
-vi.mock('#supabase/server', () => ({ serverSupabaseClient: vi.fn() }))
+import { describe, expect, it } from 'vitest'
+import type { TenantClient } from '../../server/utils/db'
 
 const { createTenantDbFromClient } = await import('../../server/utils/db')
 
 type Call = [method: string, ...args: unknown[]]
 
-/** Records the builder chain supabase-js would send: from(table).method(args).eq(...) */
+/** Records the builder chain TenantClient receives: from(table).method(args).eq(...) */
 function fakeClient() {
   const calls: Call[] = []
   const chain: Record<string, (...args: unknown[]) => unknown> = {}
@@ -24,7 +21,7 @@ function fakeClient() {
       return chain
     },
   }
-  return { client: client as unknown as SupabaseClient<Database>, calls }
+  return { client: client as unknown as TenantClient, calls }
 }
 
 const TENANT = '11111111-1111-1111-1111-111111111111'
@@ -91,7 +88,7 @@ describe('TenantDb.rpc', () => {
         return Promise.resolve(result)
       },
     }
-    return { client: client as unknown as SupabaseClient<Database>, calls }
+    return { client: client as unknown as TenantClient, calls }
   }
 
   it('injects p_tenant_id from the db and passes the other args through', async () => {

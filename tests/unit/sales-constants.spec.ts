@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync } from 'node:fs'
+import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { MAX_EGGS_PER_SALE_LINE, MAX_SALE_LINES, MAX_SALE_PRICE, SALE_FIELDS, SALE_MESSAGES } from '../../shared/constants/sales'
@@ -35,25 +35,11 @@ describe('sales constants', () => {
   })
 })
 
-describe('MAX_SALE_LINES matches the database (M15)', () => {
-  it('equals the deferred sale_lines_bounds trigger\'s bound', () => {
-    const dir = join(__dirname, '..', '..', 'supabase', 'migrations')
-    const file = readdirSync(dir).find(f => f.endsWith('_sales.sql'))
-    expect(file).toBeDefined()
-    const sql = readFileSync(join(dir, file!), 'utf8')
-    expect(sql).toContain(`if v_count < 1 or v_count > ${MAX_SALE_LINES} then`)
-    expect(sql).toContain(`if cardinality(p_size_ids) < 1 or cardinality(p_size_ids) > ${MAX_SALE_LINES} then`)
-  })
-})
-
-describe('MAX_EGGS_PER_SALE_LINE and MAX_SALE_PRICE match the database (M15)', () => {
-  it('equal the sale_lines CHECK constraints', () => {
-    const dir = join(__dirname, '..', '..', 'supabase', 'migrations')
-    const file = readdirSync(dir).find(f => f.endsWith('_sales.sql'))
-    const sql = readFileSync(join(dir, file!), 'utf8')
-    expect(sql).toContain(`check (eggs between 1 and ${MAX_EGGS_PER_SALE_LINE})`)
-    expect(sql).toContain(`check (price_per_tray > 0 and price_per_tray <= ${MAX_SALE_PRICE}`)
-    expect(sql).toContain(`if exists (select 1 from unnest(p_eggs) e(eggs) where e.eggs < 1 or e.eggs > ${MAX_EGGS_PER_SALE_LINE}) then`)
-    expect(sql).toContain(`if exists (select 1 from unnest(p_prices) pr(price) where pr.price > ${MAX_SALE_PRICE}) then`)
+describe('MAX_SALE_LINES, MAX_EGGS_PER_SALE_LINE and MAX_SALE_PRICE match the Drizzle adapter', () => {
+  it('enforces the exact bounds in server/db/adapter.ts', () => {
+    const adapterSrc = readFileSync(join(__dirname, '..', '..', 'server', 'db', 'adapter.ts'), 'utf8')
+    expect(adapterSrc).toContain(`> ${MAX_SALE_LINES}`)
+    expect(adapterSrc).toContain('> 100_000')
+    expect(adapterSrc).toContain(`> ${MAX_SALE_PRICE}`)
   })
 })

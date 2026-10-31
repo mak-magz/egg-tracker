@@ -15,7 +15,7 @@ const SIZES: FarmSize[] = [
   size('jumbo', 'Jumbo', false, 4),
 ]
 
-// The pgTAP tests for app.normalize_size_name (supabase/tests/database/050) use the same fixtures.
+// The database adapter normalizeSizeName helper uses the same rules.
 const COMPOSED = 'Café' // é as one code point
 const DECOMPOSED = 'Café' // e + combining acute
 

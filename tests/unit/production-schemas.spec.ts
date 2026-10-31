@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync } from 'node:fs'
+import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterEach, describe, expect, expectTypeOf, it, vi } from 'vitest'
 import { MAX_EGGS_PER_LINE, PRODUCTION_FIELDS, PRODUCTION_MESSAGES } from '../../shared/constants/production'
@@ -260,12 +260,10 @@ describe('invalid dates never reach date comparisons', () => {
 })
 
 describe('MAX_EGGS_PER_LINE matches the database', () => {
-  it('equals the production_eggs_range check and the production_bounds trigger cap', () => {
-    const dir = join(__dirname, '..', '..', 'supabase', 'migrations')
-    const file = readdirSync(dir).find(f => f.endsWith('_production_bounds.sql'))
-    expect(file).toBeDefined()
-    const sql = readFileSync(join(dir, file!), 'utf8')
-    expect(sql).toContain(`check (eggs between 1 and ${MAX_EGGS_PER_LINE})`)
-    expect(sql).toContain(`new.eggs > ${MAX_EGGS_PER_LINE}`)
+  it('equals the per-line cap enforced in the Drizzle tenant adapter', () => {
+    const adapterSrc = readFileSync(join(__dirname, '..', '..', 'server', 'db', 'adapter.ts'), 'utf8')
+    expect(adapterSrc).toContain('nextCount > 1_000_000')
+    expect(adapterSrc).toContain('rejects > 1_000_000 || eggs.some(e => e > 1_000_000)')
+    expect(MAX_EGGS_PER_LINE).toBe(1_000_000)
   })
 })

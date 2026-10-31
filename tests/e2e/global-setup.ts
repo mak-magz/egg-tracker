@@ -5,10 +5,11 @@ import { E2E_EMAIL, E2E_PASSWORD, STATE_PATH } from './env'
 
 export default async function globalSetup() {
   if (existsSync('.env')) process.loadEnvFile('.env')
-  const url = process.env.NUXT_PUBLIC_SUPABASE_URL ?? ''
+  const url = process.env.NUXT_TURSO_CONTROL_URL ?? 'file:local-control.db'
+  const isLocalFile = url.startsWith('file:')
   const host = URL.canParse(url) ? new URL(url).hostname : ''
-  if (host !== '127.0.0.1' && host !== 'localhost') {
-    throw new Error('e2e refuses to run: NUXT_PUBLIC_SUPABASE_URL must be a local 127.0.0.1/localhost URL (load .env).')
+  if (!isLocalFile && host !== '127.0.0.1' && host !== 'localhost') {
+    throw new Error('e2e refuses to run: NUXT_TURSO_CONTROL_URL must be a local file: or 127.0.0.1/localhost URL (load .env).')
   }
 
   // Idempotent: re-running for the same email reports "No changes made".

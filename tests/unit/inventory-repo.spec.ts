@@ -1,8 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { SupabaseClient } from '@supabase/supabase-js'
-import type { Database } from '../../shared/types/database.types'
-
-vi.mock('#supabase/server', () => ({ serverSupabaseClient: vi.fn() }))
+import type { TenantClient } from '../../server/utils/db'
 
 const { createTenantDbFromClient } = await import('../../server/utils/db')
 const { getInventory } = await import('../../server/repositories/inventory')
@@ -25,7 +22,7 @@ function fakeDb(reply: { data: unknown, error: unknown }) {
       return Promise.resolve(reply)
     },
   }
-  return { db: createTenantDbFromClient(client as unknown as SupabaseClient<Database>, TENANT), calls }
+  return { db: createTenantDbFromClient(client as unknown as TenantClient, TENANT), calls }
 }
 
 const spies = () => (['error', 'warn', 'log', 'info', 'debug'] as const).map(m => vi.spyOn(console, m).mockImplementation(() => {}))

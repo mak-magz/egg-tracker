@@ -1,9 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { SupabaseClient } from '@supabase/supabase-js'
-import type { Database } from '../../shared/types/database.types'
+import type { TenantClient } from '../../server/utils/db'
 import { SALE_FIELDS, SALE_MESSAGES } from '../../shared/constants/sales'
-
-vi.mock('#supabase/server', () => ({ serverSupabaseClient: vi.fn() }))
 
 const { createTenantDbFromClient } = await import('../../server/utils/db')
 const repo = await import('../../server/repositories/sales')
@@ -46,7 +43,7 @@ const sale = {
   saleTotal: 54.23,
 }
 
-/** A fake supabase client that only ever calls .rpc() (this repository never touches .from()). Replies come from
+/** A fake TenantClient that only ever calls .rpc() (this repository never touches .from()). Replies come from
  * `responses[fn]`, or `fallback` for a function not listed (e.g. get_sale, used internally by mapSaleDbError). */
 function fakeDb(responses: Record<string, Reply>, fallback: Reply = { data: { sale: saleRow }, error: null }) {
   const calls: [string, Record<string, unknown>][] = []
@@ -56,7 +53,7 @@ function fakeDb(responses: Record<string, Reply>, fallback: Reply = { data: { sa
       return Promise.resolve(fn in responses ? responses[fn] : fallback)
     },
   }
-  return { db: createTenantDbFromClient(client as unknown as SupabaseClient<Database>, TENANT), calls }
+  return { db: createTenantDbFromClient(client as unknown as TenantClient, TENANT), calls }
 }
 
 function pgError(code: string, extra: { hint?: string, details?: string } = {}) {

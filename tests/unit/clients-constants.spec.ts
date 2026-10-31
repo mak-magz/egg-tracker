@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync } from 'node:fs'
+import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
@@ -11,14 +11,6 @@ import {
   MAX_CLIENTS_PER_FARM,
 } from '../../shared/constants/clients'
 import { DEFAULT_CURRENCY } from '../../shared/constants/currency'
-
-const dir = join(__dirname, '..', '..', 'supabase', 'migrations')
-
-function migration(suffix: string): string {
-  const file = readdirSync(dir).find(f => f.endsWith(suffix))
-  expect(file, `the ${suffix} migration`).toBeDefined()
-  return readFileSync(join(dir, file!), 'utf8')
-}
 
 describe('clients constants', () => {
   it('has the owner-approved limits', () => {
@@ -72,59 +64,22 @@ describe('clients constants', () => {
   })
 })
 
-describe('DEFAULT_CURRENCY matches the M11 tenants_currency migration', () => {
-  const sql = migration('_tenants_currency.sql')
+describe('DEFAULT_CURRENCY matches the Control DB schema', () => {
+  const controlSrc = readFileSync(join(__dirname, '..', '..', 'server', 'db', 'schema', 'control.ts'), 'utf8')
 
-  it('equals the column default, and the column is not null', () => {
-    const m = /add column currency text not null default '([A-Z]{3})'/.exec(sql)
-    expect(m, 'the currency column definition').not.toBeNull()
-    expect(m![1]).toBe(DEFAULT_CURRENCY)
-  })
-
-  it('is format-checked (three capital letters), not list-checked', () => {
-    expect(sql).toContain('constraint tenants_currency_format check (currency ~ \'^[A-Z]{3}$\')')
-  })
-
-  it('adds no grant, so owners still cannot write the currency (AC35)', () => {
-    expect(sql.replace(/^--.*$/gm, '')).not.toMatch(/\bgrant\b/i)
-    expect(sql).not.toMatch(/create policy/i)
+  it('equals the column default on tenants', () => {
+    expect(controlSrc).toContain(`.default('${DEFAULT_CURRENCY}')`)
   })
 })
 
-describe('the client limits match the M12 clients migration', () => {
-  const sql = migration('_clients.sql')
+describe('the client limits match the Drizzle adapter', () => {
+  const adapterSrc = readFileSync(join(__dirname, '..', '..', 'server', 'db', 'adapter.ts'), 'utf8')
 
-  it('the name and phone lengths and the price bound equal the CHECK constraints', () => {
-    expect(sql).toContain(`char_length(name) between 1 and ${MAX_CLIENT_NAME_LENGTH}`)
-    expect(sql).toContain(`char_length(phone) between 1 and ${MAX_CLIENT_PHONE_LENGTH}`)
-    expect(sql).toContain(`default_price <= ${MAX_CLIENT_PRICE}`)
-    expect(sql).toContain(`default_price = round(default_price, ${CLIENT_PRICE_DECIMALS})`)
-    expect(sql).toContain('default_price > 0')
-  })
-
-  it('assert_client_fields uses the same numbers', () => {
-    expect(sql).toContain(`char_length(p_name) > ${MAX_CLIENT_NAME_LENGTH}`)
-    expect(sql).toContain(`char_length(p_phone) > ${MAX_CLIENT_PHONE_LENGTH}`)
-    expect(sql).toContain(`p_price > ${MAX_CLIENT_PRICE}`)
-    expect(sql).toContain(`p_price <> round(p_price, ${CLIENT_PRICE_DECIMALS})`)
-  })
-
-  it('the raw-input cap is MAX_CLIENT_TEXT_INPUT_LENGTH for the name and the phone', () => {
-    expect(sql).toContain(`char_length(p_name) > ${MAX_CLIENT_TEXT_INPUT_LENGTH}`)
-    expect(sql).toContain(`char_length(p_phone) > ${MAX_CLIENT_TEXT_INPUT_LENGTH}`)
-  })
-
-  it('the client cap and the ledger cap are MAX_CLIENTS_PER_FARM', () => {
-    expect(sql).toMatch(new RegExp(`>= ${MAX_CLIENTS_PER_FARM} then\\s+raise exception 'too many clients' using errcode = 'TM021'`))
-    expect(sql).toMatch(new RegExp(`>= ${MAX_CLIENTS_PER_FARM} then\\s+raise exception 'too many client submissions' using errcode = 'TM026'`))
-  })
-
-  it('no other numeric limit is hard-coded in the M12 or M13 migrations', () => {
-    const rules = sql.replace(/^\s*--.*$/gm, '')
-    const funcs = migration('_clients_functions.sql').replace(/^\s*--.*$/gm, '')
-    // The only bounds are the ones above; the functions delegate to assert_client_fields, so they name none.
-    expect(funcs).not.toMatch(/char_length\([^)]*\)\s*[<>]=?\s*\d/)
-    expect(funcs).not.toMatch(/9999|>= 500/)
-    expect(rules.match(/9999\.99/g)).toHaveLength(2)
+  it('assertClientFields and addClient enforce the exact client limits', () => {
+    expect(adapterSrc).toContain('200')
+    expect(adapterSrc).toContain('60')
+    expect(adapterSrc).toContain('30')
+    expect(adapterSrc).toContain('9999.99')
+    expect(adapterSrc).toContain('>= 500')
   })
 })

@@ -1,10 +1,7 @@
-import { describe, expect, it, vi } from 'vitest'
-import type { SupabaseClient } from '@supabase/supabase-js'
-import type { Database } from '../../shared/types/database.types'
+import { describe, expect, it } from 'vitest'
+import type { TenantClient } from '../../server/utils/db'
 import { PRODUCTION_MESSAGES } from '../../shared/constants/production'
 import { logProductionBodySchema, productionAmountsSchema } from '../../shared/schemas/production'
-
-vi.mock('#supabase/server', () => ({ serverSupabaseClient: vi.fn() }))
 
 const { createTenantDbFromClient } = await import('../../server/utils/db')
 const { zodFields, validateInput } = await import('../../server/utils/errors')
@@ -25,7 +22,7 @@ function fakeDb(result: { data: unknown, error: unknown }) {
       return Promise.resolve(result)
     },
   }
-  return { db: createTenantDbFromClient(client as unknown as SupabaseClient<Database>, TENANT), calls }
+  return { db: createTenantDbFromClient(client as unknown as TenantClient, TENANT), calls }
 }
 
 function pgError(code: string) {

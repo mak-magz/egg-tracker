@@ -1,9 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { SupabaseClient } from '@supabase/supabase-js'
-import type { Database } from '../../shared/types/database.types'
+import type { TenantClient } from '../../server/utils/db'
 import { ORDER_FIELDS, ORDER_MESSAGES } from '../../shared/constants/orders'
-
-vi.mock('#supabase/server', () => ({ serverSupabaseClient: vi.fn() }))
 
 const { createTenantDbFromClient } = await import('../../server/utils/db')
 const repo = await import('../../server/repositories/orders')
@@ -57,7 +54,7 @@ function fakeDb(responses: Record<string, Reply>, fallback: Reply = { data: { or
       return Promise.resolve(fn in responses ? responses[fn] : fallback)
     },
   }
-  return { db: createTenantDbFromClient(client as unknown as SupabaseClient<Database>, TENANT), calls }
+  return { db: createTenantDbFromClient(client as unknown as TenantClient, TENANT), calls }
 }
 
 const pgError = (code: string, extra: { hint?: string, details?: string } = {}) => ({ code, message: `error ${code}`, details: extra.details ?? '', hint: extra.hint ?? '' })
