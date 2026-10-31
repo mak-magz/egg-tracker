@@ -27,7 +27,7 @@ declare module 'h3' {
     /** Per-request caches (promises, so concurrent callers share one lookup). */
     tamagoAuth?: Promise<AuthContext | null>
     tamagoMembership?: Promise<MembershipWithFarm | null>
-    firebaseApp?: AdminApp
+
   }
 }
 
