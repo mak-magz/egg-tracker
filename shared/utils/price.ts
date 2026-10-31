@@ -145,7 +145,7 @@ export function computeLineTotal(pricePerTray: number, eggs: number, eggsPerTray
   const quotient = numerator / denominator
   const remainder = numerator % denominator
   // Half up (both operands are always non-negative here): a remainder of exactly half rounds away from zero.
-  const totalCents = remainder * 2n >= denominator ? quotient + 1n : quotient
+  const totalCents = remainder * BigInt(2) >= denominator ? quotient + BigInt(1) : quotient
   return Number(totalCents) / 100
 }
 
