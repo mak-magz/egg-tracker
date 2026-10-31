@@ -27,9 +27,15 @@ The commands work the same in PowerShell and Git Bash.
    ```sh
    cp .env.example .env
    ```
-   For local development, default values (`file:local-control.db` and placeholder Firebase keys) work out of the box for testing and unit tests. For browser sign-in and end-to-end tests, fill in your Firebase project web config (`NUXT_PUBLIC_FIREBASE_*`) and Firebase service account (`FIREBASE_SERVICE_ACCOUNT`).
+   To run 100% locally with zero cloud dependencies, uncomment `FIREBASE_AUTH_EMULATOR_HOST=127.0.0.1:9099` in `.env`.
 
-3. **Provision a farm and its owner** (there is no public sign-up):
+3. **Start the Firebase Auth emulator**:
+   ```sh
+   bun run emulator
+   ```
+   This starts the Auth emulator on port `9099` and the Emulator UI on `http://127.0.0.1:4000/auth`.
+
+4. **Provision a farm and its owner** (in a second terminal):
    ```sh
    bun run provision -- --farm "Hendricks Farm" --email owner@example.com
    ```
@@ -37,7 +43,7 @@ The commands work the same in PowerShell and Git Bash.
    (the default is 30). See **Provisioning** below for re-runs and details.
    In local development without cloud Turso credentials, this automatically provisions `file:local-control.db` and `file:local-tenant-<tenantId>.db`.
 
-4. **Run the app** at http://localhost:3000 and sign in with the owner account:
+5. **Run the app** at http://localhost:3000 and sign in with the owner account:
    ```sh
    bun run dev
    ```
@@ -47,6 +53,7 @@ The commands work the same in PowerShell and Git Bash.
 | Command | What it does |
 |---|---|
 | `bun run dev` | Nuxt dev server on :3000 |
+| `bun run emulator` | Start local Firebase Auth emulator and UI (:4000) |
 | `bun run build` / `bun run preview` | Production build and local preview |
 | `bun run typecheck` | `nuxt typecheck` (vue-tsc) |
 | `bun run lint` / `bun run lint:fix` | ESLint (`@nuxt/eslint`, stylistic rules) |

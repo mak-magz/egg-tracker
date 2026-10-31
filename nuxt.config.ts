@@ -94,7 +94,7 @@ export default defineNuxtConfig({
         path: '/',
       },
     },
-    emulators: false,
+    emulators: !isProd ? { enabled: true, host: '127.0.0.1' } : false,
     config: {
       apiKey: process.env.NUXT_PUBLIC_FIREBASE_API_KEY ?? 'placeholder-api-key',
       authDomain: process.env.NUXT_PUBLIC_FIREBASE_AUTH_DOMAIN ?? 'placeholder.firebaseapp.com',
