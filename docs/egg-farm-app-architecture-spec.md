@@ -28,14 +28,17 @@ Customer invoicing / accounts-receivable · delivery routing/scheduling · SaaS 
 
 ## 2. Tech Stack
 
+> [!NOTE] Architecture Migration
+> The database and auth layers have been migrated from Supabase to **Firebase Auth** + **Turso (libSQL)** via **Drizzle ORM** with a **database-per-tenant** architecture.
+
 | Layer | Choice |
 |---|---|
-| Frontend + backend | **Nuxt.js (SSR) + TypeScript** — one codebase, one language |
+| Frontend + backend | **Nuxt.js 4 (SSR) + TypeScript** — one codebase, one language |
 | Server logic | **Nuxt server routes (Nitro)** — privileged ops + business logic |
-| Database | **Supabase (hosted PostgreSQL)** |
-| Auth | **Supabase Auth** |
+| Database | **Turso (libSQL) via Drizzle ORM** (database-per-tenant architecture) |
+| Auth | **Firebase Auth** (`nuxt-vuefire` on client, `firebase-admin` on server) |
 | Hosting | **Vercel** (hosts Nuxt frontend + server routes) |
-| UI library | **Nuxt UI v4 + Tailwind CSS** (see UI spec) |
+| UI library | **Nuxt UI v4 + Tailwind CSS v4** (see UI spec) |
 
 ### Why this stack
 - **All-TypeScript** collapses frontend + backend into one language and gives **shared types end-to-end** — a Supabase schema change surfaces as compile errors in the UI. (A separate Go backend was considered and rejected: the Nuxt server layer covers the same needs — privileged operations, business logic — without a second language or deploy. Go would only have been justified by heavy concurrent processing or long-running connections, which this app doesn't need.)

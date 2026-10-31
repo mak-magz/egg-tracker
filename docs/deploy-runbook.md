@@ -2,27 +2,31 @@
 
 ## Vercel
 - Connect the repository directly in the Vercel dashboard. Vercel automatically detects Nuxt 4 and builds on push.
-- Set only these variables in Vercel: `NUXT_PUBLIC_SUPABASE_URL` and `NUXT_PUBLIC_SUPABASE_KEY` (the publishable key). See `.env.example`.
-- Do NOT add any secret variable: no `SUPABASE_*` or `NUXT_SUPABASE_*` secret (`SUPABASE_SECRET_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_SERVICE_KEY`, `NUXT_SUPABASE_SECRET_KEY`). The app does not use the service-role key at runtime; only `bun run provision` does, from a local `.env`.
-- Do NOT install the Supabase-Vercel integration: it injects those variables automatically.
-- `nuxt.config.ts` pins `runtimeConfig.supabase.secretKey/serviceKey` to empty so builds can't bake a key in, but a runtime `NUXT_SUPABASE_*` variable would still override it. Keep them unset.
+- Configure public Firebase environment variables in Vercel:
+  - `NUXT_PUBLIC_FIREBASE_API_KEY`
+  - `NUXT_PUBLIC_FIREBASE_AUTH_DOMAIN`
+  - `NUXT_PUBLIC_FIREBASE_PROJECT_ID`
+  - `NUXT_PUBLIC_FIREBASE_STORAGE_BUCKET`
+  - `NUXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID`
+  - `NUXT_PUBLIC_FIREBASE_APP_ID`
+- Configure server-only credentials in Vercel:
+  - `FIREBASE_SERVICE_ACCOUNT` (or `GOOGLE_APPLICATION_CREDENTIALS` path)
+  - `NUXT_TURSO_CONTROL_URL`
+  - `NUXT_TURSO_CONTROL_AUTH_TOKEN`
+- Do NOT expose `FIREBASE_SERVICE_ACCOUNT` or Turso auth tokens to `NUXT_PUBLIC_*`.
+- `check:build` runs on every build (`bun run check:build`) to verify no private key material is leaked into public client bundles.
 - GitHub Actions (`.github/workflows/ci.yml`):
   1. `checks` job runs lint, typecheck, unit tests, and production build secret checks on PRs & main.
-  2. `migrate` job automatically pushes Supabase migrations (`supabase db push --include-all`) only on push to `main`.
+  2. `migrate` job pushes Drizzle schema migrations to the Control DB on push to `main`.
 - Required GitHub Secrets (under the `production` Environment or Repository Secrets):
-  - `SUPABASE_PROJECT_ID`: Reference ID of your hosted Supabase project.
-  - `SUPABASE_ACCESS_TOKEN`: Personal Access Token generated from Supabase Dashboard Account Settings.
-  - `SUPABASE_DB_PASSWORD`: Database password for your Supabase project.
+  - `NUXT_TURSO_CONTROL_URL`: URL of the production Turso Control DB.
+  - `NUXT_TURSO_CONTROL_AUTH_TOKEN`: Auth token for the production Turso Control DB.
 
-
-## Hosted Supabase checklist (audit L2)
-- [ ] Authentication > Sign In / Providers: disable "Allow new users to sign up". Create owners with `bun run provision`.
-- [ ] Authentication > URL Configuration: Site URL is the production URL; Redirect URLs list only production (and any needed preview) URLs. No localhost.
-- [ ] Authentication > SMTP: configure a real SMTP provider (the built-in one is rate limited and for testing only).
-- [ ] Authentication > Password: minimum length 12 or more, and enable leaked-password protection (HaveIBeenPwned; needs a paid plan). Note the app's own minimum (`shared/constants/auth.ts`, 8) and the local `supabase/config.toml` (8) are lower, so raise them together when the policy is tightened.
-- [ ] Settings > API (Data API): expose only the `public` schema.
-- [ ] Consider TOTP MFA for owner accounts.
-- [ ] Keep the secret key out of Vercel and CI; rotate it if it ever appeared in a build output or log.
+## Firebase & Turso checklist
+- [ ] Firebase Auth > Sign-in method: Email/Password enabled. Disable anonymous sign-in or public user registration (farms & owners are provisioned via `bun run provision`).
+- [ ] Firebase Auth > Authorized domains: Add your production and preview Vercel domains.
+- [ ] Turso: Control database created (`libsql://...`) and auth token generated.
+- [ ] Keep private keys and tokens out of client bundles; verify with `bun run check:build`.
 
 ## Known audit leftovers (`bun audit`)
-Remaining after `bun update` and `overrides`, all transitive through Nuxt with no fix yet: `simple-git` (via `@nuxt/devtools`, dev-only; a 4.x override breaks DevTools), `node-forge` (via listhen, dev HTTPS server), `braces` (via nitropack's globby, build time). DevTools is enabled only in dev (`devtools: { enabled: true }` is a no-op in production builds). Re-check after Nuxt updates.
+Remaining after `bun update` and `overrides`, all transitive through Nuxt with no fix yet: `simple-git` (via `@nuxt/devtools`, dev-only), `node-forge` (via listhen), `braces` (via nitropack's globby). DevTools is enabled only in dev (`devtools: { enabled: true }` is a no-op in production builds).
