@@ -27,7 +27,10 @@
   "dependencies": {
     "@iconify-json/lucide": "^1.2.140",
     "@libsql/client": "^0.18.0",
+    "@noble/hashes": "^2.4.0",
     "@nuxt/ui": "^4.11.3",
+    "@sqlite.org/sqlite-wasm": "^3.54.1-build1",
+    "@vite-pwa/nuxt": "^1.1.1",
     "@vueuse/core": "^14.4.0",
     "drizzle-orm": "^0.45.4",
     "firebase": "^13.1.0",

@@ -73,6 +73,9 @@ export interface FarmSummary {
    * show prices through `formatPrice(amount, currency)` (shared/utils/price.ts), which treats an unknown code as PHP.
    */
   currency: string
+  deviceId?: string
+  isFree?: boolean
+  onboardingCompleted?: boolean
 }
 
 /** `GET /api/me`. `farm` is null when the signed-in user has no farm membership (AC12). */
@@ -193,7 +196,7 @@ export interface SaleLineInput { sizeId: string, eggs: number, pricePerTray: num
 
 export interface Sale {
   id: string
-  saleNumber: number
+  saleNumber: number | string
   type: SaleType
   clientId: string | null
   /** The one date: the day the eggs left the farm (feature 05 AC38, decision U1). */
@@ -201,7 +204,7 @@ export interface Sale {
   /** Set when this sale is a delivery made from an order (feature 05 AC27); null for a direct sale. */
   orderId: string | null
   /** The linked order's number (for "From order #n", AC39); null for a direct sale. */
-  orderNumber: number | null
+  orderNumber: number | string | null
   lines: SaleLine[]
   /** Sum of lines[].lineTotal. Never stored; always agrees with the lines shown (AC22). */
   saleTotal: number
@@ -293,7 +296,7 @@ export interface OrderLineInput { sizeId: string, eggs: number, pricePerTray: nu
 
 export interface Order {
   id: string
-  orderNumber: number
+  orderNumber: number | string
   clientId: string
   orderDate: IsoDate
   wantedBy: IsoDate | null
@@ -303,7 +306,7 @@ export interface Order {
   /** Non-null = Cancelled. One-way. */
   cancelledAt: IsoDate | null
   /** The old sale number when this order was converted from a pending sale (AC45). Null otherwise. */
-  convertedFromSaleNumber: number | null
+  convertedFromSaleNumber: number | string | null
   lines: OrderLine[]
   /** Sum of lines[].lineTotal, computed at read time. */
   orderTotal: number
@@ -318,7 +321,7 @@ export interface Order {
 /** One drop of eggs against an order = one sale (AC27). */
 export interface OrderDelivery {
   saleId: string
-  saleNumber: number
+  saleNumber: number | string
   deliveredDate: IsoDate
   voidedAt: IsoDate | null
   lines: { sizeId: string, eggs: number }[]

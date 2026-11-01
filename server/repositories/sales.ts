@@ -38,12 +38,12 @@ const saleLineJsonSchema = z.object({
 
 export const saleJsonSchema = z.object({
   id: z.string(),
-  saleNumber: z.number(),
+  saleNumber: z.union([z.number(), z.string()]),
   type: z.enum(['delivery', 'on_site']),
   clientId: z.string().nullable(),
   saleDate: z.string(),
   orderId: z.string().nullable(),
-  orderNumber: z.number().nullable(),
+  orderNumber: z.union([z.number(), z.string()]).nullable(),
   version: z.number(),
   voidedAt: z.string().nullable(),
   lines: z.array(saleLineJsonSchema),
@@ -227,6 +227,7 @@ export interface CreateSaleInput {
   clientId?: string | null
   lines: SaleLineInput[]
   confirmShortfall?: boolean
+  saleNumber?: string | number
 }
 export interface UpdateSaleInput {
   version: number
@@ -246,7 +247,8 @@ export async function createSale(db: TenantDb, input: CreateSaleInput): Promise<
     ...toLinesArgs(input.lines),
     ...optionalArgs(input.clientId),
     ...(input.confirmShortfall !== undefined ? { p_confirm_shortfall: input.confirmShortfall } : {}),
-  }
+    ...(input.saleNumber !== undefined ? { p_sale_number: input.saleNumber } : {}),
+  } as unknown as TenantRpcArgs<'create_sale'>
   const { data, error } = await db.rpc('create_sale', args)
   if (error) throw await mapSaleDbError(db, error, 'create')
   const result = parseResult('create_sale', createResultSchema, data)

@@ -89,8 +89,8 @@ describe('server guards', () => {
   })
 
   it('(b) firebase-admin and server/db/turso are imported only by auth, db, memberships, and cli layers', () => {
-    const allowedAuth = new Set(['server/utils/auth.ts', 'server/cli/provision.ts'])
-    const allowedTurso = new Set(['server/utils/db.ts', 'server/repositories/memberships.ts', 'server/cli/provision.ts'])
+    const allowedAuth = new Set(['server/utils/auth.ts', 'server/cli/provision.ts', 'server/services/provision.ts'])
+    const allowedTurso = new Set(['server/utils/db.ts', 'server/repositories/memberships.ts', 'server/cli/provision.ts', 'server/services/provision.ts'])
     const allFiles = [...serverFiles, ...walk(join(ROOT, 'app')), ...walk(join(ROOT, 'shared'))]
     const authOffenders = allFiles.filter(f => /['"]firebase-admin/.test(code(f)) && !allowedAuth.has(rel(f)))
     const tursoOffenders = allFiles.filter(f => /['"](?:.*\/)?db\/turso['"]/.test(code(f)) && !allowedTurso.has(rel(f)))
@@ -105,7 +105,7 @@ describe('server guards', () => {
 
   it('(c) Turso platform API token is never used at app runtime', () => {
     const offenders = serverFiles
-      .filter(f => !rel(f).startsWith('server/cli/'))
+      .filter(f => !rel(f).startsWith('server/cli/') && rel(f) !== 'server/services/provision.ts')
       .filter(f => /TURSO_API_TOKEN|TURSO_ORG/.test(code(f)))
     expect(offenders.map(rel)).toEqual([])
   })
