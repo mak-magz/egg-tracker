@@ -1,5 +1,7 @@
-// Route guard (§3.8, D11). Runs on SSR too, so redirects are 302s and no farm content flashes (AC9).
-// Level comes from definePageMeta({ auth }); the default is 'farm' (deny by default).
+// Route guard (§3.8, D11, Feature 08 AC1).
+// Level comes from definePageMeta({ auth }); the default is 'farm'.
+// Unauthenticated users have instant access to local offline farm by default.
+// Only explicit 'cloud' or 'account' routes require authentication.
 import { signOut as firebaseSignOut } from 'firebase/auth'
 import { safeReturnTo } from '#shared/utils/return-to'
 
@@ -8,35 +10,69 @@ export default defineNuxtRouteMiddleware(async (to) => {
   const user = await getCurrentUser()
   const hint = useSessionHint()
   const { me, ensure } = useMe()
-  const needsUser = level === 'farm' || level === 'user'
 
-  // 1–2. Signed out.
+  // 1. Signed-in users should not access /welcome
+  if (user && to.path === '/welcome') {
+    return navigateTo('/production', { replace: true })
+  }
+
+  // 2. Routes requiring cloud accounts (e.g. sync setup, account upgrade management)
+  const requiresCloudAccount = level === 'user'
+  if (!user && requiresCloudAccount) {
+    return navigateTo(loginLocation(to.fullPath, !!hint.value))
+  }
+
+  // 3. Unauthenticated Free / Offline mode (AC1 + Onboarding):
   if (!user) {
-    if (needsUser) return navigateTo(loginLocation(to.fullPath, !!hint.value))
+    const onboardedCookie = useCookie('tamago_onboarded')
+    const hasCompletedOnboarding = onboardedCookie.value === 'true' || me.value?.farm?.onboardingCompleted === true
+
+    if (to.path === '/welcome') {
+      if (hasCompletedOnboarding) {
+        return navigateTo('/production', { replace: true })
+      }
+      return
+    }
+
+    if (level === 'guest' || level === 'public') {
+      return
+    }
+
+    if (!hasCompletedOnboarding) {
+      return navigateTo('/welcome')
+    }
+
+    // On the client, initialize local farm settings and default sizes into `me.value`
+    if (import.meta.client) {
+      await ensure()
+    }
+    // Allow through to all farm routes barnside without login prompt
     return
   }
 
-  // 3. Signed in: who and which farm (cached after the first call).
+  // 3. Authenticated session check
   const result = await ensure()
 
   if (result === 'unauthenticated') {
-    // The cookie had a session the server no longer accepts (revoked or expired): end it here.
     const auth = useFirebaseAuth()
     if (auth) await firebaseSignOut(auth).catch(() => {})
-    if (needsUser) return navigateTo(loginLocation(to.fullPath, true))
+    if (requiresCloudAccount) {
+      return navigateTo(loginLocation(to.fullPath, true))
+    }
     return
   }
 
-  // 4. Signed-in users don't see sign-in / forgot-password.
+  // 4. Signed-in users should not see sign-in / forgot-password
   if (level === 'guest') {
-    if (result === 'ready' && !me.value?.farm) return navigateTo('/no-farm', { replace: true })
+    if (result === 'ready' && !me.value?.farm) {
+      return navigateTo('/no-farm', { replace: true })
+    }
     return navigateTo(safeReturnTo(to.query.redirect) ?? '/', { replace: true })
   }
 
-  // 6. /api/me failed (network/500): let the page render; the layout shows "Couldn't load your farm."
+  // 5. Cloud Farm Gating
   if (result === 'error') return
-
-  // 5. Farm gating.
-  if (level === 'farm' && !me.value?.farm) return navigateTo('/no-farm', { replace: true })
-  if (level === 'user' && me.value?.farm) return navigateTo('/', { replace: true })
+  if (requiresCloudAccount && !me.value?.farm) {
+    return navigateTo('/no-farm', { replace: true })
+  }
 })
