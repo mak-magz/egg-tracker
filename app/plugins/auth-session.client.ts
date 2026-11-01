@@ -12,6 +12,8 @@ export default defineNuxtPlugin(() => {
 
   function onSessionLost() {
     if (signingOut.value) return
+    const { isFree } = useTier()
+    if (isFree.value) return
     const level = router.currentRoute.value.meta.auth ?? 'farm'
     if (level !== 'farm' && level !== 'user') return
     useAuthActions().handleSessionExpired()
@@ -40,6 +42,8 @@ export default defineNuxtPlugin(() => {
 
   window.addEventListener('pageshow', (event) => {
     if (!event.persisted) return
+    const { isFree } = useTier()
+    if (isFree.value) return
     if (!auth?.currentUser) window.location.reload()
   })
 })

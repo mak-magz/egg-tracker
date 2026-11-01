@@ -1,29 +1,19 @@
 // Route guard (§3.8, D11, Feature 08 AC1).
 // Level comes from definePageMeta({ auth }); the default is 'farm'.
-// Unauthenticated users have instant access to local offline farm by default.
+// Free users have instant access to local offline farm by default with ZERO network overhead.
 // Only explicit 'cloud' or 'account' routes require authentication.
-import { signOut as firebaseSignOut } from 'firebase/auth'
 import { safeReturnTo } from '#shared/utils/return-to'
+import { useTier } from '~/composables/useTier'
+import { loginLocation } from '~/utils/login-location'
 
 export default defineNuxtRouteMiddleware(async (to) => {
   const level = to.meta.auth ?? 'farm'
-  const user = await getCurrentUser()
+  const { isFree, getAuthToken } = useTier()
   const hint = useSessionHint()
   const { me, ensure } = useMe()
 
-  // 1. Signed-in users should not access /welcome
-  if (user && to.path === '/welcome') {
-    return navigateTo('/production', { replace: true })
-  }
-
-  // 2. Routes requiring cloud accounts (e.g. sync setup, account upgrade management)
-  const requiresCloudAccount = level === 'user'
-  if (!user && requiresCloudAccount) {
-    return navigateTo(loginLocation(to.fullPath, !!hint.value))
-  }
-
-  // 3. Unauthenticated Free / Offline mode (AC1 + Onboarding):
-  if (!user) {
+  // 1. Free / Offline mode (Feature 08 AC1 + Onboarding):
+  if (isFree.value) {
     const onboardedCookie = useCookie('tamago_onboarded')
     const hasCompletedOnboarding = onboardedCookie.value === 'true' || me.value?.farm?.onboardingCompleted === true
 
@@ -45,24 +35,31 @@ export default defineNuxtRouteMiddleware(async (to) => {
     // Initialize local farm settings and default sizes into `me.value`
     await ensure()
 
-    // Allow through to all farm routes barnside without login prompt
+    // Allow through to all farm routes barnside without login prompt or network calls
     return
   }
 
-  // 3. Authenticated session check
+  // 2. Premium Cloud Tier
+  const token = await getAuthToken()
+  const requiresCloudAccount = level === 'user'
+
+  if (!token && requiresCloudAccount) {
+    return navigateTo(loginLocation(to.fullPath, !!hint.value))
+  }
+
+  if (token && to.path === '/welcome') {
+    return navigateTo('/production', { replace: true })
+  }
+
+  // 3. Settle session
   const result = await ensure()
 
-  if (result === 'unauthenticated') {
-    const auth = useFirebaseAuth()
-    if (auth) await firebaseSignOut(auth).catch(() => {})
-    if (requiresCloudAccount) {
-      return navigateTo(loginLocation(to.fullPath, true))
-    }
-    return
+  if (result === 'unauthenticated' && requiresCloudAccount) {
+    return navigateTo(loginLocation(to.fullPath, true))
   }
 
   // 4. Signed-in users should not see sign-in / forgot-password
-  if (level === 'guest') {
+  if (level === 'guest' && token) {
     if (result === 'ready' && !me.value?.farm) {
       return navigateTo('/no-farm', { replace: true })
     }

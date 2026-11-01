@@ -100,6 +100,8 @@ export function useAuthActions() {
     }
     await clearSessionCookie()
     recoveryState.value = null
+    const { revertToFree } = useTier()
+    revertToFree()
     clear()
   }
 

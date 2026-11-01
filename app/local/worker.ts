@@ -94,6 +94,7 @@ const TABLE_DEFINITIONS: string[] = [
     eggs_per_tray INTEGER NOT NULL DEFAULT 30,
     currency TEXT NOT NULL DEFAULT 'PHP',
     device_id TEXT NOT NULL DEFAULT 'D1',
+    tier TEXT NOT NULL DEFAULT 'free',
     onboarding_completed INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
@@ -312,6 +313,14 @@ async function initDatabase(): Promise<void> {
     sqliteDb.exec(ddl)
   }
 
+  // Safe incremental migrations for existing OPFS databases
+  try {
+    sqliteDb.exec('ALTER TABLE farm_settings ADD COLUMN tier TEXT NOT NULL DEFAULT \'free\';')
+  }
+  catch {
+    // Column already exists
+  }
+
   const now = new Date().toISOString()
 
   // 1. Seed or read Farm Settings
@@ -461,11 +470,11 @@ async function handleRoute(
   // /api/me
   if (method === 'GET' && normalizedPath === '/api/me') {
     const farmRows = sqliteDb.exec({
-      sql: 'SELECT farm_name, eggs_per_tray, currency, device_id, onboarding_completed FROM farm_settings WHERE id = ?',
+      sql: 'SELECT farm_name, eggs_per_tray, currency, device_id, onboarding_completed, tier FROM farm_settings WHERE id = ?',
       bind: ['default'],
       rowMode: 'object',
       returnValue: 'resultRows',
-    }) as Array<{ farm_name: string, eggs_per_tray: number, currency: string, device_id: string, onboarding_completed: number }>
+    }) as Array<{ farm_name: string, eggs_per_tray: number, currency: string, device_id: string, onboarding_completed: number, tier?: string }>
 
     const farmRow = farmRows[0] || {
       farm_name: 'My Farm',
@@ -473,10 +482,14 @@ async function handleRoute(
       currency: 'PHP',
       device_id: 'D1',
       onboarding_completed: 0,
+      tier: 'free',
     }
+    const tier = (farmRow.tier === 'premium' ? 'premium' : 'free') as 'free' | 'premium'
     const sizes = await listSizes(tenantDb)
     return {
       email: '',
+      tier,
+      isFree: tier === 'free',
       farm: {
         id: 'local-farm',
         name: farmRow.farm_name,
@@ -484,7 +497,8 @@ async function handleRoute(
         currency: farmRow.currency,
         deviceId: farmRow.device_id,
         onboardingCompleted: Boolean(farmRow.onboarding_completed),
-        isFree: true,
+        isFree: tier === 'free',
+        tier,
         sizes,
       },
       user: null,

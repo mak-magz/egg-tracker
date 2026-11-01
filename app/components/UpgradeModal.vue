@@ -14,6 +14,7 @@ const emit = defineEmits<{
 const auth = useFirebaseAuth()
 const toast = useToast()
 const { me, ensure } = useMe()
+const { upgradeToPremium } = useTier()
 
 const mode = ref<'register' | 'login'>('register')
 const farmName = ref(me.value?.farm?.name || 'My Farm')
@@ -40,16 +41,21 @@ async function submit() {
 
   try {
     // 1. Authenticate with Firebase
+    let cred
     if (mode.value === 'register') {
-      await createUserWithEmailAndPassword(auth, email.value.trim(), password.value)
+      cred = await createUserWithEmailAndPassword(auth, email.value.trim(), password.value)
     }
     else {
-      await signInWithEmailAndPassword(auth, email.value.trim(), password.value)
+      cred = await signInWithEmailAndPassword(auth, email.value.trim(), password.value)
     }
+
+    const token = await cred.user.getIdToken()
+    const authHeaders = { Authorization: `Bearer ${token}` }
 
     // 2. Call upgrade API to provision cloud tenant
     await $fetch('/api/account/upgrade', {
       method: 'POST',
+      headers: authHeaders,
       body: {
         farmName: farmName.value.trim(),
         currency: me.value?.farm?.currency || 'PHP',
@@ -57,11 +63,15 @@ async function submit() {
       },
     })
 
-    // 3. Export local snapshot and push to cloud
+    // 3. Mark tier as premium
+    upgradeToPremium()
+
+    // 4. Export local snapshot and push to cloud
     try {
       const snapshot = await localWorker.exportData()
       await $fetch('/api/sync/snapshot', {
         method: 'POST',
+        headers: authHeaders,
         body: snapshot,
       })
     }
@@ -69,7 +79,7 @@ async function submit() {
       console.warn('[upgrade] Initial snapshot upload failed:', syncErr)
     }
 
-    // 4. Refresh auth state & context
+    // 5. Refresh auth state & context
     await ensure({ force: true })
 
     toast.add({

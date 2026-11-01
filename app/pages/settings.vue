@@ -15,7 +15,7 @@ definePageMeta({ title: 'Settings', subtitle: 'Farm settings', back: true })
 
 const toast = useToast()
 const { me } = useMe()
-const isFree = computed(() => !me.value?.email)
+const { isFree } = useTier()
 
 const upgradeModalOpen = ref(false)
 const exporting = ref(false)

@@ -74,6 +74,7 @@ export interface FarmSummary {
    */
   currency: string
   deviceId?: string
+  tier?: 'free' | 'premium'
   isFree?: boolean
   onboardingCompleted?: boolean
 }
@@ -82,6 +83,8 @@ export interface FarmSummary {
 export interface MeResponse {
   email: string
   farm: FarmSummary | null
+  tier?: 'free' | 'premium'
+  isFree?: boolean
 }
 
 // ---- Production (docs/features/01-production-logging.md §3.3) ----

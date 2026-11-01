@@ -4,6 +4,7 @@
 // In Feature 08 (Offline-first), unauthenticated visitors load their local farm from local SQLite WASM.
 import type { FarmSize, MeResponse } from '#shared/types/api'
 import { localRouter } from '../local/router'
+import { useTier } from './useTier'
 
 export type MeStatus = 'idle' | 'loading' | 'ready' | 'error'
 /** What `ensure()` found. `unauthenticated` = /api/me said 401 (session missing, invalid or revoked). */
@@ -11,13 +12,6 @@ export type MeEnsureResult = 'ready' | 'unauthenticated' | 'error'
 
 // Deduplicates concurrent ensure() calls per app instance (per request on the server).
 const inflight = new WeakMap<object, Promise<MeEnsureResult>>()
-
-function statusCodeOf(e: unknown): number | undefined {
-  if (typeof e !== 'object' || e === null) return undefined
-  const err = e as { statusCode?: unknown, status?: unknown }
-  const code = err.statusCode ?? err.status
-  return typeof code === 'number' ? code : undefined
-}
 
 export function useMe() {
   const nuxtApp = useNuxtApp()
@@ -28,46 +22,47 @@ export function useMe() {
   async function load(): Promise<MeEnsureResult> {
     status.value = 'loading'
     try {
-      let user = null
+      const { isFree, getAuthToken } = useTier()
+
+      // Free / Offline mode (Feature 08 AC1):
+      // Free users operate 100% locally via SQLite WASM in OPFS with ZERO network HTTP traffic.
+      if (isFree.value) {
+        const localMe = await localRouter.dispatch<MeResponse>('/api/me')
+        me.value = { ...localMe, isFree: true, tier: 'free' }
+        status.value = 'ready'
+        return 'ready'
+      }
+
+      // Premium mode: check for valid auth token before making any network call
+      const token = await getAuthToken()
+      if (!token) {
+        // Premium tier but unauthenticated / token expired: fall back to local SQLite without failing
+        const localMe = await localRouter.dispatch<MeResponse>('/api/me')
+        me.value = { ...localMe, isFree: false, tier: 'premium' }
+        status.value = 'ready'
+        return 'ready'
+      }
+
+      // Authenticated Premium cloud user: try network fetch with Bearer token
       try {
-        user = await getCurrentUser()
+        const cloudMe = await requestFetch<MeResponse>('/api/me', {
+          headers: { Authorization: `Bearer ${token}` },
+          retry: 0,
+        })
+        me.value = { ...cloudMe, isFree: false, tier: 'premium' }
+        status.value = 'ready'
+        return 'ready'
       }
       catch {
-        user = null
-      }
-
-      if (!user) {
-        // Free / Offline mode (Feature 08 AC1):
-        // Unauthenticated visitors operate locally via SQLite WASM in OPFS with zero network HTTP traffic.
-        const localMe = await localRouter.dispatch<MeResponse>('/api/me')
-        me.value = localMe
-        status.value = 'ready'
-        return 'ready'
-      }
-
-      // Cloud user session exists: try network fetch
-      try {
-        me.value = await requestFetch<MeResponse>('/api/me', { retry: 0 })
-        status.value = 'ready'
-        return 'ready'
-      }
-      catch (netErr) {
-        if (statusCodeOf(netErr) === 401) {
-          throw netErr
-        }
         // Fall back to local SQLite WASM if offline / network error
         const localMe = await localRouter.dispatch<MeResponse>('/api/me')
-        me.value = localMe
+        me.value = { ...localMe, isFree: false, tier: 'premium' }
         status.value = 'ready'
         return 'ready'
       }
     }
-    catch (e) {
+    catch {
       me.value = null
-      if (statusCodeOf(e) === 401) {
-        status.value = 'idle'
-        return 'unauthenticated'
-      }
       status.value = 'error'
       return 'error'
     }
@@ -85,6 +80,13 @@ export function useMe() {
   function clear() {
     me.value = null
     status.value = 'idle'
+    try {
+      const { revertToFree } = useTier()
+      revertToFree()
+    }
+    catch {
+      // Ignore errors when resetting tier
+    }
     // Clients are personal data (feature 03 AC31): the list and any other `clients:*` state go with the session,
     // so the next farm on this device never sees them, even for a moment.
     clearNuxtState(key => key.startsWith('clients:'))

@@ -8,6 +8,7 @@ export const farmSettings = sqliteTable('farm_settings', {
   eggsPerTray: integer('eggs_per_tray').notNull().default(30),
   currency: text('currency').notNull().default('PHP'),
   deviceId: text('device_id').notNull().default('D1'),
+  tier: text('tier', { enum: ['free', 'premium'] }).notNull().default('free'),
   onboardingCompleted: integer('onboarding_completed', { mode: 'boolean' }).notNull().default(false),
   createdAt: text('created_at').notNull().$defaultFn(() => new Date().toISOString()),
   updatedAt: text('updated_at').notNull().$defaultFn(() => new Date().toISOString()),

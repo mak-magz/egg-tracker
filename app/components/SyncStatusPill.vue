@@ -3,12 +3,10 @@ import { useOnline } from '@vueuse/core'
 import { localWorker } from '../local/client'
 
 const isOnline = useOnline()
-const { me } = useMe()
+const { isFree } = useTier()
 
 const pendingOutboxCount = ref(0)
 const syncStatus = ref<'local_only' | 'syncing' | 'synced' | 'offline_changes' | 'offline'>('local_only')
-
-const isFree = computed(() => !me.value?.email)
 
 async function refreshSyncState() {
   if (typeof window === 'undefined') return
