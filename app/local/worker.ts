@@ -50,6 +50,13 @@ import {
 } from '../../core/repositories/sizes'
 import type { ApiErrorData } from '#shared/types/api'
 
+self.addEventListener('error', (e) => {
+  console.error('[worker-uncaught-error]', e.message, e.filename, e.lineno, e.colno, e.error)
+})
+self.addEventListener('unhandledrejection', (e) => {
+  console.error('[worker-unhandled-rejection]', e.reason)
+})
+
 export interface WorkerRequest<T = any> {
   id: string
   type: 'EXECUTE' | 'PING' | 'EXPORT_DATA' | 'IMPORT_SNAPSHOT' | 'GET_SYNC_STATUS' | 'RAW_QUERY'
@@ -268,44 +275,35 @@ async function initDatabase(): Promise<void> {
 
   // 1. Primary: Modern SyncAccessHandle Pool VFS (OPFS SAHPool)
   if (typeof (sqlite3 as any).installOpfsSAHPoolVfs === 'function') {
-    let attempts = 0
-    while (attempts < 3 && !initialized) {
+    const delays = [100, 200, 350, 600, 1000]
+    for (let attempt = 0; attempt <= delays.length && !initialized; attempt++) {
       try {
         const poolUtil = await (sqlite3 as any).installOpfsSAHPoolVfs({
           name: 'opfs-sahpool',
           clearOnInit: false,
+          forceReinitIfPreviouslyFailed: true,
+          preserveOnInitFailure: true,
         })
         sqliteDb = new poolUtil.OpfsSAHPoolDb('/farm.sqlite3')
         console.info('[worker] OPFS SAHPool storage initialized successfully (persistence: ACTIVE).')
         initialized = true
       }
       catch (sahErr) {
-        attempts++
-        if (attempts >= 3) {
-          console.warn('[worker] OPFS SAHPool failed after 3 attempts, trying fallback:', sahErr)
+        if (attempt < delays.length) {
+          const delay = delays[attempt]!
+          console.warn(`[worker] OPFS SAHPool locked, retrying in ${delay}ms (attempt ${attempt + 1}/${delays.length})...`)
+          await new Promise(resolve => setTimeout(resolve, delay))
         }
         else {
-          await new Promise(resolve => setTimeout(resolve, 150))
+          console.warn('[worker] OPFS SAHPool locked by another active tab or unavailable after retries:', sahErr)
         }
       }
     }
   }
 
-  // 2. Secondary fallback: Legacy OpfsDb
-  if (!initialized && 'opfs' in sqlite3) {
-    try {
-      sqliteDb = new sqlite3.oo1.OpfsDb('/farm.sqlite3')
-      console.info('[worker] Legacy OpfsDb initialized.')
-      initialized = true
-    }
-    catch (opfsErr) {
-      console.warn('[worker] Legacy OpfsDb unavailable:', opfsErr)
-    }
-  }
-
-  // 3. Final fallback: In-memory (headless testing or restricted environments)
+  // 2. Fallback: In-memory (headless testing, unsupported environments, or secondary tabs)
   if (!initialized) {
-    console.warn('[worker] OPFS unavailable, falling back to in-memory database.')
+    console.warn('[worker] WARNING: Operating in temporary in-memory database.')
     sqliteDb = new sqlite3.oo1.DB('/farm.sqlite3', 'ct')
   }
 

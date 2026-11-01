@@ -83,6 +83,16 @@ export class LocalWorkerClient {
           type: 'module',
         })
 
+        // Terminate worker synchronously on page unload so OPFS sync access handles are promptly released
+        window.addEventListener('beforeunload', () => {
+          try {
+            this.worker?.terminate()
+          }
+          catch {
+            // ignore
+          }
+        })
+
         this.worker.onmessage = (event: MessageEvent<WorkerResponse>) => {
           const { id, ok, data, error } = event.data
           const handler = this.pending.get(id)
@@ -99,8 +109,15 @@ export class LocalWorkerClient {
           }
         }
 
-        this.worker.onerror = (err) => {
-          console.error('[local-worker] Worker error:', err)
+        this.worker.onerror = (err: any) => {
+          const errInfo = {
+            message: err?.message,
+            filename: err?.filename,
+            lineno: err?.lineno,
+            colno: err?.colno,
+            error: err?.error ? String(err.error) : undefined,
+          }
+          console.error('[local-worker] Worker error:', errInfo, err)
           for (const [id, handler] of this.pending.entries()) {
             clearTimeout(handler.timer)
             handler.reject(err)
@@ -169,4 +186,10 @@ export class LocalWorkerClient {
   }
 }
 
-export const localWorker = new LocalWorkerClient()
+declare global {
+  var __tamagoLocalWorker: LocalWorkerClient | undefined
+}
+
+export const localWorker: LocalWorkerClient
+  = (typeof globalThis !== 'undefined' && globalThis.__tamagoLocalWorker)
+    || ((typeof globalThis !== 'undefined') ? (globalThis.__tamagoLocalWorker = new LocalWorkerClient()) : new LocalWorkerClient())
