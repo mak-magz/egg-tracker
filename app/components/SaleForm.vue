@@ -91,12 +91,6 @@ const linkedClientText = computed(() => {
   return c.active ? c.name : SALE_COPY.clientInactiveSelected(c.name)
 })
 
-const clientDefaultPrice = computed<number | null>(() => {
-  const id = state.clientId
-  if (!id) return null
-  return allClients.value.find(c => c.id === id)?.defaultPrice ?? null
-})
-
 // ---- Lines (Production-style all sizes grid) -----------------------------------------------------------
 interface SizeLineState {
   sizeId: string
@@ -105,7 +99,7 @@ interface SizeLineState {
   archived: boolean
   qty: QuantityValue
   priceRaw: string
-  /** True until the owner types this line's price by hand (AC18): it follows the client's default. */
+  /** True until the owner types this line's price by hand: initialized from the size's default. */
   priceIsUsual: boolean
 }
 
@@ -123,12 +117,11 @@ function buildSizeLines(): SizeLineState[] {
     .sort((a, b) => a.sortOrder - b.sortOrder)
 
   const allSizes = [
-    ...active.map(s => ({ id: s.id, name: s.name, colorSlot: s.colorSlot, archived: false })),
-    ...archivedOnSale.map(s => ({ id: s.id, name: s.name, colorSlot: s.colorSlot, archived: true })),
+    ...active.map(s => ({ id: s.id, name: s.name, colorSlot: s.colorSlot, archived: false, defaultPrice: s.defaultPrice })),
+    ...archivedOnSale.map(s => ({ id: s.id, name: s.name, colorSlot: s.colorSlot, archived: true, defaultPrice: s.defaultPrice })),
   ]
 
   const existingMap = new Map(props.sale?.lines.map(l => [l.sizeId, l]) ?? [])
-  const defaultPrice = clientDefaultPrice.value
 
   return allSizes.map((s) => {
     const existing = existingMap.get(s.id)
@@ -144,6 +137,7 @@ function buildSizeLines(): SizeLineState[] {
         priceIsUsual: false,
       }
     }
+    const defaultPrice = s.defaultPrice ?? null
     return {
       sizeId: s.id,
       name: s.name,
@@ -177,16 +171,6 @@ function lockedLabelFor(line: SizeLineState): string | undefined {
 }
 
 const body = useTemplateRef<HTMLElement>('body')
-
-watch(clientDefaultPrice, (price) => {
-  if (price === null || linked.value) return
-  for (const line of lines.value) {
-    if (line.priceIsUsual || line.priceRaw.trim() === '') {
-      line.priceRaw = formatPriceInput(price)
-      line.priceIsUsual = true
-    }
-  }
-})
 
 function onLinePriceEdited(line: SizeLineState) {
   line.priceIsUsual = false

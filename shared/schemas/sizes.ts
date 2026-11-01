@@ -24,15 +24,21 @@ export const sizeNameSchema = z
     }
   })
 
+export const sizeDefaultPriceSchema = z
+  .union([z.number().positive().max(9999.99), z.null()])
+  .optional()
+
 /** POST /api/sizes */
 export const addSizeBodySchema = z.object({
   submissionId: z.uuid(),
   name: sizeNameSchema,
+  defaultPrice: sizeDefaultPriceSchema,
 })
 
 /** PATCH /api/sizes/:id */
 export const renameSizeBodySchema = z.object({
   name: sizeNameSchema,
+  defaultPrice: sizeDefaultPriceSchema,
 })
 
 /** PUT /api/sizes/order: the wanted full order of the active sizes, and the size that was moved. */

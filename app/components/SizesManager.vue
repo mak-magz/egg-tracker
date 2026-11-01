@@ -155,13 +155,13 @@ function onFormFailure(error: SizeError) {
   formError.value = SIZE_COPY.saveFailed
 }
 
-async function submitForm(rawName: string) {
+async function submitForm(rawName: string, defaultPrice?: number | null) {
   const mode = formMode.value
   if (!mode) return
   resetFormMessages()
 
   if (mode.kind === 'add') {
-    const res = await mutations.add(rawName)
+    const res = await mutations.add(rawName, defaultPrice)
     if (!res) return
     if (!res.ok) return onFormFailure(res.error)
     notice.value = null
@@ -174,7 +174,7 @@ async function submitForm(rawName: string) {
   }
 
   const oldName = sizeName(mode.id)
-  const res = await mutations.rename(mode.id, rawName)
+  const res = await mutations.rename(mode.id, rawName, defaultPrice)
   if (!res) return
   if (!res.ok) return onFormFailure(res.error)
   notice.value = null
@@ -386,6 +386,7 @@ const retrying = computed(() => loading.value && showLoadError.value)
                 :sizes="sizes"
                 :self-id="size.id"
                 :initial-name="size.name"
+                :initial-price="size.defaultPrice"
                 :saving="formSaving"
                 :error="formError"
                 :server-name="formName"

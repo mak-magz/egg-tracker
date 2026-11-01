@@ -72,7 +72,7 @@ export const CLIENT_COPY = {
   discardEditBody: (name: string) => `Your changes to ${name} won't be saved.`,
 
   firstUseTitle: 'No clients yet',
-  firstUseBody: 'Add your first customer. Keep their phone and usual price here.',
+  firstUseBody: 'Add your first customer to track their orders and sales.',
   noMatch: 'No clients match this filter.',
   noMatchInactive: 'You haven\'t marked any clients inactive.',
   noMatchActive: 'All your clients are marked inactive.',

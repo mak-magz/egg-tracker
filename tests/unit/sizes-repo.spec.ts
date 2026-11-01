@@ -16,14 +16,14 @@ interface Reply { data: unknown, error: unknown }
 
 // Rows exactly as the database returns them (deliberately out of order: the mapper sorts).
 const rows = [
-  { id: JUMBO, name: 'Jumbo', sort_order: 3, color_slot: 3, archived_at: '2026-09-01T00:00:00Z' },
-  { id: SMALL, name: 'Small', sort_order: 0, color_slot: 0, archived_at: null },
-  { id: LARGE, name: 'Large', sort_order: 1, color_slot: 2, archived_at: null },
+  { id: JUMBO, name: 'Jumbo', sort_order: 3, color_slot: 3, archived_at: '2026-09-01T00:00:00Z', default_price: null },
+  { id: SMALL, name: 'Small', sort_order: 0, color_slot: 0, archived_at: null, default_price: null },
+  { id: LARGE, name: 'Large', sort_order: 1, color_slot: 2, archived_at: null, default_price: null },
 ]
 const sizes = [
-  { id: SMALL, name: 'Small', sortOrder: 0, colorSlot: 0, active: true },
-  { id: LARGE, name: 'Large', sortOrder: 1, colorSlot: 2, active: true },
-  { id: JUMBO, name: 'Jumbo', sortOrder: 3, colorSlot: 3, active: false },
+  { id: SMALL, name: 'Small', sortOrder: 0, colorSlot: 0, active: true, defaultPrice: null },
+  { id: LARGE, name: 'Large', sortOrder: 1, colorSlot: 2, active: true, defaultPrice: null },
+  { id: JUMBO, name: 'Jumbo', sortOrder: 3, colorSlot: 3, active: false, defaultPrice: null },
 ]
 
 /** A fake TenantClient: `rpc` replies with `rpcReply`, `.from('sizes').select().eq()` replies with `listReply`. */
@@ -78,7 +78,7 @@ describe('sizes repository', () => {
   it('listSizes reads the farm\'s sizes through the tenant scope and the shared mapper', async () => {
     const { db, selects } = fakeDb({ data: null, error: null })
     expect(await repo.listSizes(db)).toEqual(sizes)
-    expect(selects).toEqual([{ table: 'sizes', columns: 'id, name, sort_order, color_slot, archived_at', eq: [['tenant_id', TENANT]] }])
+    expect(selects).toEqual([{ table: 'sizes', columns: 'id, name, sort_order, color_slot, archived_at, default_price', eq: [['tenant_id', TENANT]] }])
   })
 
   it('a failed list is a logged 500', async () => {
@@ -92,7 +92,7 @@ describe('sizes repository', () => {
     const { db, rpcCalls } = fakeDb({ data: { changedId: LARGE, replayed: false }, error: null })
     const input = { submissionId: '3f1c2d4e-5a6b-4c7d-8e9f-0a1b2c3d4e5f', name: 'Peewee', tenant_id: OTHER, p_tenant_id: OTHER } as never
     expect(await repo.addSize(db, input)).toEqual({ sizes, changedId: LARGE })
-    expect(rpcCalls).toEqual([['add_size', { p_submission_id: '3f1c2d4e-5a6b-4c7d-8e9f-0a1b2c3d4e5f', p_name: 'Peewee', p_tenant_id: TENANT }]])
+    expect(rpcCalls).toEqual([['add_size', { p_submission_id: '3f1c2d4e-5a6b-4c7d-8e9f-0a1b2c3d4e5f', p_name: 'Peewee', p_tenant_id: TENANT, p_default_price: null }]])
   })
 
   it('a replayed add still returns the first size', async () => {

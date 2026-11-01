@@ -661,6 +661,7 @@ export type Database = {
           archived_at: string | null
           color_slot: number
           created_at: string
+          default_price: number | null
           id: string
           name: string
           sort_order: number
@@ -671,6 +672,7 @@ export type Database = {
           archived_at?: string | null
           color_slot: number
           created_at?: string
+          default_price?: number | null
           id?: string
           name: string
           sort_order: number
@@ -681,6 +683,7 @@ export type Database = {
           archived_at?: string | null
           color_slot?: number
           created_at?: string
+          default_price?: number | null
           id?: string
           name?: string
           sort_order?: number
@@ -740,7 +743,7 @@ export type Database = {
         Returns: Json
       }
       add_size: {
-        Args: { p_name: string; p_submission_id: string; p_tenant_id: string }
+        Args: { p_name: string; p_submission_id: string; p_tenant_id: string; p_default_price?: number | null }
         Returns: Json
       }
       admin_revoke_sessions: { Args: { p_user_id: string }; Returns: number }
@@ -872,7 +875,7 @@ export type Database = {
         }[]
       }
       rename_size: {
-        Args: { p_name: string; p_size_id: string; p_tenant_id: string }
+        Args: { p_name: string; p_size_id: string; p_tenant_id: string; p_default_price?: number | null }
         Returns: Json
       }
       reorder_sizes: {

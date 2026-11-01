@@ -18,7 +18,7 @@ import { toFarmSizes } from './tenants'
 /** Which function raised, so an error shared by several (TM005) lands on the right field. */
 export type SizeOperation = 'add' | 'rename' | 'reorder' | 'archive' | 'restore'
 
-const SIZE_COLUMNS = 'id, name, sort_order, color_slot, archived_at'
+const SIZE_COLUMNS = 'id, name, sort_order, color_slot, archived_at, default_price'
 
 /** Fallbacks when the database detail can't be read (TM009) or has no better copy (TM013). */
 const NAME_TAKEN_FALLBACK = 'Another size already has this name.'
@@ -118,13 +118,21 @@ async function respond(db: TenantDb, changedId: string): Promise<SizeChangeRespo
 }
 
 export async function addSize(db: TenantDb, input: AddSizeRequest): Promise<SizeChangeResponse> {
-  const { data, error } = await db.rpc('add_size', { p_submission_id: input.submissionId, p_name: input.name })
+  const { data, error } = await db.rpc('add_size', {
+    p_submission_id: input.submissionId,
+    p_name: input.name,
+    p_default_price: input.defaultPrice ?? null,
+  })
   if (error) throw await mapSizeDbError(db, error, 'add')
   return respond(db, parseResult(addResultSchema, data).changedId)
 }
 
-export async function renameSize(db: TenantDb, id: string, name: string): Promise<SizeChangeResponse> {
-  const { data, error } = await db.rpc('rename_size', { p_size_id: id, p_name: name })
+export async function renameSize(db: TenantDb, id: string, name: string, defaultPrice?: number | null): Promise<SizeChangeResponse> {
+  const { data, error } = await db.rpc('rename_size', {
+    p_size_id: id,
+    p_name: name,
+    p_default_price: defaultPrice,
+  })
   if (error) throw await mapSizeDbError(db, error, 'rename')
   return respond(db, parseResult(changedIdSchema, data).changedId)
 }

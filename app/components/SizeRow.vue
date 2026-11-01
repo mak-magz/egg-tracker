@@ -1,8 +1,8 @@
 <!--
-  One active size in the Sizes list (feature 02 §2.5 "Settings, mobile"): name, then ↑ ↓ and a ⋮ menu with
-  Rename and Archive. A `<li>`, min 56px tall (48px at lg), controls 44px (40px at lg), 4px apart so a
-  thumb doesn't hit the neighbour. The name wraps and never truncates. While it is being renamed the
-  `form` slot (the inline SizeNameForm) takes the place of the row. Nothing here changes data: it emits.
+  One active size in the Sizes list (feature 02 §2.5 "Settings, mobile"): name, optional default price per tray,
+  then ↑ ↓ and a ⋮ menu with Rename and Archive. A `<li>`, min 56px tall (48px at lg), controls 44px (40px at lg),
+  4px apart so a thumb doesn't hit the neighbour. The name wraps and never truncates. While it is being renamed
+  the `form` slot (the inline SizeNameForm) takes the place of the row. Nothing here changes data: it emits.
 
   - First row: ↑ disabled; last row: ↓ disabled (dimmed and aria-disabled, no message: AC10).
   - Only one active size: Archive is disabled and says why in the item (AC14).
@@ -14,6 +14,7 @@
 import type { DropdownMenuItem } from '@nuxt/ui'
 import type { FarmSize } from '#shared/types/api'
 import type { MoveDirection } from '~/utils/size-order'
+import { formatPrice } from '#shared/utils/price'
 
 const props = defineProps<{
   size: FarmSize
@@ -36,6 +37,8 @@ const emit = defineEmits<{
   rename: []
   archive: []
 }>()
+
+const { currency } = useFarm()
 
 const menuItems = computed<DropdownMenuItem[]>(() => [
   {
@@ -70,7 +73,15 @@ const downDisabled = computed(() => props.busy || props.last)
       class="flex min-h-14 items-center gap-1 rounded-md bg-muted py-1.5 ps-3 pe-1.5 lg:min-h-12"
       :class="highlighted ? 'animate-[size-row-flash_1.5s_ease-out] motion-reduce:animate-none' : ''"
     >
-      <span class="min-w-0 flex-1 py-1 text-base font-medium break-words text-default">{{ size.name }}</span>
+      <div class="flex min-w-0 flex-1 flex-wrap items-baseline gap-2 py-1">
+        <span class="text-base font-medium break-words text-default">{{ size.name }}</span>
+        <span
+          v-if="size.defaultPrice != null"
+          class="text-sm font-normal text-muted"
+        >
+          {{ formatPrice(size.defaultPrice, currency) }} / tray
+        </span>
+      </div>
       <UButton
         color="neutral"
         variant="ghost"

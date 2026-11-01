@@ -2,11 +2,9 @@
   The client list (feature 03 UX "Layouts", AC3, AC4, AC24, AC25, R6 to R8): the design's table when the area is
   wide enough, stacked cards when it isn't. It renders the given, already sorted and filtered, list ONCE, in
   one layout: the switch is the list area's own width (>= 640px), measured with useElementSize, not the screen
-  width, so a tablet with the sidebar collapsed gets the table and one with it expanded gets cards. (UX asked for a
-  CSS container query with both layouts in the DOM; with up to 500 clients that would be 1,000 rows: feature 03
-  §3.4 D15. The list is client-only, so measuring is safe.)
+  width, so a tablet with the sidebar collapsed gets the table and one with it expanded gets cards.
   The name is a real <button> ("Edit {Name}") and opens Edit; on cards it stretches over the whole card, and the
-  ⋮ sits above it. A missing phone or price is a dash with a spoken label. Names wrap, never truncate. Nothing
+  ⋮ sits above it. A missing phone is a dash with a spoken label. Names wrap, never truncate. Nothing
   here changes data: it emits.
   Rendering: a farm can hold 500 clients, and drawing 500 rows of Nuxt UI components took about a second in dev. So
   only the first ROWS_PER_STEP rows are in the DOM, and more are added as the owner scrolls near the end (an
@@ -36,9 +34,7 @@ const emit = defineEmits<{
   restore: [client: Client]
 }>()
 
-const { formatPrice } = useFarm()
-
-/** The content width from which the five-column table fits (UX: about 640px). */
+/** The content width from which the four-column table fits (UX: about 640px). */
 const TABLE_MIN_WIDTH = 640
 // Measure a zero-height marker at the top, not the list itself: the list's own height changes with every render,
 // which made the browser report "ResizeObserver loop completed with undelivered notifications".
@@ -118,12 +114,6 @@ const flash = 'animate-[size-row-flash_1.5s_ease-out] motion-reduce:animate-none
               scope="col"
               class="px-4 py-2.5 text-right text-sm font-medium text-muted"
             >
-              {{ CLIENT_COPY.headerPrice }}
-            </th>
-            <th
-              scope="col"
-              class="px-4 py-2.5 text-right text-sm font-medium text-muted"
-            >
               {{ CLIENT_COPY.headerStatus }}
             </th>
             <th
@@ -150,9 +140,6 @@ const flash = 'animate-[size-row-flash_1.5s_ease-out] motion-reduce:animate-none
               </td>
               <td class="px-4 py-3.5">
                 <USkeleton class="h-5 w-28 bg-accented" />
-              </td>
-              <td class="px-4 py-3.5">
-                <USkeleton class="ms-auto h-5 w-24 bg-accented" />
               </td>
               <td class="px-4 py-3.5">
                 <USkeleton class="ms-auto h-5 w-16 bg-accented" />
@@ -194,14 +181,6 @@ const flash = 'animate-[size-row-flash_1.5s_ease-out] motion-reduce:animate-none
                 </template>
                 <template v-else>
                   <span aria-hidden="true">—</span><span class="sr-only">{{ CLIENT_COPY.noPhone }}</span>
-                </template>
-              </td>
-              <td class="px-4 py-1.5 text-right text-base font-semibold whitespace-nowrap text-default lg:py-1">
-                <template v-if="client.defaultPrice !== null">
-                  {{ CLIENT_COPY.pricePerTray(formatPrice(client.defaultPrice)) }}
-                </template>
-                <template v-else>
-                  <span aria-hidden="true">—</span><span class="sr-only">{{ CLIENT_COPY.noPrice }}</span>
                 </template>
               </td>
               <td class="px-4 py-1.5 text-right lg:py-1">
@@ -282,15 +261,7 @@ const flash = 'animate-[size-row-flash_1.5s_ease-out] motion-reduce:animate-none
               <span aria-hidden="true">—</span><span class="sr-only">{{ CLIENT_COPY.noPhone }}</span>
             </template>
           </p>
-          <div class="mt-1 flex items-center justify-between gap-2">
-            <p class="text-base font-semibold text-default">
-              <template v-if="client.defaultPrice !== null">
-                {{ CLIENT_COPY.pricePerTray(formatPrice(client.defaultPrice)) }}
-              </template>
-              <template v-else>
-                <span aria-hidden="true">—</span><span class="sr-only">{{ CLIENT_COPY.noPrice }}</span>
-              </template>
-            </p>
+          <div class="mt-1 flex items-center justify-end">
             <ClientStatusBadge :active="client.active" />
           </div>
         </li>

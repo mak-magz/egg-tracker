@@ -484,6 +484,7 @@ export function createDrizzleBackedClient(
             sort_order: s.sortOrder,
             color_slot: s.colorSlot,
             archived_at: s.archivedAt,
+            default_price: s.defaultPrice,
           }))),
         }
       }
@@ -694,8 +695,9 @@ export function createDrizzleBackedClient(
         const maxSort = allSizes.reduce((m, s) => Math.max(m, s.sortOrder), -1)
         const id = generateUuid()
         const now = new Date().toISOString()
+        const defaultPrice = args.p_default_price !== undefined ? (args.p_default_price !== null ? Number(args.p_default_price) : null) : null
 
-        await drizzleDb.insert(schema.sizes).values({ id, name, sortOrder: maxSort + 1, colorSlot, archivedAt: null, createdAt: now, updatedAt: now })
+        await drizzleDb.insert(schema.sizes).values({ id, name, sortOrder: maxSort + 1, colorSlot, defaultPrice, archivedAt: null, createdAt: now, updatedAt: now })
         await drizzleDb.insert(schema.sizeSubmissions).values({ id: subId, sizeId: id, name, createdAt: now, updatedAt: now })
         await compactSizeOrder()
         return { changedId: id, replayed: false }
@@ -707,6 +709,7 @@ export function createDrizzleBackedClient(
         if (typeof rawName !== 'string' || rawName.length > 200) throw new TmError('TM008', 'size name invalid')
         const name = normalizeSizeName(rawName)
         if (!name || name.length > 40) throw new TmError('TM008', 'size name invalid')
+        const defaultPrice = args.p_default_price !== undefined ? (args.p_default_price !== null ? Number(args.p_default_price) : null) : undefined
 
         const allSizes = await drizzleDb.select().from(schema.sizes)
         const target = allSizes.find(s => s.id === sizeId)
@@ -717,8 +720,18 @@ export function createDrizzleBackedClient(
         if (clash) {
           throw new TmError('TM009', 'size exists', { details: JSON.stringify({ id: clash.id, name: clash.name, archived: clash.archivedAt !== null }) })
         }
+        const updatePayload: { name?: string, defaultPrice?: number | null, updatedAt: string } = { updatedAt: new Date().toISOString() }
+        let changed = false
         if (target.name !== name) {
-          await drizzleDb.update(schema.sizes).set({ name, updatedAt: new Date().toISOString() }).where(eq(schema.sizes.id, sizeId))
+          updatePayload.name = name
+          changed = true
+        }
+        if (defaultPrice !== undefined && defaultPrice !== target.defaultPrice) {
+          updatePayload.defaultPrice = defaultPrice
+          changed = true
+        }
+        if (changed) {
+          await drizzleDb.update(schema.sizes).set(updatePayload).where(eq(schema.sizes.id, sizeId))
         }
         return { changedId: sizeId }
       }
@@ -1618,6 +1631,7 @@ export function createDrizzleBackedClient(
                     sort_order: s.sortOrder,
                     color_slot: s.colorSlot,
                     archived_at: s.archivedAt,
+                    default_price: s.defaultPrice,
                   })),
                 }
                 return { data: single ? data : [data], error: null }
@@ -1630,6 +1644,7 @@ export function createDrizzleBackedClient(
                   sort_order: s.sortOrder,
                   color_slot: s.colorSlot,
                   archived_at: s.archivedAt,
+                  default_price: s.defaultPrice,
                 }))
                 return { data: single ? (mapped[0] ?? null) : mapped, error: null }
               }

@@ -1,8 +1,7 @@
 <!--
   The inline size-name form, shared by Add (replaces the Add size button) and Rename (replaces the row):
-  feature 02 §2.5 "Inline forms", R3, States "Add" / "Rename". Name only. The checks are the shared
-  checkSizeName() (trim, collapse spaces, 1 to 40, case-insensitive match against EVERY size, archived ones
-  included, except the size being renamed), so the form and the server say the same thing.
+  feature 02 §2.5 "Inline forms", R3, States "Add" / "Rename". Collects Name and optional Default Price per tray.
+  The checks are the shared checkSizeName() and parsePriceInput().
 
   - No maxlength: a pasted long name gets a message instead of being cut.
   - Checks run when the field loses focus (once something is typed) and when Save is tapped; once a message
@@ -19,6 +18,7 @@ import type { FormSubmitEvent } from '@nuxt/ui'
 import type { FarmSize, SizeNameMatch } from '#shared/types/api'
 import { checkSizeName } from '#shared/utils/size-name'
 import type { SizeNameCheck } from '#shared/utils/size-name'
+import { formatPriceInput, parsePriceInput, priceProblemMessage } from '#shared/utils/price'
 
 /** A name problem to show under the field. `existing` adds the Restore button when it is archived. */
 export interface SizeNameProblem {
@@ -33,6 +33,7 @@ const props = defineProps<{
   /** Rename: the size being renamed (excluded from the clash check) and its current name (pre-filled). */
   selfId?: string
   initialName?: string
+  initialPrice?: number | null
   /** A change is being saved: Save spins, the field is read-only, Cancel is disabled. */
   saving?: boolean
   /** The "Couldn't save" alert (network or server failure). */
@@ -46,16 +47,23 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  submit: [name: string]
+  submit: [name: string, defaultPrice: number | null]
   cancel: []
   restore: [id: string]
 }>()
 
 const isRename = computed(() => props.mode === 'rename')
-const state = reactive({ name: props.initialName ?? '' })
+const { currency, currencySymbol } = useFarm()
+
+const state = reactive({
+  name: props.initialName ?? '',
+  price: props.initialPrice != null ? formatPriceInput(props.initialPrice) : '',
+})
 const name = toRef(state, 'name')
+const price = toRef(state, 'price')
 
 const invalid = ref<Exclude<SizeNameCheck, { ok: true }> | null>(null)
+const priceShown = ref<string | null>(null)
 const server = ref<SizeNameProblem | null>(props.serverName ?? null)
 watch(() => props.serverName, (v) => {
   server.value = v ?? null
@@ -64,6 +72,9 @@ watch(() => props.serverName, (v) => {
 watch(name, () => {
   server.value = null
   if (invalid.value) recheck()
+})
+watch(price, () => {
+  if (priceShown.value) checkPrice()
 })
 
 function check(): SizeNameCheck {
@@ -74,11 +85,17 @@ function recheck(): SizeNameCheck {
   invalid.value = result.ok ? null : result
   return result
 }
+function checkPrice() {
+  const result = parsePriceInput(price.value)
+  priceShown.value = result.ok ? null : priceProblemMessage(result.reason, currency.value)
+  return result
+}
 
 const problem = computed<SizeNameProblem | null>(() => {
   if (server.value) return server.value
   return invalid.value ? { message: invalid.value.message, existing: invalid.value.existing } : null
 })
+const hasProblem = computed(() => !!(problem.value || priceShown.value))
 /** Only an ARCHIVED match gets the Restore button (an active one has nothing to restore). */
 const restorable = computed(() => (problem.value?.existing?.archived ? problem.value.existing : null))
 
@@ -97,17 +114,33 @@ function onBlur() {
   if (name.value.trim() !== '') recheck()
 }
 
+function onPriceBlur() {
+  price.value = price.value.trim()
+  if (price.value === '') return
+  const result = checkPrice()
+  if (result.ok && result.value !== null) price.value = formatPriceInput(result.value)
+}
+
 function onSubmit(_event: FormSubmitEvent<unknown>) {
   if (props.saving || props.disabled) return
-  const result = recheck()
-  if (!result.ok) {
+  const nameResult = recheck()
+  const priceResult = checkPrice()
+  if (!nameResult.ok) {
     inputRef.value?.inputRef?.focus()
     return
   }
-  // A rename that leaves the name exactly as it is closes the form: no request, no toast. A change of
-  // capitalisation or spacing only is a real change (AC7).
-  if (isRename.value && result.name === props.initialName) return emit('cancel')
-  emit('submit', result.name)
+  if (!priceResult.ok) {
+    return
+  }
+  // A rename that leaves the name and price exactly as they are closes the form: no request, no toast.
+  if (
+    isRename.value
+    && nameResult.name === props.initialName
+    && (priceResult.value ?? null) === (props.initialPrice ?? null)
+  ) {
+    return emit('cancel')
+  }
+  emit('submit', nameResult.name, priceResult.value ?? null)
 }
 
 function onCancel() {
@@ -177,6 +210,55 @@ defineExpose({ focus: () => inputRef.value?.inputRef?.focus() })
       </template>
     </UFormField>
 
+    <UFormField
+      :label="SIZE_COPY.defaultPriceLabel"
+      :hint="SIZE_COPY.optional"
+      name="price"
+      size="xl"
+      :error="priceShown ?? undefined"
+      :help="SIZE_COPY.defaultPriceHelp"
+      :ui="{ label: 'text-base font-medium', hint: 'text-sm text-dimmed', help: 'mt-1.5 text-sm text-muted', error: 'mt-1.5 text-sm' }"
+    >
+      <UInput
+        v-model="price"
+        type="text"
+        inputmode="decimal"
+        size="xl"
+        class="w-full"
+        :placeholder="SIZE_COPY.defaultPricePlaceholder"
+        :readonly="saving"
+        :ui="{ base: 'pe-24' }"
+        autocomplete="off"
+        enterkeyhint="done"
+        @blur="onPriceBlur"
+      >
+        <template #leading>
+          <span
+            class="text-base text-muted"
+            aria-hidden="true"
+          >{{ currencySymbol }}</span>
+        </template>
+        <template #trailing>
+          <span
+            class="text-base text-muted"
+            aria-hidden="true"
+          >{{ SIZE_COPY.priceUnit }}</span>
+        </template>
+      </UInput>
+      <template
+        v-if="priceShown"
+        #error
+      >
+        <span class="flex items-start gap-1.5 text-error">
+          <UIcon
+            name="i-lucide-circle-alert"
+            class="mt-0.5 size-4 shrink-0"
+          />
+          <span>{{ priceShown }}</span>
+        </span>
+      </template>
+    </UFormField>
+
     <UAlert
       v-if="error"
       role="alert"
@@ -211,8 +293,8 @@ defineExpose({ focus: () => inputRef.value?.inputRef?.focus() })
         class="flex-1 justify-center lg:flex-none lg:min-h-10 lg:px-6"
         :label="isRename ? SIZE_COPY.save : SIZE_COPY.add"
         :loading="saving"
-        :disabled="saving || disabled || !!problem"
-        :aria-disabled="problem ? 'true' : undefined"
+        :disabled="saving || disabled || hasProblem"
+        :aria-disabled="hasProblem ? 'true' : undefined"
       />
     </div>
   </UForm>

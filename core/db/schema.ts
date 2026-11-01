@@ -43,6 +43,7 @@ export const sizes = sqliteTable(
     sortOrder: integer('sort_order').notNull(),
     colorSlot: integer('color_slot').notNull(),
     archivedAt: text('archived_at'),
+    defaultPrice: real('default_price'),
     createdAt: text('created_at').notNull().$defaultFn(() => new Date().toISOString()),
     updatedAt: text('updated_at').notNull().$defaultFn(() => new Date().toISOString()),
   },

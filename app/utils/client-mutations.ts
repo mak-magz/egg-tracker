@@ -7,7 +7,7 @@
 //     so many taps on Save send one request.
 //   - archive and restore are guarded PER CLIENT ID, because other rows stay usable while one runs.
 // Add retry rule (feature 01 §3.4, feature 02): one submission id per form opening, reused on a retry of the
-// SAME normalised payload (name, phone AND price), replaced when any of the three changes. The server compares
+// SAME normalised payload (name, phone AND price), replaced when any changes. The server compares
 // the whole payload, so reusing an id for a changed payload would be refused.
 import { ref, readonly } from 'vue'
 import type {
@@ -32,11 +32,11 @@ export type ClientApi = <T>(url: string, opts?: { method?: string, body?: unknow
 
 export type ClientResult<T> = { ok: true, data: T } | { ok: false, error: ClientError } | null
 
-/** The three editable fields, as the form hands them over: already tidied and parsed. `null` = none. */
+/** The editable fields, as the form hands them over: already tidied and parsed. `null` = none. */
 export interface ClientInput {
   name: string
   phone: string | null
-  defaultPrice: number | null
+  defaultPrice?: number | null
 }
 
 export interface ClientMutationDeps {
@@ -54,7 +54,7 @@ function payloadKey(input: ClientInput): string {
   return JSON.stringify([
     normalizeClientName(input.name),
     normalizeClientPhone(input.phone),
-    input.defaultPrice === null ? null : Math.round(input.defaultPrice * 100),
+    input.defaultPrice == null ? null : Math.round(input.defaultPrice * 100),
   ])
 }
 
@@ -145,12 +145,22 @@ export function createClientMutations(deps: ClientMutationDeps) {
     /** Call when a form opens: the next add gets a fresh submission id. */
     resetAdd: () => submissions.reset(),
     add(input: ClientInput) {
-      const body: AddClientRequest = { submissionId: submissions.idFor(input), ...input }
+      const body: AddClientRequest = {
+        submissionId: submissions.idFor(input),
+        name: input.name,
+        phone: input.phone,
+        defaultPrice: input.defaultPrice ?? null,
+      }
       return runForm<AddClientResponse>(() => api<AddClientResponse>('/api/clients', { method: 'POST', body, timeout: CLIENT_WRITE_TIMEOUT_MS }))
     },
-    /** Replaces the three fields of `client`, sending back the version the form was opened with (AC19). */
+    /** Replaces the fields of `client`, sending back the version the form was opened with (AC19). */
     update(client: Pick<Client, 'id' | 'version'>, input: ClientInput) {
-      const body: UpdateClientRequest = { version: client.version, ...input }
+      const body: UpdateClientRequest = {
+        version: client.version,
+        name: input.name,
+        phone: input.phone,
+        defaultPrice: input.defaultPrice ?? null,
+      }
       return runForm<ClientChangeResponse>(() => api<ClientChangeResponse>(path(client.id), { method: 'PUT', body, timeout: CLIENT_WRITE_TIMEOUT_MS }))
     },
     archive(id: string) {

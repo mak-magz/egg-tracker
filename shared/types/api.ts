@@ -59,6 +59,7 @@ export interface FarmSize {
   colorSlot: number
   /** false once archived (feature 02). Archived sizes still label past days; the Log form offers active ones only. */
   active: boolean
+  defaultPrice?: number | null
 }
 
 export interface FarmSummary {
@@ -149,9 +150,9 @@ export interface DeleteProductionDayResponse { removed: ProductionDay }
 /** GET /api/sizes: ALL sizes, active first then archived, each group in the farm's order. */
 export interface SizesResponse { sizes: FarmSize[] }
 /** POST /api/sizes (add at the end of the active list). `submissionId`: a UUID per form opening, reused on a retry of the SAME name. */
-export interface AddSizeRequest { submissionId: string, name: string }
+export interface AddSizeRequest { submissionId: string, name: string, defaultPrice?: number | null }
 /** PATCH /api/sizes/:id */
-export interface RenameSizeRequest { name: string }
+export interface RenameSizeRequest { name: string, defaultPrice?: number | null }
 /** PUT /api/sizes/order: `order` is the wanted FULL order of the active sizes, `sizeId` the one that was moved. Never a step. */
 export interface ReorderSizesRequest { sizeId: string, order: string[] }
 /**

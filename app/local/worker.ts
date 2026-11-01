@@ -120,6 +120,7 @@ const TABLE_DEFINITIONS: string[] = [
     sort_order INTEGER NOT NULL,
     color_slot INTEGER NOT NULL UNIQUE,
     archived_at TEXT,
+    default_price REAL,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
   );`,
@@ -316,6 +317,12 @@ async function initDatabase(): Promise<void> {
   // Safe incremental migrations for existing OPFS databases
   try {
     sqliteDb.exec('ALTER TABLE farm_settings ADD COLUMN tier TEXT NOT NULL DEFAULT \'free\';')
+  }
+  catch {
+    // Column already exists
+  }
+  try {
+    sqliteDb.exec('ALTER TABLE sizes ADD COLUMN default_price REAL;')
   }
   catch {
     // Column already exists
@@ -583,8 +590,9 @@ async function handleRoute(
   if ((method === 'PATCH' || method === 'POST') && match && match[1] !== 'order') {
     const id = decodeURIComponent(match[1]!)
     const name = body?.name ?? ''
-    const result = await renameSize(tenantDb, id, name)
-    await recordOutboxMutation('rename_size', { id, name })
+    const defaultPrice = body?.defaultPrice !== undefined ? body.defaultPrice : undefined
+    const result = await renameSize(tenantDb, id, name, defaultPrice)
+    await recordOutboxMutation('rename_size', { id, name, defaultPrice })
     return result
   }
   if (method === 'PUT' && normalizedPath === '/api/sizes/order') {

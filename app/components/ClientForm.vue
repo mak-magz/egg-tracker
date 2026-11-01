@@ -1,17 +1,14 @@
 <!--
   Add / Edit client: the whole sheet or dialog content (header, scrolling body, pinned footer) inside one UForm
   (feature 03 UX "Add client", "Edit client", "Validation and error variants", R1 to R3, AC8 to AC19, AC33).
-  SELF-CONTAINED (AC34): the fields, the live checks, the discard check's `dirty`, the submission id, the save
-  call and the "Mark {Name} active" shortcut all live here. It knows nothing about which screen opened it and never
-  navigates. The Clients screen hosts it in ClientFormOverlay; the Sales client picker will host the same component
-  (`initialName` pre-fills Name from what was typed into the picker). It reads the farm's loaded client list
-  (useClients) for the local name check, and the currency (useFarm) for the price prefix.
+  SELF-CONTAINED (AC34): the fields (Name and optional Phone), the live checks, the discard check's `dirty`,
+  the submission id, the save call and the "Mark {Name} active" shortcut all live here.
 
   Checks (R3): a field is checked when it loses focus and when Save is tapped; once a message has shown it re-checks
   on every keystroke and the message clears the moment the value is valid. Save is dimmed and disabled only while a
   message shows (before any message it is enabled, so an empty tap gives the message). Enter / Go saves from any
   field. No `maxlength`: a pasted long name gets a message instead of being cut. Leaving a field tidies it visibly
-  (name and phone trimmed, spaces collapsed in the name, a valid price shown with 2 decimals).
+  (name and phone trimmed, spaces collapsed in the name).
   A failed save keeps every typed value. Emits `saved` with what happened; the host closes.
 -->
 <script setup lang="ts">
@@ -19,7 +16,6 @@ import type { FormSubmitEvent } from '@nuxt/ui'
 import type { Client, NameMatch } from '#shared/types/api'
 import { CLIENT_FIELDS, CLIENT_MESSAGES } from '#shared/constants/clients'
 import { checkClientName, checkClientPhone, normalizeClientName, normalizeClientPhone } from '#shared/utils/client-name'
-import { formatPriceInput, parsePriceInput, priceProblemMessage } from '#shared/utils/price'
 import type { ClientError } from '~/utils/client-errors'
 import type { ClientInput } from '~/utils/client-mutations'
 
@@ -50,7 +46,6 @@ const emit = defineEmits<{
 }>()
 
 const { clients } = useClients()
-const { currency, currencySymbol } = useFarm()
 const mutations = useClientMutations()
 
 const edited = computed(() => (props.mode === 'edit' ? (props.client ?? null) : null))
@@ -60,7 +55,6 @@ const isEdit = computed(() => edited.value !== null)
 const state = reactive({
   name: edited.value?.name ?? props.initialName ?? '',
   phone: edited.value?.phone ?? '',
-  price: edited.value?.defaultPrice != null ? formatPriceInput(edited.value.defaultPrice) : '',
 })
 const initial = { ...state }
 
@@ -72,12 +66,11 @@ const formError = ref<string | null>(null)
 // ---- Checks ----------------------------------------------------------------------------------------
 const nameShown = ref<NameProblem | null>(null)
 const phoneShown = ref<string | null>(null)
-const priceShown = ref<string | null>(null)
 /** The server refused the name (a clash it saw first, or a rule): shown until the name is edited. */
 const nameServer = ref<NameProblem | null>(null)
 
 const nameProblem = computed(() => nameServer.value ?? nameShown.value)
-const hasProblem = computed(() => !!(nameProblem.value || phoneShown.value || priceShown.value))
+const hasProblem = computed(() => !!(nameProblem.value || phoneShown.value))
 /** Only an INACTIVE match gets the shortcut button, and only when adding (UX flow F). */
 const markable = computed(() => (!isEdit.value && nameProblem.value?.existing?.archived ? nameProblem.value.existing : null))
 
@@ -91,11 +84,6 @@ function checkPhone() {
   phoneShown.value = result.ok ? null : result.message
   return result
 }
-function checkPrice() {
-  const result = parsePriceInput(state.price)
-  priceShown.value = result.ok ? null : priceProblemMessage(result.reason, currency.value)
-  return result
-}
 
 // Editing a field clears a server complaint about its old value; once a message has shown, re-check per keystroke.
 watch(() => state.name, () => {
@@ -104,9 +92,6 @@ watch(() => state.name, () => {
 })
 watch(() => state.phone, () => {
   if (phoneShown.value) checkPhone()
-})
-watch(() => state.price, () => {
-  if (priceShown.value) checkPrice()
 })
 
 // On leaving a field: tidy it where it stands (so what is saved is what the owner sees), then check it. A blank
@@ -119,30 +104,18 @@ function onPhoneBlur() {
   state.phone = normalizeClientPhone(state.phone) ?? ''
   if (state.phone !== '') checkPhone()
 }
-function onPriceBlur() {
-  state.price = state.price.trim()
-  if (state.price === '') return
-  const result = checkPrice()
-  if (result.ok && result.value !== null) state.price = formatPriceInput(result.value)
-}
 
 // ---- Dirty (the discard check, AC17) ---------------------------------------------------------------
-// Add: anything typed (spaces only count as empty). Edit: anything that would change the client. Compared as
-// values, so "250" against a pre-filled "250.00" is not a change.
+// Add: anything typed (spaces only count as empty). Edit: anything that would change the client.
 const dirty = computed(() => {
   if (normalizeClientName(state.name) !== normalizeClientName(initial.name)) return true
-  if ((normalizeClientPhone(state.phone) ?? '') !== (normalizeClientPhone(initial.phone) ?? '')) return true
-  const now = parsePriceInput(state.price)
-  const before = parsePriceInput(initial.price)
-  if (!now.ok || !before.ok) return state.price.trim() !== initial.price.trim()
-  return now.value !== before.value
+  return (normalizeClientPhone(state.phone) ?? '') !== (normalizeClientPhone(initial.phone) ?? '')
 })
 
 // ---- Focus -----------------------------------------------------------------------------------------
 type InputRef = { inputRef: HTMLInputElement | null }
 const nameInput = useTemplateRef<InputRef>('nameInput')
 const phoneInput = useTemplateRef<InputRef>('phoneInput')
-const priceInput = useTemplateRef<InputRef>('priceInput')
 
 function focusEl(el: HTMLInputElement | null | undefined, select = false) {
   if (!el) return
@@ -156,7 +129,6 @@ function focusName(select = false) {
 function focusFirstProblem() {
   if (nameProblem.value) focusEl(nameInput.value?.inputRef)
   else if (phoneShown.value) focusEl(phoneInput.value?.inputRef)
-  else if (priceShown.value) focusEl(priceInput.value?.inputRef)
 }
 
 // Edit: focusing a pre-filled field selects its content, so typing replaces it (feature 01).
@@ -209,10 +181,6 @@ function handleFailure(error: ClientError) {
         phoneShown.value = fields[CLIENT_FIELDS.phone]!
         mapped = true
       }
-      if (fields[CLIENT_FIELDS.defaultPrice]) {
-        priceShown.value = fields[CLIENT_FIELDS.defaultPrice]!
-        mapped = true
-      }
       if (mapped) {
         focusFirstProblem()
         return
@@ -239,21 +207,19 @@ async function onSubmit(_event: FormSubmitEvent<unknown>) {
   formError.value = null
   const name = checkName()
   const phone = checkPhone()
-  const price = checkPrice()
-  if (!name.ok || !phone.ok || !price.ok || nameServer.value) {
+  if (!name.ok || !phone.ok || nameServer.value) {
     focusFirstProblem()
     return
   }
-  const input: ClientInput = { name: name.name, phone: phone.phone, defaultPrice: price.value }
+  const input: ClientInput = { name: name.name, phone: phone.phone }
   // Show what will be saved (the tidied values), like leaving each field would.
   state.name = input.name
   state.phone = input.phone ?? ''
-  if (input.defaultPrice !== null) state.price = formatPriceInput(input.defaultPrice)
 
   const client = edited.value
   if (client) {
     // Nothing changed: close, no request, no toast (AC18). A change of capitalisation or spacing is a change.
-    if (input.name === client.name && input.phone === client.phone && input.defaultPrice === client.defaultPrice) {
+    if (input.name === client.name && input.phone === client.phone) {
       emit('saved', { kind: 'unchanged', client })
       return
     }
@@ -407,58 +373,6 @@ defineExpose({ dirty, saving: busy, focusName })
               class="mt-0.5 size-4 shrink-0"
             />
             <span>{{ phoneShown }}</span>
-          </span>
-        </template>
-      </UFormField>
-
-      <UFormField
-        :label="CLIENT_COPY.priceLabel"
-        :hint="CLIENT_COPY.optional"
-        name="price"
-        size="xl"
-        :error="priceShown ?? undefined"
-        :help="CLIENT_COPY.priceHelp"
-        :ui="{ label: 'text-base font-medium', hint: 'text-sm text-dimmed', help: 'mt-1.5 text-sm text-muted', error: 'mt-1.5 text-sm' }"
-      >
-        <UInput
-          ref="priceInput"
-          v-model="state.price"
-          type="text"
-          inputmode="decimal"
-          size="xl"
-          class="w-full"
-          :placeholder="CLIENT_COPY.pricePlaceholder"
-          :readonly="busy"
-          :ui="{ base: 'pe-24' }"
-          autocomplete="off"
-          enterkeyhint="go"
-          @focus="selectOnFocus"
-          @blur="onPriceBlur"
-        >
-          <!-- The farm's currency, never a typed symbol; "per tray" so the number is never ambiguous (AC13). -->
-          <template #leading>
-            <span
-              class="text-base text-muted"
-              aria-hidden="true"
-            >{{ currencySymbol }}</span>
-          </template>
-          <template #trailing>
-            <span
-              class="text-base text-muted"
-              aria-hidden="true"
-            >{{ CLIENT_COPY.priceUnit }}</span>
-          </template>
-        </UInput>
-        <template
-          v-if="priceShown"
-          #error
-        >
-          <span class="flex items-start gap-1.5 text-error">
-            <UIcon
-              name="i-lucide-circle-alert"
-              class="mt-0.5 size-4 shrink-0"
-            />
-            <span>{{ priceShown }}</span>
           </span>
         </template>
       </UFormField>

@@ -104,12 +104,12 @@ export function createSizeMutations(deps: SizeMutationDeps) {
     /** Call when the Add form opens: the next add gets a fresh submission id. */
     resetAdd: () => submissions.reset(),
     /** `name` as typed; the id follows the retry rule. The server normalises the name again. */
-    add(name: string) {
-      const body: AddSizeRequest = { submissionId: submissions.idFor(name), name }
+    add(name: string, defaultPrice?: number | null) {
+      const body: AddSizeRequest = { submissionId: submissions.idFor(name), name, defaultPrice }
       return run('add', null, () => api<SizeChangeResponse>('/api/sizes', { method: 'POST', body, timeout: SIZE_WRITE_TIMEOUT_MS }))
     },
-    rename(id: string, name: string) {
-      const body: RenameSizeRequest = { name }
+    rename(id: string, name: string, defaultPrice?: number | null) {
+      const body: RenameSizeRequest = { name, defaultPrice }
       return run('rename', id, () => api<SizeChangeResponse>(path(id), { method: 'PATCH', body, timeout: SIZE_WRITE_TIMEOUT_MS }))
     },
     /** `order` is the wanted FULL order of the active sizes (moveInOrder), never a step. */

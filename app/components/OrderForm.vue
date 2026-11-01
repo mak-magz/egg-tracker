@@ -87,12 +87,6 @@ const lockedClientText = computed(() => {
   return c.active ? c.name : ORDER_COPY.clientInactiveOption(c.name)
 })
 
-const clientDefaultPrice = computed<number | null>(() => {
-  const id = state.clientId
-  if (!id) return null
-  return allClients.value.find(c => c.id === id)?.defaultPrice ?? null
-})
-
 // ---- Lines (Production-style all sizes grid) -----------------------------------------------------------
 interface SizeLineState {
   sizeId: string
@@ -101,7 +95,7 @@ interface SizeLineState {
   archived: boolean
   qty: QuantityValue
   priceRaw: string
-  /** True until the owner types this line's price by hand (AC13): it follows the client's default. */
+  /** True until the owner types this line's price by hand: initialized from the size's default. */
   priceIsUsual: boolean
   /** An existing line that already has deliveries: size read-only, floor on the quantity (AC19). */
   locked: boolean
@@ -120,13 +114,12 @@ function buildSizeLines(): SizeLineState[] {
     .sort((a, b) => a.sortOrder - b.sortOrder)
 
   const allSizes = [
-    ...active.map(s => ({ id: s.id, name: s.name, colorSlot: s.colorSlot, archived: false })),
-    ...archivedOnOrder.map(s => ({ id: s.id, name: s.name, colorSlot: s.colorSlot, archived: true })),
+    ...active.map(s => ({ id: s.id, name: s.name, colorSlot: s.colorSlot, archived: false, defaultPrice: s.defaultPrice })),
+    ...archivedOnOrder.map(s => ({ id: s.id, name: s.name, colorSlot: s.colorSlot, archived: true, defaultPrice: s.defaultPrice })),
   ]
 
   const existingMap = new Map(props.order?.lines.map(l => [l.sizeId, l]) ?? [])
   const lockedSizes = rules.value?.lockedSizes ?? new Set<string>()
-  const defaultPrice = clientDefaultPrice.value
 
   return allSizes.map((s) => {
     const existing = existingMap.get(s.id)
@@ -143,6 +136,7 @@ function buildSizeLines(): SizeLineState[] {
         locked: lockedSizes.has(s.id),
       }
     }
+    const defaultPrice = s.defaultPrice ?? null
     return {
       sizeId: s.id,
       name: s.name,
@@ -178,16 +172,6 @@ function minNoteFor(line: SizeLineState): string | undefined {
 }
 
 const body = useTemplateRef<HTMLElement>('body')
-
-watch(clientDefaultPrice, (price) => {
-  if (price === null) return
-  for (const line of lines.value) {
-    if (line.priceIsUsual || line.priceRaw.trim() === '') {
-      line.priceRaw = formatPriceInput(price)
-      line.priceIsUsual = true
-    }
-  }
-})
 
 function onLinePriceEdited(line: SizeLineState) {
   line.priceIsUsual = false

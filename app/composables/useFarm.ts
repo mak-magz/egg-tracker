@@ -13,15 +13,16 @@ export interface ResolvedSize {
   sortOrder: number
   colorSlot: number
   active: boolean
+  defaultPrice?: number | null
   /** false for an id that isn't in the farm's list (shouldn't happen; shown as "Unknown size"). */
   known: boolean
 }
 
 const DEFAULT_FARM_SIZES: FarmSize[] = [
-  { id: 'size-small', name: 'Small', sortOrder: 0, colorSlot: 0, active: true },
-  { id: 'size-medium', name: 'Medium', sortOrder: 1, colorSlot: 1, active: true },
-  { id: 'size-large', name: 'Large', sortOrder: 2, colorSlot: 2, active: true },
-  { id: 'size-jumbo', name: 'Jumbo', sortOrder: 3, colorSlot: 3, active: true },
+  { id: 'size-small', name: 'Small', sortOrder: 0, colorSlot: 0, active: true, defaultPrice: null },
+  { id: 'size-medium', name: 'Medium', sortOrder: 1, colorSlot: 1, active: true, defaultPrice: null },
+  { id: 'size-large', name: 'Large', sortOrder: 2, colorSlot: 2, active: true, defaultPrice: null },
+  { id: 'size-jumbo', name: 'Jumbo', sortOrder: 3, colorSlot: 3, active: true, defaultPrice: null },
 ]
 
 const DEFAULT_FARM: FarmSummary = {
@@ -85,7 +86,7 @@ export function useFarm() {
     const s = byId.value.get(id)
     if (s) return { ...s, known: true }
     // An id we can't resolve sorts last and gets a neutral label.
-    return { id, name: 'Unknown size', sortOrder: Number.MAX_SAFE_INTEGER, colorSlot: 0, active: false, known: false }
+    return { id, name: 'Unknown size', sortOrder: Number.MAX_SAFE_INTEGER, colorSlot: 0, active: false, defaultPrice: null, known: false }
   }
 
   /** Puts a new list into the farm context: the Production form, day cards and chart follow at once. */

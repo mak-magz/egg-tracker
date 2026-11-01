@@ -10,6 +10,6 @@ import { defineTenantHandler } from '../../utils/handlers'
 
 export default defineTenantHandler(async (event, ctx): Promise<SizeChangeResponse> => {
   const { id } = validateInput(sizeIdParamsSchema, getRouterParams(event, { decode: true }))
-  const { name } = validateInput(renameSizeBodySchema, await readBody(event))
-  return renameSize(ctx.db, id, name)
+  const { name, defaultPrice } = validateInput(renameSizeBodySchema, await readBody(event))
+  return renameSize(ctx.db, id, name, defaultPrice)
 })
