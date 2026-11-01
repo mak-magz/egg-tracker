@@ -1,7 +1,7 @@
 <!--
   Log / Edit sale: the whole sheet or dialog content (feature 04 §2.5 "Log a sale", AC12 to AC32, AC40, AC41,
-  AC64 to AC66; feature 05 AC36 to AC42). A header part (Delivery/On-site, Client) plus a repeatable lines part
-  (SaleLineCard x1-20, Add size) plus the one Sale date plus the footer total. SELF-CONTAINED (AC34-style,
+  AC64 to AC66; feature 05 AC36 to AC42). A header part (Delivery/On-site, Client) plus a multi-size grid part
+  (SaleLineCard for all active sizes) plus the Sale date plus the footer total. SELF-CONTAINED (AC34-style,
   feature 03): validation, the submission id, the discard-dirty state and the save call all live here, like
   ClientForm/ProductionForm.
   Every sale has already left the farm (feature 05 AC37), so there is no "Already delivered" and no delivered date:
@@ -15,7 +15,6 @@ import type { FormSubmitEvent } from '@nuxt/ui'
 import type { IsoDate, Sale, SaleLineInput, SaleType, ShortfallLine } from '#shared/types/api'
 import type { ClientSavedEvent } from './ClientForm.vue'
 import type { ClientPickerOption } from './ClientPicker.vue'
-import type { SizeChipOption } from './SizeChipPicker.vue'
 import { computeLineTotal, formatPriceInput } from '#shared/utils/price'
 import { formatQty, splitEggs } from '#shared/utils/quantity'
 import { formatDateHint } from '~/utils/day-label'
@@ -65,106 +64,10 @@ const originalSale = computed(() => (isEdit.value ? (props.sale ?? null) : null)
 const linked = computed(() => originalSale.value !== null && originalSale.value.orderId !== null)
 const linkedOrderNumber = computed(() => originalSale.value?.orderNumber ?? null)
 
-// ---- Lines --------------------------------------------------------------------------------------------
-interface LineState {
-  key: string
-  sizeId: string | null
-  qty: QuantityValue
-  priceRaw: string
-  /** True until the owner types this line's price by hand (AC18): it follows the client's default. */
-  priceIsUsual: boolean
-}
-
-function newKey(): string {
-  return crypto.randomUUID()
-}
-
-function buildInitialLines(): LineState[] {
-  const sale = originalSale.value
-  if (!sale || sale.lines.length === 0) {
-    return [{ key: newKey(), sizeId: null, qty: { trays: null, loose: null }, priceRaw: '', priceIsUsual: false }]
-  }
-  return sale.lines.map((line) => {
-    const { trays, loose } = splitEggs(line.eggs, trayEggs.value)
-    return { key: newKey(), sizeId: line.sizeId, qty: { trays, loose }, priceRaw: formatPriceInput(line.pricePerTray), priceIsUsual: false }
-  })
-}
-
-const lines = ref<LineState[]>(buildInitialLines())
-
-const activeSizeOptions = computed<SizeChipOption[]>(() =>
-  activeSizes.value.map(s => ({ id: s.id, name: s.name, colorSlot: s.colorSlot, archived: false })))
-
-/** This line's own options: every active size, plus its own size if it has since been archived (AC38, AC41). */
-function sizeOptionsFor(line: LineState): SizeChipOption[] {
-  const active = activeSizeOptions.value
-  if (line.sizeId && !active.some(s => s.id === line.sizeId)) {
-    const resolved = sizeById(line.sizeId)
-    return [...active, { id: resolved.id, name: resolved.name, colorSlot: resolved.colorSlot, archived: true }]
-  }
-  return active
-}
-
-function usedSizeIdsFor(line: LineState): string[] {
-  return lines.value.filter(l => l.key !== line.key && l.sizeId).map(l => l.sizeId!)
-}
-
-function sizeNameFor(line: LineState): string | null {
-  if (!line.sizeId) return null
-  return sizeById(line.sizeId).name
-}
-
-/** A linked sale's lines are shown with a lock and their quantity (AC36). */
-function lockedLabelFor(line: LineState): string | undefined {
-  if (!linked.value || !line.sizeId) return undefined
-  const sale = originalSale.value
-  const eggs = sale?.lines.find(l => l.sizeId === line.sizeId)?.eggs ?? 0
-  return ORDER_COPY.lockedLineAria(sizeNameFor(line) ?? '', formatQty(eggs, trayEggs.value))
-}
-
-const canAddLine = computed(() => lines.value.length < MAX_SALE_LINES)
-const allSizesUsed = computed(() => activeSizeOptions.value.length > 0 && activeSizeOptions.value.every(s => lines.value.some(l => l.sizeId === s.id)))
-const addDisabledReason = computed(() => {
-  if (lines.value.length >= MAX_SALE_LINES) return SALE_COPY.addSizeLimitReached
-  if (allSizesUsed.value) return SALE_COPY.addSizeAllUsed
-  return null
-})
-
-const body = useTemplateRef<HTMLElement>('body')
-
-async function addLine() {
-  if (!canAddLine.value || allSizesUsed.value || linked.value) return
-  const price = clientDefaultPrice.value
-  lines.value.push({ key: newKey(), sizeId: null, qty: { trays: null, loose: null }, priceRaw: price !== null ? formatPriceInput(price) : '', priceIsUsual: price !== null })
-  await nextTick()
-  const groups = body.value?.querySelectorAll<HTMLElement>('[role="radiogroup"], select')
-  const last = groups?.[groups.length - 1]
-  last?.querySelector<HTMLElement>('input, select')?.focus()
-  last?.scrollIntoView({ block: 'center' })
-}
-
-async function removeLine(key: string) {
-  const idx = lines.value.findIndex(l => l.key === key)
-  if (idx === -1 || lines.value.length <= 1 || linked.value) return
-  lines.value.splice(idx, 1)
-  await nextTick()
-  const groups = body.value?.querySelectorAll<HTMLElement>('[role="radiogroup"], select')
-  const target = groups?.[Math.max(0, idx - 1)]
-  target?.querySelector<HTMLElement>('input, select')?.focus()
-}
-
-function onSizeChosen(line: LineState) {
-  void nextTick(() => {
-    const idx = lines.value.findIndex(l => l.key === line.key)
-    const input = body.value?.querySelectorAll<HTMLInputElement>('input[data-qty-input]')[idx * 2]
-    input?.focus()
-  })
-}
-
 // ---- Header state ---------------------------------------------------------------------------------------
 const state = reactive({
   type: originalSale.value?.type ?? ('delivery' as SaleType),
-  clientId: originalSale.value?.clientId ?? null as string | null,
+  clientId: originalSale.value?.clientId ?? (null as string | null),
   saleDate: originalSale.value?.saleDate ?? props.today,
 })
 
@@ -194,6 +97,87 @@ const clientDefaultPrice = computed<number | null>(() => {
   return allClients.value.find(c => c.id === id)?.defaultPrice ?? null
 })
 
+// ---- Lines (Production-style all sizes grid) -----------------------------------------------------------
+interface SizeLineState {
+  sizeId: string
+  name: string
+  colorSlot: number
+  archived: boolean
+  qty: QuantityValue
+  priceRaw: string
+  /** True until the owner types this line's price by hand (AC18): it follows the client's default. */
+  priceIsUsual: boolean
+}
+
+function buildSizeLines(): SizeLineState[] {
+  const active = activeSizes.value
+  const activeIds = new Set(active.map(s => s.id))
+  const onSale = isEdit.value && props.sale
+    ? new Set(props.sale.lines.map(l => l.sizeId))
+    : new Set<string>()
+
+  // Archived sizes that exist on this sale (Edit only)
+  const archivedOnSale = [...onSale]
+    .filter(id => !activeIds.has(id))
+    .map(id => sizeById(id))
+    .sort((a, b) => a.sortOrder - b.sortOrder)
+
+  const allSizes = [
+    ...active.map(s => ({ id: s.id, name: s.name, colorSlot: s.colorSlot, archived: false })),
+    ...archivedOnSale.map(s => ({ id: s.id, name: s.name, colorSlot: s.colorSlot, archived: true })),
+  ]
+
+  const existingMap = new Map(props.sale?.lines.map(l => [l.sizeId, l]) ?? [])
+  const defaultPrice = clientDefaultPrice.value
+
+  return allSizes.map((s) => {
+    const existing = existingMap.get(s.id)
+    if (existing) {
+      const { trays, loose } = splitEggs(existing.eggs, trayEggs.value)
+      return {
+        sizeId: s.id,
+        name: s.name,
+        colorSlot: s.colorSlot,
+        archived: s.archived,
+        qty: { trays, loose },
+        priceRaw: formatPriceInput(existing.pricePerTray),
+        priceIsUsual: false,
+      }
+    }
+    return {
+      sizeId: s.id,
+      name: s.name,
+      colorSlot: s.colorSlot,
+      archived: s.archived,
+      qty: { trays: null, loose: null },
+      priceRaw: defaultPrice !== null ? formatPriceInput(defaultPrice) : '',
+      priceIsUsual: defaultPrice !== null,
+    }
+  })
+}
+
+const lines = ref<SizeLineState[]>(buildSizeLines())
+
+function sizeNameFor(line: SizeLineState): string {
+  return line.name
+}
+
+function isLineOnLinkedSale(line: SizeLineState): boolean {
+  if (!linked.value || !originalSale.value) return true
+  return originalSale.value.lines.some(l => l.sizeId === line.sizeId)
+}
+
+/** A linked sale's lines are shown with a lock and their quantity (AC36). */
+function lockedLabelFor(line: SizeLineState): string | undefined {
+  if (!linked.value) return undefined
+  const sale = originalSale.value
+  const found = sale?.lines.find(l => l.sizeId === line.sizeId)
+  if (!found) return undefined
+  return ORDER_COPY.lockedLineAria(line.name, formatQty(found.eggs, trayEggs.value))
+}
+
+const body = useTemplateRef<HTMLElement>('body')
+
 watch(clientDefaultPrice, (price) => {
   if (price === null || linked.value) return
   for (const line of lines.value) {
@@ -204,7 +188,7 @@ watch(clientDefaultPrice, (price) => {
   }
 })
 
-function onLinePriceEdited(line: LineState) {
+function onLinePriceEdited(line: SizeLineState) {
   line.priceIsUsual = false
 }
 
@@ -222,28 +206,37 @@ function onClientAdded(event: ClientSavedEvent) {
 }
 
 // ---- Live totals (AC22) -----------------------------------------------------------------------------------
-function lineEggs(line: LineState): number | null {
+function hasQuantity(line: SizeLineState): boolean {
+  const t = line.qty.trays
+  const l = line.qty.loose
+  return (t !== null && t > 0) || (l !== null && l > 0)
+}
+
+function lineEggs(line: SizeLineState): number | null {
   const check = checkLineQuantity(line.qty, trayEggs.value)
   return check.ok ? check.value : null
 }
-function linePrice(line: LineState): number | null {
+
+function linePrice(line: SizeLineState): number | null {
   const check = checkLinePrice(line.priceRaw, currency.value)
   return check.ok ? check.value : null
 }
-function lineTotalFor(line: LineState): number | null {
+
+function lineTotalFor(line: SizeLineState): number | null {
+  if (!hasQuantity(line)) return null
   const eggs = lineEggs(line)
   const price = linePrice(line)
-  if (eggs === null || price === null || !line.sizeId) return null
+  if (eggs === null || price === null) return null
   return computeLineTotal(price, eggs, trayEggs.value)
 }
 
-const completeLineTotals = computed(() => lines.value.map(lineTotalFor))
-const allLinesComplete = computed(() => completeLineTotals.value.every(t => t !== null))
+const activeLines = computed(() => lines.value.filter(hasQuantity))
+const completeLineTotals = computed(() => activeLines.value.map(lineTotalFor))
+const allLinesComplete = computed(() => activeLines.value.length > 0 && completeLineTotals.value.every(t => t !== null))
 const runningTotal = computed(() => completeLineTotals.value.reduce((sum: number, t) => sum + (t ?? 0), 0))
 
 const footerTotalText = computed(() => {
-  const some = completeLineTotals.value.some(t => t !== null)
-  if (!some) return SALE_COPY.saleTotalEmpty
+  if (activeLines.value.length === 0) return SALE_COPY.saleTotalEmpty
   const formatted = formatPrice(runningTotal.value)
   return allLinesComplete.value ? SALE_COPY.saleTotal(formatted) : SALE_COPY.saleTotalSoFar(formatted)
 })
@@ -251,22 +244,32 @@ const footerTotalText = computed(() => {
 // ---- On-hand hints (AC25) -----------------------------------------------------------------------------
 watchEffect(() => {
   if (linked.value) return
-  const ids = lines.value.map(l => l.sizeId).filter((id): id is string => !!id)
+  const ids = lines.value.map(l => l.sizeId)
   if (ids.length) void onHand.ensure(ids)
 })
-function onHandFor(line: LineState) {
-  return line.sizeId ? onHand.entry(line.sizeId) : { status: 'ready' as const, eggs: 0 }
+
+function onHandFor(line: SizeLineState) {
+  return onHand.entry(line.sizeId)
 }
 
 // ---- Dirty (discard check, AC32) --------------------------------------------------------------------------
 const addTouched = computed(() => {
   if (isEdit.value) return false
   if (state.clientId !== null) return true
-  return lines.value.some(l => l.sizeId !== null || l.qty.trays !== null || l.qty.loose !== null || l.priceRaw.trim() !== '')
+  return lines.value.some(hasQuantity)
 })
+
 function snapshot(): string {
-  return JSON.stringify({ type: state.type, clientId: state.clientId, saleDate: state.saleDate, lines: lines.value.map(l => ({ s: l.sizeId, t: l.qty.trays, l: l.qty.loose, p: l.priceRaw })) })
+  return JSON.stringify({
+    type: state.type,
+    clientId: state.clientId,
+    saleDate: state.saleDate,
+    lines: lines.value
+      .filter(hasQuantity)
+      .map(l => ({ s: l.sizeId, t: l.qty.trays, l: l.qty.loose, p: l.priceRaw })),
+  })
 }
+
 const editSnapshot = isEdit.value ? snapshot() : ''
 const dirty = computed(() => (isEdit.value ? snapshot() !== editSnapshot : addTouched.value))
 
@@ -299,10 +302,10 @@ function focusFirstProblem() {
     document.querySelector<HTMLElement>('[data-sale-focus="client"]')?.focus()
     return
   }
-  const firstLineKey = lines.value.find(l => lineErrors.value[l.key])?.key
-  if (firstLineKey) {
-    const idx = lines.value.findIndex(l => l.key === firstLineKey)
-    body.value?.querySelectorAll<HTMLElement>('[role="radiogroup"], select')[idx]?.scrollIntoView({ block: 'center' })
+  const firstErrorSizeId = lines.value.find(l => lineErrors.value[l.sizeId])?.sizeId
+  if (firstErrorSizeId) {
+    const idx = lines.value.findIndex(l => l.sizeId === firstErrorSizeId)
+    body.value?.querySelectorAll<HTMLInputElement>('input[data-qty-input]')[idx * 2]?.focus()
     return
   }
   if (saleDateError.value) {
@@ -350,21 +353,22 @@ function validate(): { input: SaleInput } | null {
 
   if (!validateDate()) ok = false
 
-  const seenSizes = new Set<string>()
   const lineInputs: SaleLineInput[] = []
+  const enteredSizes = lines.value.filter(hasQuantity)
+
+  if (enteredSizes.length === 0) {
+    formError.value = 'Enter a quantity for at least one size.'
+    ok = false
+  }
+  else if (enteredSizes.length > MAX_SALE_LINES) {
+    formError.value = SALE_COPY.addSizeLimitReached
+    ok = false
+  }
+
   for (const line of lines.value) {
+    if (!hasQuantity(line)) continue
+
     const errs: { size?: string, quantity?: string, price?: string } = {}
-    if (!line.sizeId) {
-      errs.size = SALE_COPY.sizeRequired
-      ok = false
-    }
-    else if (seenSizes.has(line.sizeId)) {
-      errs.size = SALE_COPY.serverDuplicateSize
-      ok = false
-    }
-    else {
-      seenSizes.add(line.sizeId)
-    }
     const qtyCheck = checkLineQuantity(line.qty, trayEggs.value)
     if (!qtyCheck.ok) {
       errs.quantity = qtyCheck.message
@@ -375,8 +379,8 @@ function validate(): { input: SaleInput } | null {
       errs.price = priceCheck.message
       ok = false
     }
-    if (Object.keys(errs).length) lineErrors.value = { ...lineErrors.value, [line.key]: errs }
-    if (line.sizeId && qtyCheck.ok && priceCheck.ok) {
+    if (Object.keys(errs).length) lineErrors.value = { ...lineErrors.value, [line.sizeId]: errs }
+    if (qtyCheck.ok && priceCheck.ok) {
       lineInputs.push({ sizeId: line.sizeId, eggs: qtyCheck.value, pricePerTray: priceCheck.value })
     }
   }
@@ -467,6 +471,7 @@ const shortfallDialogLines = computed(() => shortfallLines.value.map(s => ({
   onHandText: formatQtyLocal(s.onHandEggs),
   neededText: formatQtyLocal(s.neededEggs),
 })))
+
 function formatQtyLocal(eggs: number): string {
   return formatQty(eggs, trayEggs.value)
 }
@@ -574,33 +579,37 @@ defineExpose({ dirty, saving: busy, focusFirstProblem })
         />
       </UFormField>
 
-      <SaleLineCard
-        v-for="(line, i) in lines"
-        :key="line.key"
-        v-model:size-id="line.sizeId"
-        v-model:qty="line.qty"
-        v-model:price-raw="line.priceRaw"
-        :index="i"
-        :size-name="sizeNameFor(line)"
-        :size-options="sizeOptionsFor(line)"
-        :used-size-ids="usedSizeIdsFor(line)"
-        :eggs-per-tray="trayEggs"
-        :currency="currency"
-        :on-hand-eggs="onHandFor(line).eggs"
-        :on-hand-status="onHandFor(line).status"
-        :hide-on-hand="linked"
-        :locked-label="lockedLabelFor(line)"
-        :show-usual-price-note="line.priceIsUsual && line.priceRaw.trim() !== ''"
-        :line-total="lineTotalFor(line)"
-        :removable="lines.length > 1 && !linked"
-        :disabled="busy || linked"
-        :size-error="lineErrors[line.key]?.size"
-        :quantity-error="lineErrors[line.key]?.quantity"
-        :price-error="lineErrors[line.key]?.price"
-        @remove="removeLine(line.key)"
-        @size-chosen="onSizeChosen(line)"
-        @price-edited="onLinePriceEdited(line)"
-      />
+      <!-- Multi-size Production-style Grid (No 'Add size' button needed) -->
+      <fieldset class="flex min-w-0 flex-col gap-2">
+        <legend class="mb-1 text-sm font-semibold text-slate-300">
+          Sizes & Quantities
+        </legend>
+        <div class="flex flex-col gap-3">
+          <SaleLineCard
+            v-for="(line, i) in lines"
+            :key="line.sizeId"
+            v-model:qty="line.qty"
+            v-model:price-raw="line.priceRaw"
+            :index="i"
+            :size-name="sizeNameFor(line)"
+            :archived="line.archived"
+            :color-slot="line.colorSlot"
+            :eggs-per-tray="trayEggs"
+            :currency="currency"
+            :on-hand-eggs="onHandFor(line).eggs"
+            :on-hand-status="onHandFor(line).status"
+            :hide-on-hand="linked"
+            :locked-label="lockedLabelFor(line)"
+            :show-usual-price-note="line.priceIsUsual && line.priceRaw.trim() !== ''"
+            :line-total="lineTotalFor(line)"
+            :disabled="busy || (linked && !isLineOnLinkedSale(line))"
+            :size-error="lineErrors[line.sizeId]?.size"
+            :quantity-error="lineErrors[line.sizeId]?.quantity"
+            :price-error="lineErrors[line.sizeId]?.price"
+            @price-edited="onLinePriceEdited(line)"
+          />
+        </div>
+      </fieldset>
 
       <p
         v-if="linked"
@@ -608,29 +617,6 @@ defineExpose({ dirty, saving: busy, focusFirstProblem })
       >
         {{ SALE_COPY.linkedEggsNote }}
       </p>
-
-      <div
-        v-else
-        class="flex flex-col gap-1"
-      >
-        <UButton
-          color="neutral"
-          variant="outline"
-          size="xl"
-          icon="i-lucide-plus"
-          class="w-full justify-center border-dashed"
-          :disabled="busy || !!addDisabledReason"
-          :aria-disabled="!!addDisabledReason"
-          :label="SALE_COPY.addSize"
-          @click="addLine"
-        />
-        <p
-          v-if="addDisabledReason"
-          class="text-sm text-muted"
-        >
-          {{ addDisabledReason }}
-        </p>
-      </div>
 
       <UFormField
         :label="SALE_COPY.saleDateLabel"

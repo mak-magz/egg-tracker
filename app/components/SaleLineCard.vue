@@ -1,11 +1,12 @@
 <!--
-  One line of the Log/Edit sale form (feature 04 §2.5 "Log a sale: mobile bottom sheet", AC12, AC15 to AC22,
-  AC25): a fieldset with a hidden legend "Size {n}", the size chip picker, the per-line on-hand hint, the
-  shared trays + loose QuantityInput, the price field (with the farm's currency prefix and a "Usual price"
-  note while the value came from the client's default) and the live line total (a dash until both the size,
-  quantity and price are valid, R7). The remove (🗑) button is hidden while only one line remains (AC15).
-  Self-contained styling only: SaleForm owns every value and every check; this component only renders and
-  emits granular updates so SaleForm can move focus and recompute totals centrally.
+  One size line of the Log/Edit sale and order forms.
+  Follows the production logging multi-size grid: every active farm size is displayed in order.
+  Each card shows:
+  - Size name + color slot / archived badge + on-hand stock hint (or delivery lock status)
+  - Trays + Loose steppers (QuantityInput)
+  - Price per tray input (with currency symbol and client default "Usual" hint)
+  - Live calculated line total (or dash if no quantity entered)
+  When quantity > 0, the card subtly highlights as active.
 -->
 <script setup lang="ts">
 import { currencySymbol, formatPrice } from '#shared/utils/price'
@@ -14,18 +15,20 @@ import type { SizeChipOption } from './SizeChipPicker.vue'
 import type { QuantityValue } from '~/utils/sale-validation'
 import { SALE_COPY } from '~/utils/sale-copy'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   index: number
   sizeName: string | null
-  sizeOptions: readonly SizeChipOption[]
-  usedSizeIds: readonly string[]
+  sizeOptions?: readonly SizeChipOption[]
+  usedSizeIds?: readonly string[]
   eggsPerTray: number
   currency: string | null
+  archived?: boolean
+  colorSlot?: number
   onHandEggs?: number | null
   onHandStatus?: 'loading' | 'ready' | 'error'
   /** Orders don't touch stock (feature 05 AC10): no per-line on-hand hint. */
   hideOnHand?: boolean
-  /** An order line that already has deliveries (feature 05 AC19): the size is shown read-only with this accessible name. */
+  /** An order line that already has deliveries: size is read-only with this accessible name. */
   lockedLabel?: string
   /** The least this line may be, in eggs (Edit after a delivery): the minus steppers stop there. */
   minEggs?: number
@@ -36,37 +39,47 @@ const props = defineProps<{
   /** "In this order" on the order form; the sale form keeps "In this sale". */
   usedLabel?: string
   usedOptionLabel?: (name: string) => string
-  /** Unique per form so the radio ids never clash. */
+  /** Unique per form so ids never clash. */
   idPrefix?: string
-  showUsualPriceNote: boolean
+  showUsualPriceNote?: boolean
   lineTotal: number | null
-  removable: boolean
+  removable?: boolean
   disabled?: boolean
   sizeError?: string
   quantityError?: string
   priceError?: string
-}>()
+}>(), {
+  sizeOptions: () => [],
+  usedSizeIds: () => [],
+  archived: false,
+  colorSlot: 0,
+  onHandEggs: null,
+  onHandStatus: 'ready',
+  hideOnHand: false,
+  lockedLabel: undefined,
+  minEggs: undefined,
+  minNote: undefined,
+  priceNote: undefined,
+  showUsualPriceNote: false,
+  removable: false,
+  disabled: false,
+  sizeError: undefined,
+  quantityError: undefined,
+  priceError: undefined,
+  idPrefix: 'sale-line',
+})
 
 const emit = defineEmits<{
   'remove': []
-  /** A size was chosen on a line that had nothing else typed: move focus to Trays (AC UX flow A). */
   'size-chosen': []
   'price-edited': []
 }>()
 
-const sizeId = defineModel<string | null>('sizeId', { required: true })
 const qty = defineModel<QuantityValue>('qty', { required: true })
 const priceRaw = defineModel<string>('priceRaw', { required: true })
 
-const legend = computed(() => SALE_COPY.lineGroupLabel(props.index + 1))
+const legend = computed(() => props.sizeName ?? SALE_COPY.lineGroupLabel(props.index + 1))
 const quantityLabel = computed(() => props.sizeName ?? `Line ${props.index + 1}`)
-
-function onSizeUpdate(id: string | null) {
-  const wasEmpty = sizeId.value === null
-  const qtyEmpty = qty.value.trays === null && qty.value.loose === null
-  sizeId.value = id
-  if (wasEmpty && qtyEmpty && id !== null) emit('size-chosen')
-}
 
 const prefix = computed(() => props.idPrefix ?? 'sale-line')
 
@@ -74,6 +87,23 @@ const onHandText = computed(() => {
   if (props.onHandStatus === 'loading') return SALE_COPY.onHandLoading
   if (props.onHandStatus === 'error') return SALE_COPY.onHandFailed
   return SALE_COPY.onHand(formatQty(props.onHandEggs ?? 0, props.eggsPerTray))
+})
+
+const hasQuantity = computed(() => {
+  const t = qty.value.trays
+  const l = qty.value.loose
+  return (t !== null && t > 0) || (l !== null && l > 0)
+})
+
+const totalEggsEntered = computed(() => {
+  const t = qty.value.trays ?? 0
+  const l = qty.value.loose ?? 0
+  return t * props.eggsPerTray + l
+})
+
+const hasStockShortfall = computed(() => {
+  if (props.hideOnHand || !hasQuantity.value || props.onHandEggs === null) return false
+  return totalEggsEntered.value > (props.onHandEggs ?? 0)
 })
 
 const lineTotalText = computed(() => (props.lineTotal !== null ? formatPrice(props.lineTotal, props.currency) : null))
@@ -84,76 +114,77 @@ function onPriceInput() {
 </script>
 
 <template>
-  <fieldset class="flex flex-col gap-2 rounded-md bg-muted p-3">
+  <fieldset
+    class="flex flex-col gap-2.5 rounded-xl border p-3 transition-colors duration-150"
+    :class="hasQuantity
+      ? 'bg-muted border-primary/50 shadow-xs ring-1 ring-primary/20'
+      : 'bg-muted/40 border-default/70 hover:border-default'"
+  >
     <legend class="sr-only">
       {{ legend }}
     </legend>
 
-    <div class="flex items-start justify-between gap-2">
-      <p class="text-base font-medium text-default">
-        {{ SALE_COPY.sizeLabel }}
-      </p>
-      <UButton
-        v-if="removable"
-        color="neutral"
-        variant="ghost"
-        icon="i-lucide-trash-2"
-        :aria-label="SALE_COPY.removeLineAria(sizeName, index + 1)"
-        class="size-11 shrink-0 justify-center lg:size-9"
-        :disabled="disabled"
-        @click="emit('remove')"
-      />
+    <!-- Header: Size Name + Color Slot + Stock on Hand / Delivery Lock -->
+    <div class="flex items-center justify-between gap-2">
+      <div class="flex min-w-0 flex-wrap items-center gap-2">
+        <span class="text-base font-bold text-highlighted break-words">
+          {{ sizeName }}
+        </span>
+        <UBadge
+          v-if="archived"
+          color="neutral"
+          variant="subtle"
+          size="xs"
+          label="Archived"
+        />
+        <UBadge
+          v-if="lockedLabel"
+          color="neutral"
+          variant="subtle"
+          size="xs"
+          icon="i-lucide-lock"
+          label="Delivered"
+        />
+      </div>
+
+      <!-- On-hand stock hint (for Sales) -->
+      <div
+        v-if="!hideOnHand"
+        class="text-xs font-medium shrink-0"
+        :class="hasStockShortfall ? 'text-error font-semibold flex items-center gap-1' : 'text-dimmed'"
+      >
+        <UIcon
+          v-if="hasStockShortfall"
+          name="i-lucide-alert-triangle"
+          class="size-3.5 shrink-0"
+          aria-hidden="true"
+        />
+        <span>{{ onHandText }}</span>
+      </div>
     </div>
 
-    <div
-      v-if="lockedLabel"
-      role="group"
-      :aria-label="lockedLabel"
-      class="flex min-h-11 items-center gap-2 rounded-md border border-default bg-default px-3 py-2 text-base font-semibold text-highlighted"
-    >
-      <span class="min-w-0 flex-1 wrap-anywhere">{{ sizeName }}</span>
-      <UIcon
-        name="i-lucide-lock"
-        class="size-4 shrink-0 text-muted"
-        aria-hidden="true"
-      />
-    </div>
-    <SizeChipPicker
-      v-else
-      :model-value="sizeId"
-      :options="sizeOptions"
-      :used-ids="usedSizeIds"
-      :name="`${prefix}-size-${index}`"
-      :group-label="SALE_COPY.sizeLabel"
-      :disabled="disabled"
-      :used-label="usedLabel"
-      :used-option-label="usedOptionLabel"
-      @update:model-value="onSizeUpdate"
-    />
+    <!-- Error on size (if server validation returns one) -->
     <p
       v-if="sizeError"
-      class="flex items-start gap-1.5 text-sm text-error"
+      class="flex items-start gap-1.5 text-xs text-error"
     >
       <UIcon
         name="i-lucide-circle-alert"
-        class="mt-0.5 size-4 shrink-0"
+        class="mt-0.5 size-3.5 shrink-0"
       />
       <span>{{ sizeError }}</span>
     </p>
 
-    <p
-      v-if="sizeId && !hideOnHand"
-      class="text-sm text-dimmed"
+    <!-- Column labels hint for mobile -->
+    <div
+      class="grid grid-cols-[148px_148px] gap-x-3 px-1 text-xs text-dimmed lg:hidden"
+      aria-hidden="true"
     >
-      {{ onHandText }}
-    </p>
-
-    <div class="grid grid-cols-1 gap-2 lg:hidden">
-      <span
-        class="text-sm text-dimmed"
-        aria-hidden="true"
-      >{{ SALE_COPY.traysLabel }} / {{ SALE_COPY.looseLabel }}</span>
+      <span class="text-center">{{ SALE_COPY.traysLabel }}</span>
+      <span class="text-center">{{ SALE_COPY.looseLabel }}</span>
     </div>
+
+    <!-- QuantityInput: Trays + Loose -->
     <QuantityInput
       v-model="qty"
       :eggs-per-tray="eggsPerTray"
@@ -162,30 +193,32 @@ function onPriceInput() {
       :id-prefix="`${prefix}-qty-${index}`"
       :error="quantityError"
       :min-eggs="minEggs"
-      :disabled="disabled"
+      :disabled="disabled || (!!lockedLabel && minEggs === undefined)"
       inline-labels
     />
+
     <p
       v-if="minNote"
-      class="text-sm text-default"
+      class="text-xs text-dimmed"
     >
       {{ minNote }}
     </p>
 
-    <div class="flex flex-wrap items-end justify-between gap-3">
+    <!-- Price per Tray & Live Line Total -->
+    <div class="flex flex-wrap items-end justify-between gap-3 pt-1 border-t border-default/40">
       <UFormField
         :label="SALE_COPY.priceLabel"
         :hint="showUsualPriceNote ? SALE_COPY.usualPrice : undefined"
-        size="xl"
+        size="md"
         :error="priceError"
-        :ui="{ label: 'text-base font-medium', hint: 'text-sm text-dimmed', error: 'mt-1.5 text-sm' }"
-        class="min-w-0 flex-1"
+        :ui="{ label: 'text-xs font-medium text-dimmed', hint: 'text-[11px] text-primary font-medium', error: 'mt-1 text-xs' }"
+        class="min-w-0 flex-1 max-w-[190px]"
       >
         <UInput
           v-model="priceRaw"
           type="text"
           inputmode="decimal"
-          size="xl"
+          size="md"
           class="w-full"
           :placeholder="SALE_COPY.pricePlaceholder"
           :aria-label="`${quantityLabel} ${SALE_COPY.priceLabel}`"
@@ -196,22 +229,24 @@ function onPriceInput() {
         >
           <template #leading>
             <span
-              class="text-base text-muted"
+              class="text-sm text-muted"
               aria-hidden="true"
             >{{ currencySymbol(currency) }}</span>
           </template>
         </UInput>
       </UFormField>
-      <div class="flex flex-col items-end gap-1 pb-1">
-        <span class="text-sm text-dimmed">{{ SALE_COPY.lineTotalLabel }}</span>
+
+      <!-- Line Total -->
+      <div class="flex flex-col items-end gap-0.5 pb-1">
+        <span class="text-xs text-dimmed">{{ SALE_COPY.lineTotalLabel }}</span>
         <span
           v-if="lineTotalText"
-          class="text-lg font-semibold tabular-nums text-highlighted"
+          class="text-base font-bold tabular-nums text-highlighted"
         >{{ lineTotalText }}</span>
         <span
           v-else
           aria-hidden="true"
-          class="text-lg font-semibold text-dimmed"
+          class="text-base font-semibold text-dimmed"
         >—</span>
         <span
           v-if="!lineTotalText"
@@ -219,9 +254,10 @@ function onPriceInput() {
         >{{ SALE_COPY.lineTotalNotReady }}</span>
       </div>
     </div>
+
     <p
       v-if="priceNote"
-      class="text-sm text-muted"
+      class="text-xs text-muted"
     >
       {{ priceNote }}
     </p>

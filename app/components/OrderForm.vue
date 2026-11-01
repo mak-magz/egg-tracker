@@ -1,8 +1,8 @@
 <!--
   New / Edit order: the whole sheet or dialog content (feature 05 §2.5 "New order" / "Edit order, Partially
-  fulfilled", AC9 to AC17, AC19, AC20, AC57). A header part (Client) plus a repeatable lines part (SaleLineCard x1-20,
-  Add size) plus Order date / Wanted by plus the footer total. There is NO type toggle, no "Already delivered" and no
-  stock hint: ordering never touches stock (AC9, AC10). SELF-CONTAINED like SaleForm: validation, the submission id,
+  fulfilled", AC9 to AC17, AC19, AC20, AC57). A header part (Client) plus a multi-size grid part (SaleLineCard
+  for all active sizes) plus Order date / Wanted by plus the footer total. There is NO type toggle, no "Already delivered"
+  and no stock hint: ordering never touches stock (AC9, AC10). SELF-CONTAINED like SaleForm: validation, the submission id,
   the discard-dirty state and the save call all live here.
   Edit is driven by orderEditRules(order) (AC19): after a delivery the client is locked, a delivered line shows its
   size read-only, can't be removed and can't go below what was delivered; order date can't pass the first delivery
@@ -13,14 +13,12 @@ import type { FormSubmitEvent } from '@nuxt/ui'
 import type { IsoDate, Order, OrderDelivery, OrderDetail, OrderLineInput } from '#shared/types/api'
 import type { ClientSavedEvent } from './ClientForm.vue'
 import type { ClientPickerOption } from './ClientPicker.vue'
-import type { SizeChipOption } from './SizeChipPicker.vue'
 import { MAX_ORDER_LINES, ORDER_FIELDS } from '#shared/constants/orders'
 import { orderEditRules } from '#shared/utils/order-status'
 import { computeLineTotal, formatPriceInput } from '#shared/utils/price'
 import { formatQty, splitEggs } from '#shared/utils/quantity'
 import { formatDateHint } from '~/utils/day-label'
 import { ORDER_COPY } from '~/utils/order-copy'
-import { SALE_COPY } from '~/utils/sale-copy'
 import type { OrderInput } from '~/utils/order-mutations'
 import type { OrderError } from '~/utils/order-errors'
 import { checkLinePrice, checkLineQuantity } from '~/utils/sale-validation'
@@ -65,126 +63,11 @@ const original = computed(() => (isEdit.value ? (props.order ?? null) : null))
 const rules = computed(() => (original.value ? orderEditRules(original.value) : null))
 const clientLocked = computed(() => rules.value?.clientLocked ?? false)
 
-// ---- Lines --------------------------------------------------------------------------------------------
-interface LineState {
-  key: string
-  sizeId: string | null
-  qty: QuantityValue
-  priceRaw: string
-  /** True until the owner types this line's price by hand (AC13): it follows the client's default. */
-  priceIsUsual: boolean
-  /** An existing line that already has deliveries: size read-only, not removable, floor on the quantity (AC19). */
-  locked: boolean
-}
-
-function newKey(): string {
-  return crypto.randomUUID()
-}
-
-function emptyLine(price: number | null): LineState {
-  return { key: newKey(), sizeId: null, qty: { trays: null, loose: null }, priceRaw: price !== null ? formatPriceInput(price) : '', priceIsUsual: price !== null, locked: false }
-}
-
-function buildInitialLines(): LineState[] {
-  const order = original.value
-  if (!order || order.lines.length === 0) return [emptyLine(null)]
-  const lockedSizes = rules.value?.lockedSizes ?? new Set<string>()
-  return order.lines.map((line) => {
-    const { trays, loose } = splitEggs(line.orderedEggs, trayEggs.value)
-    return {
-      key: newKey(),
-      sizeId: line.sizeId,
-      qty: { trays, loose },
-      priceRaw: formatPriceInput(line.pricePerTray),
-      priceIsUsual: false,
-      locked: lockedSizes.has(line.sizeId),
-    }
-  })
-}
-
-const lines = ref<LineState[]>(buildInitialLines())
-
-const activeSizeOptions = computed<SizeChipOption[]>(() =>
-  activeSizes.value.map(s => ({ id: s.id, name: s.name, colorSlot: s.colorSlot, archived: false })))
-
-/** This line's own options: every active size, plus its own size if it has since been archived (AC19). */
-function sizeOptionsFor(line: LineState): SizeChipOption[] {
-  const active = activeSizeOptions.value
-  if (line.sizeId && !active.some(s => s.id === line.sizeId)) {
-    const resolved = sizeById(line.sizeId)
-    return [...active, { id: resolved.id, name: resolved.name, colorSlot: resolved.colorSlot, archived: true }]
-  }
-  return active
-}
-
-function usedSizeIdsFor(line: LineState): string[] {
-  return lines.value.filter(l => l.key !== line.key && l.sizeId).map(l => l.sizeId!)
-}
-
-function sizeNameFor(line: LineState): string | null {
-  return line.sizeId ? sizeById(line.sizeId).name : null
-}
-
-function minEggsFor(line: LineState): number | undefined {
-  return line.locked && line.sizeId ? rules.value?.minEggs[line.sizeId] : undefined
-}
-
-function lockedLabelFor(line: LineState): string | undefined {
-  const min = minEggsFor(line)
-  if (!line.locked || min === undefined) return undefined
-  return ORDER_COPY.lockedLineAria(sizeNameFor(line) ?? '', formatQty(min, trayEggs.value))
-}
-
-function minNoteFor(line: LineState): string | undefined {
-  const min = minEggsFor(line)
-  return min === undefined ? undefined : ORDER_COPY.atLeastDelivered(formatQty(min, trayEggs.value))
-}
-
-const canAddLine = computed(() => lines.value.length < MAX_ORDER_LINES)
-const allSizesUsed = computed(() => activeSizeOptions.value.length > 0 && activeSizeOptions.value.every(s => lines.value.some(l => l.sizeId === s.id)))
-const addDisabledReason = computed(() => {
-  if (lines.value.length >= MAX_ORDER_LINES) return ORDER_COPY.addSizeLimitReached
-  if (allSizesUsed.value) return ORDER_COPY.addSizeAllUsed
-  return null
-})
-
-const body = useTemplateRef<HTMLElement>('body')
-
-/** The first control of line `idx`: its size chips, or (a locked line) its trays field. */
-function lineEntry(idx: number): HTMLElement | null {
-  const card = body.value?.querySelectorAll<HTMLElement>('fieldset[data-order-line]')[idx]
-  return card?.querySelector<HTMLElement>('input[type="radio"], select, input[data-qty-input]') ?? null
-}
-
-async function addLine() {
-  if (!canAddLine.value || allSizesUsed.value) return
-  lines.value.push(emptyLine(clientDefaultPrice.value))
-  await nextTick()
-  const idx = lines.value.length - 1
-  lineEntry(idx)?.focus()
-  body.value?.querySelectorAll<HTMLElement>('fieldset[data-order-line]')[idx]?.scrollIntoView({ block: 'center' })
-}
-
-async function removeLine(key: string) {
-  const idx = lines.value.findIndex(l => l.key === key)
-  if (idx === -1 || lines.value.length <= 1 || lines.value[idx]?.locked) return
-  lines.value.splice(idx, 1)
-  await nextTick()
-  lineEntry(Math.max(0, idx - 1))?.focus()
-}
-
-function onSizeChosen(line: LineState) {
-  void nextTick(() => {
-    const idx = lines.value.findIndex(l => l.key === line.key)
-    body.value?.querySelectorAll<HTMLInputElement>('input[data-qty-input]')[idx * 2]?.focus()
-  })
-}
-
 // ---- Header state ---------------------------------------------------------------------------------------
 const state = reactive({
-  clientId: original.value?.clientId ?? null as string | null,
-  orderDate: original.value?.orderDate ?? props.today as IsoDate,
-  wantedBy: original.value?.wantedBy ?? '' as string,
+  clientId: original.value?.clientId ?? (null as string | null),
+  orderDate: original.value?.orderDate ?? (props.today as IsoDate),
+  wantedBy: original.value?.wantedBy ?? ('' as string),
 })
 
 // ---- Client picker + price pre-fill (AC11, AC13) -----------------------------------------------------------
@@ -210,6 +93,92 @@ const clientDefaultPrice = computed<number | null>(() => {
   return allClients.value.find(c => c.id === id)?.defaultPrice ?? null
 })
 
+// ---- Lines (Production-style all sizes grid) -----------------------------------------------------------
+interface SizeLineState {
+  sizeId: string
+  name: string
+  colorSlot: number
+  archived: boolean
+  qty: QuantityValue
+  priceRaw: string
+  /** True until the owner types this line's price by hand (AC13): it follows the client's default. */
+  priceIsUsual: boolean
+  /** An existing line that already has deliveries: size read-only, floor on the quantity (AC19). */
+  locked: boolean
+}
+
+function buildSizeLines(): SizeLineState[] {
+  const active = activeSizes.value
+  const activeIds = new Set(active.map(s => s.id))
+  const onOrder = isEdit.value && props.order
+    ? new Set(props.order.lines.map(l => l.sizeId))
+    : new Set<string>()
+
+  const archivedOnOrder = [...onOrder]
+    .filter(id => !activeIds.has(id))
+    .map(id => sizeById(id))
+    .sort((a, b) => a.sortOrder - b.sortOrder)
+
+  const allSizes = [
+    ...active.map(s => ({ id: s.id, name: s.name, colorSlot: s.colorSlot, archived: false })),
+    ...archivedOnOrder.map(s => ({ id: s.id, name: s.name, colorSlot: s.colorSlot, archived: true })),
+  ]
+
+  const existingMap = new Map(props.order?.lines.map(l => [l.sizeId, l]) ?? [])
+  const lockedSizes = rules.value?.lockedSizes ?? new Set<string>()
+  const defaultPrice = clientDefaultPrice.value
+
+  return allSizes.map((s) => {
+    const existing = existingMap.get(s.id)
+    if (existing) {
+      const { trays, loose } = splitEggs(existing.orderedEggs, trayEggs.value)
+      return {
+        sizeId: s.id,
+        name: s.name,
+        colorSlot: s.colorSlot,
+        archived: s.archived,
+        qty: { trays, loose },
+        priceRaw: formatPriceInput(existing.pricePerTray),
+        priceIsUsual: false,
+        locked: lockedSizes.has(s.id),
+      }
+    }
+    return {
+      sizeId: s.id,
+      name: s.name,
+      colorSlot: s.colorSlot,
+      archived: s.archived,
+      qty: { trays: null, loose: null },
+      priceRaw: defaultPrice !== null ? formatPriceInput(defaultPrice) : '',
+      priceIsUsual: defaultPrice !== null,
+      locked: false,
+    }
+  })
+}
+
+const lines = ref<SizeLineState[]>(buildSizeLines())
+
+function sizeNameFor(line: SizeLineState): string {
+  return line.name
+}
+
+function minEggsFor(line: SizeLineState): number | undefined {
+  return line.locked ? rules.value?.minEggs[line.sizeId] : undefined
+}
+
+function lockedLabelFor(line: SizeLineState): string | undefined {
+  const min = minEggsFor(line)
+  if (!line.locked || min === undefined) return undefined
+  return ORDER_COPY.lockedLineAria(line.name, formatQty(min, trayEggs.value))
+}
+
+function minNoteFor(line: SizeLineState): string | undefined {
+  const min = minEggsFor(line)
+  return min === undefined ? undefined : ORDER_COPY.atLeastDelivered(formatQty(min, trayEggs.value))
+}
+
+const body = useTemplateRef<HTMLElement>('body')
+
 watch(clientDefaultPrice, (price) => {
   if (price === null) return
   for (const line of lines.value) {
@@ -220,7 +189,7 @@ watch(clientDefaultPrice, (price) => {
   }
 })
 
-function onLinePriceEdited(line: LineState) {
+function onLinePriceEdited(line: SizeLineState) {
   line.priceIsUsual = false
 }
 
@@ -238,28 +207,37 @@ function onClientAdded(event: ClientSavedEvent) {
 }
 
 // ---- Live totals (AC14) -----------------------------------------------------------------------------------
-function lineEggs(line: LineState): number | null {
+function hasQuantity(line: SizeLineState): boolean {
+  const t = line.qty.trays
+  const l = line.qty.loose
+  return (t !== null && t > 0) || (l !== null && l > 0)
+}
+
+function lineEggs(line: SizeLineState): number | null {
   const check = checkLineQuantity(line.qty, trayEggs.value)
   return check.ok ? check.value : null
 }
-function linePrice(line: LineState): number | null {
+
+function linePrice(line: SizeLineState): number | null {
   const check = checkLinePrice(line.priceRaw, currency.value)
   return check.ok ? check.value : null
 }
-function lineTotalFor(line: LineState): number | null {
+
+function lineTotalFor(line: SizeLineState): number | null {
+  if (!hasQuantity(line) && !line.locked) return null
   const eggs = lineEggs(line)
   const price = linePrice(line)
-  if (eggs === null || price === null || !line.sizeId) return null
+  if (eggs === null || price === null) return null
   return computeLineTotal(price, eggs, trayEggs.value)
 }
 
-const completeLineTotals = computed(() => lines.value.map(lineTotalFor))
-const allLinesComplete = computed(() => completeLineTotals.value.every(t => t !== null))
+const activeLines = computed(() => lines.value.filter(l => hasQuantity(l) || l.locked))
+const completeLineTotals = computed(() => activeLines.value.map(lineTotalFor))
+const allLinesComplete = computed(() => activeLines.value.length > 0 && completeLineTotals.value.every(t => t !== null))
 const runningTotal = computed(() => completeLineTotals.value.reduce((sum: number, t) => sum + (t ?? 0), 0))
 
 const footerTotalText = computed(() => {
-  const some = completeLineTotals.value.some(t => t !== null)
-  if (!some) return ORDER_COPY.orderTotalEmpty
+  if (activeLines.value.length === 0) return ORDER_COPY.orderTotalEmpty
   const formatted = formatPrice(runningTotal.value)
   return allLinesComplete.value ? ORDER_COPY.orderTotal(formatted) : ORDER_COPY.orderTotalSoFar(formatted)
 })
@@ -270,8 +248,9 @@ const willBecomeFulfilled = computed(() => {
   if (!r || !isEdit.value) return false
   const inputs: { sizeId: string, eggs: number }[] = []
   for (const line of lines.value) {
+    if (!hasQuantity(line) && !line.locked) continue
     const eggs = lineEggs(line)
-    if (!line.sizeId || eggs === null) return false
+    if (eggs === null) return false
     inputs.push({ sizeId: line.sizeId, eggs })
   }
   return r.willFulfil(inputs)
@@ -279,13 +258,21 @@ const willBecomeFulfilled = computed(() => {
 
 // ---- Dirty (discard check, AC16) --------------------------------------------------------------------------
 function snapshot(): string {
-  return JSON.stringify({ c: state.clientId, d: state.orderDate, w: state.wantedBy, lines: lines.value.map(l => ({ s: l.sizeId, t: l.qty.trays, l: l.qty.loose, p: l.priceRaw })) })
+  return JSON.stringify({
+    c: state.clientId,
+    d: state.orderDate,
+    w: state.wantedBy,
+    lines: lines.value
+      .filter(l => hasQuantity(l) || l.locked)
+      .map(l => ({ s: l.sizeId, t: l.qty.trays, l: l.qty.loose, p: l.priceRaw })),
+  })
 }
+
 const initialSnapshot = snapshot()
 const addTouched = computed(() => {
   if (isEdit.value) return false
   if (state.clientId !== null || state.wantedBy !== '') return true
-  return lines.value.some(l => l.sizeId !== null || l.qty.trays !== null || l.qty.loose !== null || l.priceRaw.trim() !== '')
+  return lines.value.some(hasQuantity)
 })
 const dirty = computed(() => (isEdit.value ? snapshot() !== initialSnapshot : addTouched.value))
 
@@ -318,10 +305,10 @@ function focusFirstProblem() {
     document.querySelector<HTMLElement>('[data-order-focus="client"]')?.focus()
     return
   }
-  const firstLineKey = lines.value.find(l => lineErrors.value[l.key])?.key
-  if (firstLineKey) {
-    const idx = lines.value.findIndex(l => l.key === firstLineKey)
-    body.value?.querySelectorAll<HTMLElement>('fieldset[data-order-line]')[idx]?.scrollIntoView({ block: 'center' })
+  const firstErrorSizeId = lines.value.find(l => lineErrors.value[l.sizeId])?.sizeId
+  if (firstErrorSizeId) {
+    const idx = lines.value.findIndex(l => l.sizeId === firstErrorSizeId)
+    body.value?.querySelectorAll<HTMLInputElement>('input[data-qty-input]')[idx * 2]?.focus()
     return
   }
   if (orderDateError.value || wantedByError.value) {
@@ -360,21 +347,22 @@ function validate(): { input: OrderInput } | null {
     ok = false
   }
 
-  const seenSizes = new Set<string>()
   const lineInputs: OrderLineInput[] = []
+  const enteredSizes = lines.value.filter(l => hasQuantity(l) || l.locked)
+
+  if (enteredSizes.length === 0) {
+    formError.value = 'Enter a quantity for at least one size.'
+    ok = false
+  }
+  else if (enteredSizes.length > MAX_ORDER_LINES) {
+    formError.value = ORDER_COPY.tooManySizes
+    ok = false
+  }
+
   for (const line of lines.value) {
+    if (!hasQuantity(line) && !line.locked) continue
+
     const errs: { size?: string, quantity?: string, price?: string } = {}
-    if (!line.sizeId) {
-      errs.size = SALE_COPY.sizeRequired
-      ok = false
-    }
-    else if (seenSizes.has(line.sizeId)) {
-      errs.size = ORDER_COPY.duplicateSize
-      ok = false
-    }
-    else {
-      seenSizes.add(line.sizeId)
-    }
     const qtyCheck = checkLineQuantity(line.qty, trayEggs.value)
     if (!qtyCheck.ok) {
       errs.quantity = qtyCheck.message
@@ -393,8 +381,8 @@ function validate(): { input: OrderInput } | null {
       errs.price = priceCheck.message
       ok = false
     }
-    if (Object.keys(errs).length) lineErrors.value = { ...lineErrors.value, [line.key]: errs }
-    if (line.sizeId && qtyCheck.ok && priceCheck.ok) {
+    if (Object.keys(errs).length) lineErrors.value = { ...lineErrors.value, [line.sizeId]: errs }
+    if (qtyCheck.ok && priceCheck.ok) {
       lineInputs.push({ sizeId: line.sizeId, eggs: qtyCheck.value, pricePerTray: priceCheck.value })
     }
   }
@@ -425,9 +413,9 @@ function applyServerFields(fields: Record<string, string>): boolean {
     mapped = true
   }
   for (const line of lines.value) {
-    const message = line.sizeId ? fields[ORDER_FIELDS.line(line.sizeId)] : undefined
+    const message = fields[ORDER_FIELDS.line(line.sizeId)]
     if (message) {
-      lineErrors.value = { ...lineErrors.value, [line.key]: { ...lineErrors.value[line.key], quantity: message } }
+      lineErrors.value = { ...lineErrors.value, [line.sizeId]: { ...lineErrors.value[line.sizeId], quantity: message } }
       mapped = true
     }
   }
@@ -449,28 +437,23 @@ function handleFailure(error: OrderError) {
   formError.value = isEdit.value ? ORDER_COPY.editSaveFailed : ORDER_COPY.saveFailed
 }
 
-async function onSubmit(_event: FormSubmitEvent<unknown>) {
+async function attemptSave() {
   if (busy.value) return
   const validated = validate()
   if (!validated) return
 
   if (isEdit.value) {
-    const order = original.value
-    if (!order) return
+    const o = original.value
+    if (!o) return
     if (!dirty.value) {
-      emit('saved', { kind: 'unchanged', order })
+      emit('saved', { kind: 'unchanged', order: o })
       return
     }
-    const result = await mutations.update(order, validated.input)
+    const becameFulfilled = willBecomeFulfilled.value
+    const result = await mutations.update(o, validated.input)
     if (!result) return
-    if (result.ok) {
-      const next = result.data.order
-      if (!result.data.changed) emit('saved', { kind: 'unchanged', order: next })
-      else emit('saved', { kind: 'updated', order: next, becameFulfilled: order.status !== 'fulfilled' && next.status === 'fulfilled' })
-    }
-    else {
-      handleFailure(result.error)
-    }
+    if (result.ok) emit('saved', { kind: 'updated', order: result.data.order, becameFulfilled })
+    else handleFailure(result.error)
     return
   }
 
@@ -478,6 +461,10 @@ async function onSubmit(_event: FormSubmitEvent<unknown>) {
   if (!result) return
   if (result.ok) emit('saved', { kind: 'created', order: result.data.order })
   else handleFailure(result.error)
+}
+
+async function onSubmit(_event: FormSubmitEvent<unknown>) {
+  await attemptSave()
 }
 
 defineExpose({ dirty, saving: busy, focusFirstProblem })
@@ -516,23 +503,19 @@ defineExpose({ dirty, saving: busy, focusFirstProblem })
         :label="ORDER_COPY.clientLabel"
         size="xl"
         :error="clientError ?? undefined"
-        :ui="{ label: 'text-base font-medium', error: 'mt-1.5 text-sm' }"
+        :help="clientLocked ? ORDER_COPY.clientLockedHelper : undefined"
+        :ui="{ label: 'text-base font-medium', error: 'mt-1.5 text-sm', help: 'mt-1 text-sm text-dimmed' }"
       >
         <div
           v-if="clientLocked"
-          class="flex flex-col gap-1"
+          class="flex min-h-11 items-center gap-2 rounded-md bg-muted px-3 py-2 text-base text-highlighted ring ring-inset ring-default"
         >
-          <div class="flex min-h-11 items-center gap-2 rounded-md bg-muted px-3 py-2 text-base text-highlighted ring ring-inset ring-default">
-            <span class="min-w-0 flex-1 wrap-anywhere">{{ lockedClientText }}</span>
-            <UIcon
-              name="i-lucide-lock"
-              class="size-4 shrink-0 text-muted"
-              aria-hidden="true"
-            />
-          </div>
-          <p class="text-sm text-muted">
-            {{ ORDER_COPY.clientLockedHelper }}
-          </p>
+          <span class="min-w-0 flex-1 wrap-anywhere">{{ lockedClientText }}</span>
+          <UIcon
+            name="i-lucide-lock"
+            class="size-4 shrink-0 text-muted"
+            aria-hidden="true"
+          />
         </div>
         <ClientPicker
           v-else
@@ -546,58 +529,39 @@ defineExpose({ dirty, saving: busy, focusFirstProblem })
         />
       </UFormField>
 
-      <SaleLineCard
-        v-for="(line, i) in lines"
-        :key="line.key"
-        v-model:size-id="line.sizeId"
-        v-model:qty="line.qty"
-        v-model:price-raw="line.priceRaw"
-        data-order-line
-        id-prefix="order-line"
-        :index="i"
-        :size-name="sizeNameFor(line)"
-        :size-options="sizeOptionsFor(line)"
-        :used-size-ids="usedSizeIdsFor(line)"
-        :eggs-per-tray="trayEggs"
-        :currency="currency"
-        hide-on-hand
-        :used-label="ORDER_COPY.usedInOrder"
-        :used-option-label="ORDER_COPY.usedSizeOption"
-        :locked-label="lockedLabelFor(line)"
-        :min-eggs="minEggsFor(line)"
-        :min-note="minNoteFor(line)"
-        :price-note="line.locked ? ORDER_COPY.lockedPriceNote : undefined"
-        :show-usual-price-note="line.priceIsUsual && line.priceRaw.trim() !== ''"
-        :line-total="lineTotalFor(line)"
-        :removable="lines.length > 1 && !line.locked"
-        :disabled="busy"
-        :size-error="lineErrors[line.key]?.size"
-        :quantity-error="lineErrors[line.key]?.quantity"
-        :price-error="lineErrors[line.key]?.price"
-        @remove="removeLine(line.key)"
-        @size-chosen="onSizeChosen(line)"
-        @price-edited="onLinePriceEdited(line)"
-      />
-
-      <div class="flex flex-col gap-1">
-        <UButton
-          color="neutral"
-          variant="outline"
-          size="xl"
-          icon="i-lucide-plus"
-          class="w-full justify-center border-dashed"
-          :disabled="busy || !!addDisabledReason"
-          :aria-disabled="!!addDisabledReason"
-          :label="ORDER_COPY.addSize"
-          @click="addLine"
-        />
-        <p
-          v-if="addDisabledReason"
-          class="text-sm text-muted"
-        >
-          {{ addDisabledReason }}
-        </p>
-      </div>
+      <!-- Multi-size Production-style Grid (No 'Add size' button needed) -->
+      <fieldset class="flex min-w-0 flex-col gap-2">
+        <legend class="mb-1 text-sm font-semibold text-slate-300">
+          Sizes & Quantities
+        </legend>
+        <div class="flex flex-col gap-3">
+          <SaleLineCard
+            v-for="(line, i) in lines"
+            :key="line.sizeId"
+            v-model:qty="line.qty"
+            v-model:price-raw="line.priceRaw"
+            id-prefix="order-line"
+            :index="i"
+            :size-name="sizeNameFor(line)"
+            :archived="line.archived"
+            :color-slot="line.colorSlot"
+            :eggs-per-tray="trayEggs"
+            :currency="currency"
+            hide-on-hand
+            :locked-label="lockedLabelFor(line)"
+            :min-eggs="minEggsFor(line)"
+            :min-note="minNoteFor(line)"
+            :price-note="line.locked ? ORDER_COPY.lockedPriceNote : undefined"
+            :show-usual-price-note="line.priceIsUsual && line.priceRaw.trim() !== ''"
+            :line-total="lineTotalFor(line)"
+            :disabled="busy"
+            :size-error="lineErrors[line.sizeId]?.size"
+            :quantity-error="lineErrors[line.sizeId]?.quantity"
+            :price-error="lineErrors[line.sizeId]?.price"
+            @price-edited="onLinePriceEdited(line)"
+          />
+        </div>
+      </fieldset>
 
       <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
         <UFormField
@@ -638,16 +602,12 @@ defineExpose({ dirty, saving: busy, focusFirstProblem })
             class="w-full"
             :disabled="busy"
           />
-          <UButton
-            v-if="state.wantedBy"
-            color="neutral"
-            variant="ghost"
-            size="xl"
-            class="mt-1 min-h-11"
-            :label="ORDER_COPY.clearWantedBy"
-            :disabled="busy"
-            @click="state.wantedBy = ''"
-          />
+          <p
+            v-if="!wantedByError && state.wantedBy"
+            class="mt-1 text-sm text-muted"
+          >
+            {{ formatDateHint(state.wantedBy, today) }}
+          </p>
         </UFormField>
       </div>
 
