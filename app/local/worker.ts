@@ -264,16 +264,48 @@ const TABLE_DEFINITIONS: string[] = [
 
 async function initDatabase(): Promise<void> {
   const sqlite3 = await sqlite3InitModule()
-  if ('opfs' in sqlite3) {
-    try {
-      sqliteDb = new sqlite3.oo1.OpfsDb('/farm.sqlite3')
-    }
-    catch (err) {
-      console.warn('[worker] OPFS storage unavailable, falling back to memory database:', err)
-      sqliteDb = new sqlite3.oo1.DB('/farm.sqlite3', 'ct')
+  let initialized = false
+
+  // 1. Primary: Modern SyncAccessHandle Pool VFS (OPFS SAHPool)
+  if (typeof (sqlite3 as any).installOpfsSAHPoolVfs === 'function') {
+    let attempts = 0
+    while (attempts < 3 && !initialized) {
+      try {
+        const poolUtil = await (sqlite3 as any).installOpfsSAHPoolVfs({
+          name: 'opfs-sahpool',
+          clearOnInit: false,
+        })
+        sqliteDb = new poolUtil.OpfsSAHPoolDb('/farm.sqlite3')
+        console.info('[worker] OPFS SAHPool storage initialized successfully (persistence: ACTIVE).')
+        initialized = true
+      }
+      catch (sahErr) {
+        attempts++
+        if (attempts >= 3) {
+          console.warn('[worker] OPFS SAHPool failed after 3 attempts, trying fallback:', sahErr)
+        }
+        else {
+          await new Promise(resolve => setTimeout(resolve, 150))
+        }
+      }
     }
   }
-  else {
+
+  // 2. Secondary fallback: Legacy OpfsDb
+  if (!initialized && 'opfs' in sqlite3) {
+    try {
+      sqliteDb = new sqlite3.oo1.OpfsDb('/farm.sqlite3')
+      console.info('[worker] Legacy OpfsDb initialized.')
+      initialized = true
+    }
+    catch (opfsErr) {
+      console.warn('[worker] Legacy OpfsDb unavailable:', opfsErr)
+    }
+  }
+
+  // 3. Final fallback: In-memory (headless testing or restricted environments)
+  if (!initialized) {
+    console.warn('[worker] OPFS unavailable, falling back to in-memory database.')
     sqliteDb = new sqlite3.oo1.DB('/farm.sqlite3', 'ct')
   }
 

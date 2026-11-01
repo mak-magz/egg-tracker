@@ -23,6 +23,7 @@ const securityHeaders: Record<string, string> = {
   // Sign-in is email + password/OTP in the same tab (no popups, no OAuth window), so nothing
   // needs window.opener across origins.
   'Cross-Origin-Opener-Policy': 'same-origin',
+  'Cross-Origin-Embedder-Policy': 'credentialless',
   // Production only, and browsers ignore it over plain http anyway. No includeSubDomains or
   // preload until the custom domain is known (see the M1 follow-ups in the feature doc).
   ...(isProd ? { 'Strict-Transport-Security': 'max-age=31536000' } : {}),
@@ -71,6 +72,7 @@ export default defineNuxtConfig({
   ],
 
   ssr: false,
+
   devtools: { enabled: true },
 
   app: {
@@ -98,6 +100,14 @@ export default defineNuxtConfig({
   },
 
   compatibilityDate: '2026-09-01',
+  vite: {
+    server: {
+      headers: {
+        'Cross-Origin-Opener-Policy': 'same-origin',
+        'Cross-Origin-Embedder-Policy': 'credentialless',
+      },
+    },
+  },
 
   typescript: {
     // Nuxt 4 defaults (strict, noUncheckedIndexedAccess) are kept; `typeCheck` stays off in dev

@@ -25,6 +25,7 @@ describe('security headers (nuxt.config.ts routeRules)', () => {
     expect(headers['X-Content-Type-Options']).toBe('nosniff')
     expect(headers['Referrer-Policy']).toBe('strict-origin-when-cross-origin')
     expect(headers['Cross-Origin-Opener-Policy']).toBe('same-origin')
+    expect(headers['Cross-Origin-Embedder-Policy']).toBe('credentialless')
   })
 
   it('CSP is exactly frame-ancestors none (no script-src or default-src yet)', async () => {
