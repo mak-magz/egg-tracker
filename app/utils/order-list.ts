@@ -5,6 +5,8 @@ import type { IsoDate, Order, OrdersView } from '#shared/types/api'
 import { ORDERS_PAGE_SIZE } from '#shared/constants/orders'
 import { isOpenStatus } from '#shared/utils/order-status'
 
+import { compareSequenceNumbers } from '../../core/utils/sequence'
+
 export interface OrdersFilters {
   view: OrdersView
   clientId: string | null
@@ -57,13 +59,13 @@ export function compareOpenOrders(a: SortKeys, b: SortKeys): number {
     return a.wantedBy < b.wantedBy ? -1 : 1
   }
   if (a.orderDate !== b.orderDate) return a.orderDate < b.orderDate ? -1 : 1
-  return a.orderNumber - b.orderNumber
+  return compareSequenceNumbers(a.orderNumber, b.orderNumber)
 }
 
 /** AC3, every other view: newest order date first, then the highest number. */
 export function compareOrdersNewestFirst(a: SortKeys, b: SortKeys): number {
   if (a.orderDate !== b.orderDate) return a.orderDate < b.orderDate ? 1 : -1
-  return b.orderNumber - a.orderNumber
+  return compareSequenceNumbers(b.orderNumber, a.orderNumber)
 }
 
 export function compareOrdersFor(view: OrdersView): (a: SortKeys, b: SortKeys) => number {

@@ -41,8 +41,8 @@ export const ORDER_COPY = {
   headerTotal: 'Total',
   headerStatus: 'Status',
   headerActions: 'Actions',
-  orderNumber: (n: number) => `#${n}`,
-  orderTitle: (n: number) => `Order #${n}`,
+  orderNumber: (n: number | string) => `#${n}`,
+  orderTitle: (n: number | string) => `Order #${n}`,
   wantedBy: (date: string) => `Wanted by ${date}`,
   moreSizes: (n: number) => `+ ${n} more sizes`,
   sizeCount: (n: number) => `${n} ${n === 1 ? 'size' : 'sizes'}`,
@@ -50,9 +50,9 @@ export const ORDER_COPY = {
   deliver: 'Deliver',
   closedShort: 'Closed short',
   cancelledNote: 'Cancelled before anything was delivered',
-  openOrderAria: (n: number, client: string, status: string) => `Open order #${n}, ${client}, ${status}`,
-  actionsFor: (n: number) => `Actions for order #${n}`,
-  deliverAria: (n: number) => `Deliver order #${n}`,
+  openOrderAria: (n: number | string, client: string, status: string) => `Open order #${n}, ${client}, ${status}`,
+  actionsFor: (n: number | string) => `Actions for order #${n}`,
+  deliverAria: (n: number | string) => `Deliver order #${n}`,
 
   // ---- Row menu -----------------------------------------------------------------------------------------
   menuDeliver: 'Deliver',
@@ -66,7 +66,7 @@ export const ORDER_COPY = {
 
   // ---- Form (AC9 to AC17) -------------------------------------------------------------------------------
   newTitle: 'New order',
-  editTitle: (n: number) => `Edit order #${n}`,
+  editTitle: (n: number | string) => `Edit order #${n}`,
   close: 'Close',
   clientLabel: 'Client',
   clientPlaceholder: 'Search or add a client…',
@@ -113,17 +113,17 @@ export const ORDER_COPY = {
   changedElsewhere: ORDER_MESSAGES.orderChanged,
 
   // ---- Toasts -------------------------------------------------------------------------------------------
-  toastSaved: (n: number) => `Order #${n} saved`,
-  toastUpdated: (n: number) => `Updated order #${n}`,
-  toastUpdatedFulfilled: (n: number) => `Updated order #${n}. It's fulfilled now.`,
-  toastStatus: (n: number, status: string) => `Order #${n} is now ${status}.`,
-  toastDelivered: (saleNumber: number, orderNumber: number, status: string | null) =>
+  toastSaved: (n: number | string) => `Order #${n} saved`,
+  toastUpdated: (n: number | string) => `Updated order #${n}`,
+  toastUpdatedFulfilled: (n: number | string) => `Updated order #${n}. It's fulfilled now.`,
+  toastStatus: (n: number | string, status: string) => `Order #${n} is now ${status}.`,
+  toastDelivered: (saleNumber: number | string, orderNumber: number | string, status: string | null) =>
     `Delivered: sale #${saleNumber}.${status ? ` Order #${orderNumber} is now ${status}.` : ''}`,
-  toastCancelled: (n: number) => `Order #${n} cancelled.`,
-  toastClosedShort: (n: number) => `Order #${n} closed short.`,
+  toastCancelled: (n: number | string) => `Order #${n} cancelled.`,
+  toastClosedShort: (n: number | string) => `Order #${n} closed short.`,
   hiddenByOpenFilter: ' Hidden by the Open filter.',
   hiddenByFilters: ' Hidden by the current filters.',
-  actionFailed: (n: number) => `Couldn't update order #${n}. Check your connection and try again.`,
+  actionFailed: (n: number | string) => `Couldn't update order #${n}. Check your connection and try again.`,
   refreshFailed: 'Couldn\'t refresh your orders.',
   loadMoreFailed: 'Couldn\'t load more orders.',
   tryAgain: 'Try again',
@@ -146,11 +146,11 @@ export const ORDER_COPY = {
   deliveriesHeading: 'Deliveries',
   noDeliveries: 'No deliveries yet.',
   deliveriesLoadFailed: 'Couldn\'t load the deliveries.',
-  saleRow: (n: number, date: string) => `Sale #${n} · ${date}`,
+  saleRow: (n: number | string, date: string) => `Sale #${n} · ${date}`,
   notCounted: 'Not counted',
   voided: 'Voided',
-  openSaleAria: (n: number) => `Open sale #${n}`,
-  formerlySale: (n: number) => `Formerly sale #${n}`,
+  openSaleAria: (n: number | string) => `Open sale #${n}`,
+  formerlySale: (n: number | string) => `Formerly sale #${n}`,
   archived: 'Archived',
   inactive: 'Inactive',
   noteFulfilled: 'Everything ordered was delivered.',
@@ -163,12 +163,12 @@ export const ORDER_COPY = {
   openInOrders: 'Open in Orders',
   openInSales: 'Open in Sales',
   readOnlyNote: 'You are viewing this from another screen.',
-  fromOrder: (n: number) => `From order #${n}`,
-  openOrderLinkAria: (n: number) => `Open order #${n}`,
+  fromOrder: (n: number | string) => `From order #${n}`,
+  openOrderLinkAria: (n: number | string) => `Open order #${n}`,
 
   // ---- Deliver step (AC24 to AC31) ----------------------------------------------------------------------
-  deliverTitle: (n: number) => `Deliver order #${n}`,
-  deliverOrderLine: (n: number, client: string) => `#${n} · ${client}`,
+  deliverTitle: (n: number | string) => `Deliver order #${n}`,
+  deliverOrderLine: (n: number | string, client: string) => `#${n} · ${client}`,
   deliveredDateLabel: 'Delivered date',
   deliveredHint: (todayWord: string, orderDate: string) => `${todayWord} · ordered ${orderDate}`,
   deliverNowLabel: 'Deliver now',
@@ -190,14 +190,14 @@ export const ORDER_COPY = {
   deliverFailed: ORDER_MESSAGES.deliverFailed,
 
   // ---- Cancel / Close short confirms (AC22, AC34) -------------------------------------------------------
-  cancelTitle: (n: number) => `Cancel order #${n}?`,
+  cancelTitle: (n: number | string) => `Cancel order #${n}?`,
   cancelSummary: (client: string, sizes: number, total: string) => `${client} · ${sizes} ${sizes === 1 ? 'size' : 'sizes'} · ${total}`,
   cancelStockLine: 'It hasn\'t left the farm, so your stock doesn\'t change.',
-  cancelNoUndo: (n: number) => `You can't undo this. The number #${n} stays used.`,
+  cancelNoUndo: (n: number | string) => `You can't undo this. The number #${n} stays used.`,
   cancelConfirm: 'Cancel order',
   cancelKeep: 'Keep order',
   cancelFailed: ORDER_MESSAGES.cancelFailed,
-  closeTitle: (n: number) => `Close order #${n} short?`,
+  closeTitle: (n: number | string) => `Close order #${n} short?`,
   closeOne: (qty: string, size: string) => `Closing short drops ${qty} of ${size}. Deliveries already made stay.`,
   closeMany: 'Closing short drops:',
   closeManyClosing: 'Deliveries already made stay.',
@@ -209,7 +209,7 @@ export const ORDER_COPY = {
   // ---- Discard ------------------------------------------------------------------------------------------
   discardTitle: 'Discard this entry?',
   discardNewBody: 'What you typed won\'t be saved.',
-  discardEditBody: (n: number) => `Your changes to order #${n} won't be saved.`,
+  discardEditBody: (n: number | string) => `Your changes to order #${n} won't be saved.`,
 
   // ---- Empty / loading / failure states (AC6) -----------------------------------------------------------
   firstUseTitle: 'No orders yet',

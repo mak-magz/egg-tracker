@@ -27,13 +27,14 @@ const { signOut } = useAuthActions()
 
 const isDark = computed(() => colorMode.value === 'dark')
 
-const items = computed<DropdownMenuItem[][]>(() => [
-  [{
+const items = computed<DropdownMenuItem[][]>(() => {
+  const accountGroup: DropdownMenuItem[] = [{
     type: 'label',
     slot: 'account',
-    label: props.farmName,
-  }],
-  [{
+    label: props.farmName || 'My Farm',
+  }]
+
+  const navGroup: DropdownMenuItem[] = [{
     // Feature 02 (owner decision Q3): Settings lives here, not in a sixth tab. A link item: selecting it
     // navigates and closes the menu; on /settings it shows as the current item.
     label: SIZE_COPY.menuItem,
@@ -48,16 +49,25 @@ const items = computed<DropdownMenuItem[][]>(() => [
       event.preventDefault()
       colorMode.preference = isDark.value ? 'light' : 'dark'
     },
-  }],
-  [{
-    label: 'Sign out',
-    icon: 'i-lucide-log-out',
-    color: 'error',
-    onSelect() {
-      signOut()
-    },
-  }],
-])
+  }]
+
+  const authGroup: DropdownMenuItem[] = props.email
+    ? [{
+        label: 'Sign out',
+        icon: 'i-lucide-log-out',
+        color: 'error',
+        onSelect() {
+          signOut()
+        },
+      }]
+    : [{
+        label: 'Sign in / Sync',
+        icon: 'i-lucide-cloud',
+        to: '/settings',
+      }]
+
+  return [accountGroup, navGroup, authGroup]
+})
 </script>
 
 <template>
@@ -79,7 +89,7 @@ const items = computed<DropdownMenuItem[][]>(() => [
       :class="props.variant === 'row' ? 'w-full px-0.5' : ''"
     >
       <AppAccountSummary
-        :farm-name="props.farmName"
+        :farm-name="props.farmName || 'My Farm'"
         :email="props.email"
         :compact="props.variant === 'avatar'"
       />
@@ -87,8 +97,8 @@ const items = computed<DropdownMenuItem[][]>(() => [
 
     <template #account>
       <span class="block min-w-0 text-left">
-        <span class="block truncate text-base font-semibold text-highlighted">{{ props.farmName }}</span>
-        <span class="block truncate text-sm font-normal text-muted">{{ props.email }}</span>
+        <span class="block truncate text-base font-semibold text-highlighted">{{ props.farmName || 'My Farm' }}</span>
+        <span class="block truncate text-sm font-normal text-muted">{{ props.email || 'Local Farm (Free)' }}</span>
       </span>
     </template>
   </UDropdownMenu>

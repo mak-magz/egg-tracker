@@ -22,7 +22,7 @@ import type { OrderMutations } from '~/composables/useOrderMutations'
 
 export interface OrderDeliveredEvent {
   order: OrderDetail
-  saleNumber: number
+  saleNumber: number | string
   sizeIds: string[]
 }
 

@@ -41,14 +41,14 @@ export const SALE_COPY = {
   headerType: 'Type',
   headerActions: 'Actions',
   walkIn: 'Walk-in',
-  saleNumber: (n: number) => `#${n}`,
+  saleNumber: (n: number | string) => `#${n}`,
   moreSizes: (n: number) => `+ ${n} more sizes`,
   sizeCount: (n: number) => `${n} ${n === 1 ? 'size' : 'sizes'}`,
-  openSaleAria: (n: number, client: string, kind: string) => `Open sale #${n}, ${client}, ${kind}`,
-  actionsFor: (n: number) => `Actions for sale #${n}`,
+  openSaleAria: (n: number | string, client: string, kind: string) => `Open sale #${n}, ${client}, ${kind}`,
+  actionsFor: (n: number | string) => `Actions for sale #${n}`,
   /** The link pill on a delivery made from an order (feature 05 AC39). */
-  fromOrder: (n: number) => `From order #${n}`,
-  openOrderAria: (n: number) => `Open order #${n}`,
+  fromOrder: (n: number | string) => `From order #${n}`,
+  openOrderAria: (n: number | string) => `Open order #${n}`,
 
   // ---- Row menu -------------------------------------------------------------------------------------
   menuEdit: 'Edit',
@@ -56,7 +56,7 @@ export const SALE_COPY = {
 
   // ---- Log / Edit form (AC12 to AC32) --------------------------------------------------------------
   logTitle: 'Log a sale',
-  editTitle: (n: number) => `Edit sale #${n}`,
+  editTitle: (n: number | string) => `Edit sale #${n}`,
   close: 'Close',
   saleTypeGroupLabel: 'Sale type',
   clientLabel: 'Client',
@@ -103,7 +103,7 @@ export const SALE_COPY = {
   save: 'Save',
 
   // ---- Edit a delivery that came from an order (feature 05 AC36, §2.5 "Sales") ---------------------
-  partOfOrder: (n: number) => `Part of order #${n}`,
+  partOfOrder: (n: number | string) => `Part of order #${n}`,
   linkedEggsNote: 'Void this delivery and deliver again to change eggs.',
 
   // ---- Field / server messages (AC13, AC15, AC19, AC20, AC23) --------------------------------------
@@ -135,10 +135,10 @@ export const SALE_COPY = {
   serverSaleLocked: SALE_MESSAGES.saleLocked,
 
   // ---- Toasts (AC29, AC34, AC39, AC67) -------------------------------------------------------------
-  toastRecorded: (n: number) => `Sale #${n} recorded`,
-  toastUpdated: (n: number) => `Updated sale #${n}`,
-  toastVoided: (n: number) => `Sale #${n} voided`,
-  toastVoidedLinked: (n: number, orderNumber: number, owed: string) => `Sale #${n} voided. Order #${orderNumber} shows ${owed} still owed.`,
+  toastRecorded: (n: number | string) => `Sale #${n} recorded`,
+  toastUpdated: (n: number | string) => `Updated sale #${n}`,
+  toastVoided: (n: number | string) => `Sale #${n} voided`,
+  toastVoidedLinked: (n: number | string, orderNumber: number | string, owed: string) => `Sale #${n} voided. Order #${orderNumber} shows ${owed} still owed.`,
   hiddenByFilter: (message: string, filter: string) => `${message}. Hidden by the ${filter} filter.`,
   hiddenByVoidedToggle: (message: string) => `${message}. Hidden — turn on "Show voided sales" to see it.`,
 
@@ -159,7 +159,7 @@ export const SALE_COPY = {
   goBack: 'Go back',
 
   // ---- Detail (AC6, feature 05 AC39) ---------------------------------------------------------------
-  detailTitle: (n: number) => `Sale #${n}`,
+  detailTitle: (n: number | string) => `Sale #${n}`,
   detailClient: 'Client',
   detailSaleDate: 'Sale date',
   detailSaleTotal: 'Sale total',
@@ -171,22 +171,22 @@ export const SALE_COPY = {
   openInSales: 'Open in Sales',
 
   // ---- Void confirm (AC67, AC68; feature 05 AC35) --------------------------------------------------
-  voidDialogTitle: (n: number) => `Void sale #${n}?`,
+  voidDialogTitle: (n: number | string) => `Void sale #${n}?`,
   voidDialogLine: (client: string, n: number, total: string) => `${client} · ${n} ${n === 1 ? 'size' : 'sizes'} · ${total}`,
   voidPutsBackOnHand: 'This puts back on hand:',
   voidNoUndo: 'You can\'t undo this. It stays in your records, marked Voided.',
   voidFailed: SALE_MESSAGES.voidFailed,
   /** The preview of what a void does to the order the delivery came from (AC35). */
-  voidOrderOwed: (orderNumber: number, owed: string) => `Order #${orderNumber} will show ${owed} still owed.`,
-  voidOrderOwedMany: (orderNumber: number) => `Order #${orderNumber} will show these still owed:`,
+  voidOrderOwed: (orderNumber: number | string, owed: string) => `Order #${orderNumber} will show ${owed} still owed.`,
+  voidOrderOwedMany: (orderNumber: number | string) => `Order #${orderNumber} will show these still owed:`,
   voidOrderBack: (status: string) => `It will go back to ${status}.`,
-  voidOrderClosedShort: (orderNumber: number) => `Order #${orderNumber} was closed short and stays closed.`,
+  voidOrderClosedShort: (orderNumber: number | string) => `Order #${orderNumber} was closed short and stays closed.`,
   voidOrderLoading: 'Checking the order…',
 
   // ---- Discard (AC32) ---------------------------------------------------------------------------------
   discardTitle: 'Discard this entry?',
   discardLogBody: 'What you typed won\'t be saved.',
-  discardEditBody: (n: number) => `Your changes to sale #${n} won't be saved.`,
+  discardEditBody: (n: number | string) => `Your changes to sale #${n} won't be saved.`,
   keepEditing: 'Keep editing',
   discard: 'Discard',
 

@@ -13,12 +13,14 @@ const props = withDefaults(defineProps<{
 })
 
 // Farm initials, e.g. "Hendricks farm" -> "HF" (UAvatar's own `alt` fallback keeps the case).
-const initials = computed(() => props.farmName
-  .trim()
-  .split(/\s+/)
-  .slice(0, 2)
-  .map(word => word.charAt(0).toUpperCase())
-  .join(''))
+const initials = computed(() => {
+  const name = props.farmName.trim() || 'My Farm'
+  return name
+    .split(/\s+/)
+    .slice(0, 2)
+    .map(word => word.charAt(0).toUpperCase())
+    .join('')
+})
 </script>
 
 <template>
@@ -29,13 +31,13 @@ const initials = computed(() => props.farmName
     <!-- md = 32px. The name is announced next to it (or by the T21 trigger's aria-label). -->
     <UAvatar
       :text="initials"
-      :alt="props.farmName"
+      :alt="props.farmName || 'My Farm'"
       size="md"
     />
     <template v-if="!props.compact">
       <span class="min-w-0 flex-1 text-left">
-        <span class="block truncate text-base font-medium text-highlighted">{{ props.farmName }}</span>
-        <span class="block truncate text-sm text-muted">{{ props.email }}</span>
+        <span class="block truncate text-base font-medium text-highlighted">{{ props.farmName || 'My Farm' }}</span>
+        <span class="block truncate text-sm text-muted">{{ props.email || 'Local Farm (Free)' }}</span>
       </span>
       <UIcon
         name="i-lucide-chevron-right"

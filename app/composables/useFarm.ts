@@ -2,7 +2,7 @@
 // UX data need 1) and its currency (feature 03 AC35). All ride on /api/me (useMe), so they're in the SSR
 // payload and the forms open with no spinner. Never hardcode a tray size, a size list or a currency
 // symbol; read them from here.
-import type { FarmSize } from '#shared/types/api'
+import type { FarmSize, FarmSummary } from '#shared/types/api'
 import { DEFAULT_CURRENCY } from '#shared/constants/currency'
 import { currencySymbol as symbolFor, formatPrice as formatPriceIn } from '#shared/utils/price'
 import type { SizeApi } from '~/utils/size-mutations'
@@ -17,22 +17,40 @@ export interface ResolvedSize {
   known: boolean
 }
 
+const DEFAULT_FARM_SIZES: FarmSize[] = [
+  { id: 'size-small', name: 'Small', sortOrder: 0, colorSlot: 0, active: true },
+  { id: 'size-medium', name: 'Medium', sortOrder: 1, colorSlot: 1, active: true },
+  { id: 'size-large', name: 'Large', sortOrder: 2, colorSlot: 2, active: true },
+  { id: 'size-jumbo', name: 'Jumbo', sortOrder: 3, colorSlot: 3, active: true },
+]
+
+const DEFAULT_FARM: FarmSummary = {
+  id: 'local-farm',
+  name: 'My Farm',
+  eggsPerTray: 30,
+  currency: DEFAULT_CURRENCY,
+  sizes: DEFAULT_FARM_SIZES,
+}
+
 export function useFarm() {
-  const { me, setSizes } = useMe()
+  const { me, ensure, setSizes } = useMe()
   const api = useApi()
   // Counts every applied list, so a slow quiet refresh can't undo a change made meanwhile (see refreshSizes).
   const sizesVersion = useState('farm:sizes-version', () => 0)
 
-  const farm = computed(() => me.value?.farm ?? null)
+  if (import.meta.client && !me.value) {
+    void ensure().catch(() => {})
+  }
 
-  /** The farm's tray size (>= 1). Only null when there is no farm, which the shell never renders. */
-  const eggsPerTray = computed(() => farm.value?.eggsPerTray ?? null)
+  const farm = computed(() => me.value?.farm ?? DEFAULT_FARM)
+
+  /** The farm's tray size (>= 1). Falls back to 30 for local offline farm. */
+  const eggsPerTray = computed(() => farm.value?.eggsPerTray ?? 30)
 
   /**
-   * The tray size as a plain number for formatting, so a template never writes a fallback literal. It is the farm's
-   * own `eggsPerTray`; it only falls back to 1 (a harmless identity) when there is no farm, which the shell never renders.
+   * The tray size as a plain number for formatting, so a template never writes a fallback literal.
    */
-  const trayEggs = computed(() => eggsPerTray.value ?? 1)
+  const trayEggs = computed(() => eggsPerTray.value ?? 30)
 
   /**
    * The farm's ISO currency code (feature 03). Falls back to the default only when there is no farm; an unknown
@@ -49,7 +67,11 @@ export function useFarm() {
   }
 
   /** ALL sizes (active + archived), in the farm's order (the server sorts them). */
-  const sizes = computed<readonly FarmSize[]>(() => farm.value?.sizes ?? [])
+  const sizes = computed<readonly FarmSize[]>(() => {
+    const list = farm.value?.sizes
+    if (list && list.length > 0) return list
+    return DEFAULT_FARM_SIZES
+  })
 
   /** Sizes offered for new entries. */
   const activeSizes = computed(() => groupSizes(sizes.value).active)

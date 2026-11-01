@@ -6,7 +6,7 @@
 <script setup lang="ts">
 import { SALE_COPY } from '~/utils/sale-copy'
 
-defineProps<{ orderNumber: number }>()
+defineProps<{ orderNumber: number | string }>()
 
 const emit = defineEmits<{ open: [] }>()
 </script>

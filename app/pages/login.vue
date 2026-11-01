@@ -66,13 +66,11 @@ async function onSubmit(event: FormSubmitEvent<SignInInput>) {
       :schema="signInSchema"
       :state="state"
       :validate-on="validateOn"
-      :loading-auto="false"
-      :disabled="submitting"
-      class="flex flex-col gap-5"
+      class="flex flex-col gap-6"
       @submit="onSubmit"
       @error="onError"
     >
-      <div class="flex flex-col gap-3">
+      <div class="flex flex-col gap-4">
         <UFormField
           label="Email"
           name="email"
@@ -119,12 +117,26 @@ async function onSubmit(event: FormSubmitEvent<SignInInput>) {
       />
     </UForm>
 
-    <UButton
-      to="/forgot-password"
-      variant="link"
-      size="xl"
-      block
-      label="Forgot password?"
-    />
+    <div class="flex flex-col gap-2">
+      <UButton
+        to="/forgot-password"
+        variant="link"
+        size="xl"
+        block
+        label="Forgot password?"
+      />
+
+      <div class="border-t border-default pt-2 text-center">
+        <UButton
+          to="/production"
+          variant="ghost"
+          color="neutral"
+          size="lg"
+          block
+          icon="i-lucide-arrow-left"
+          label="Continue offline without signing in"
+        />
+      </div>
+    </div>
   </AuthCard>
 </template>

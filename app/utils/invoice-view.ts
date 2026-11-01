@@ -17,7 +17,7 @@ export interface InvoiceContext {
 
 export interface InvoiceView {
   farmName: string
-  number: number
+  number: number | string
   voided: boolean
   dateText: string
   typeText: string
@@ -48,11 +48,11 @@ export function buildInvoiceView(sale: Sale, ctx: InvoiceContext): InvoiceView {
 }
 
 /** Page title and Save-as-PDF file name: the number only, never a name (AC22). */
-export function invoiceTitle(n: number): string {
+export function invoiceTitle(n: number | string): string {
   return `Invoice ${n}`
 }
 
 /** The visible heading: `Invoice #1042`, plus ` - VOID` for a voided sale. */
-export function invoiceHeading(n: number, voided: boolean): string {
+export function invoiceHeading(n: number | string, voided: boolean): string {
   return `Invoice #${n}${voided ? ' - VOID' : ''}`
 }

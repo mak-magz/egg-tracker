@@ -1,7 +1,9 @@
 // The signed-in user's email + farm, from GET /api/me (§3.4, §3.8). Fetched once per app load
 // (SSR forwards cookies via useRequestFetch) and kept in useState, so it's in the SSR payload and
 // the shell never renders without it.
+// In Feature 08 (Offline-first), unauthenticated visitors load their local farm from local SQLite WASM.
 import type { FarmSize, MeResponse } from '#shared/types/api'
+import { localRouter } from '../local/router'
 
 export type MeStatus = 'idle' | 'loading' | 'ready' | 'error'
 /** What `ensure()` found. `unauthenticated` = /api/me said 401 (session missing, invalid or revoked). */
@@ -26,11 +28,40 @@ export function useMe() {
   async function load(): Promise<MeEnsureResult> {
     status.value = 'loading'
     try {
+      if (import.meta.client) {
+        let user = null
+        try {
+          user = await getCurrentUser()
+        }
+        catch {
+          user = null
+        }
+        if (!user) {
+          // Free / Offline mode (Feature 08 AC1):
+          // Unauthenticated visitors operate locally via SQLite WASM in OPFS with zero network HTTP traffic.
+          const localMe = await localRouter.dispatch<MeResponse>('/api/me')
+          me.value = localMe
+          status.value = 'ready'
+          return 'ready'
+        }
+      }
+
       me.value = await requestFetch<MeResponse>('/api/me', { retry: 0 })
       status.value = 'ready'
       return 'ready'
     }
     catch (e) {
+      if (import.meta.client) {
+        try {
+          const localMe = await localRouter.dispatch<MeResponse>('/api/me')
+          me.value = localMe
+          status.value = 'ready'
+          return 'ready'
+        }
+        catch {
+          // ignore fallback error
+        }
+      }
       me.value = null
       if (statusCodeOf(e) === 401) {
         status.value = 'idle'

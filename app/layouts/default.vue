@@ -17,7 +17,7 @@ const route = useRoute()
 // (then `farmLoadFailed` replaces the whole shell with the retry card, T20).
 const { me, status: meStatus, ensure } = useMe()
 const { signOut } = useAuthActions()
-const account = computed(() => ({ farmName: me.value?.farm?.name ?? '', email: me.value?.email ?? '' }))
+const account = computed(() => ({ farmName: me.value?.farm?.name || 'My Farm', email: me.value?.email ?? '' }))
 const farmLoadFailed = computed(() => meStatus.value === 'error')
 const retrying = ref(false)
 async function retryFarm() {
@@ -37,6 +37,7 @@ const viewport = computed(() => (isLg.value ? 'desktop' : isMd.value ? 'tablet' 
 // mount (not during hydration) to avoid a mismatch.
 const collapsed = ref(false)
 onMounted(() => {
+  if (!me.value) void ensure().catch(() => {})
   watch(viewport, (v) => {
     collapsed.value = v === 'tablet'
   }, { immediate: true })
@@ -230,6 +231,7 @@ const navUi = computed(() => ({
             </template>
 
             <template #right>
+              <SyncStatusPill class="mr-1" />
               <!-- 44px on tablet (touch), 40px at lg+. -->
               <UButton
                 v-if="primaryAction"

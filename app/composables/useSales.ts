@@ -11,6 +11,8 @@
 import type { IsoDate, Sale, SalesListResponse, SaleType } from '#shared/types/api'
 import { SALES_PAGE_SIZE } from '#shared/constants/sales'
 
+import { compareSequenceNumbers } from '../../core/utils/sequence'
+
 export type SalesTypeFilter = 'all' | SaleType
 
 export interface SalesFilters {
@@ -55,7 +57,7 @@ export function saleMatchesFilters(sale: Sale, filters: SalesFilters): boolean {
 /** Newest sale date first; same date -> highest sale number first (AC4). */
 export function compareSalesNewestFirst(a: Sale, b: Sale): number {
   if (a.saleDate !== b.saleDate) return a.saleDate < b.saleDate ? 1 : -1
-  return b.saleNumber - a.saleNumber
+  return compareSequenceNumbers(b.saleNumber, a.saleNumber)
 }
 
 function query(filters: SalesFilters, limit: number, offset: number): Record<string, string | number | boolean> {

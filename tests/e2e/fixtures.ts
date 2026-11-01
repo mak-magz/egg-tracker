@@ -42,7 +42,7 @@ export function today(): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
 
-export interface Seeded { clientName: string, saleId: string, saleNumber: number, orderId: string, orderNumber: number }
+export interface Seeded { clientName: string, saleId: string, saleNumber: number | string, orderId: string, orderNumber: number | string }
 
 /** Seeds one client, stock, a sale and an open order through the real routes (same-origin Origin header for the CSRF guard). */
 export async function seed(page: Page): Promise<Seeded> {
@@ -53,10 +53,10 @@ export async function seed(page: Page): Promise<Seeded> {
   const added = await api<{ client: { id: string } }>(r, 'POST', '/api/clients', { submissionId: randomUUID(), name: clientName, defaultPrice: 250 })
   const clientId = added.client.id
   await api(r, 'POST', '/api/production/entries', { submissionId: randomUUID(), date: today(), good: [{ sizeId, eggs: 600 }], rejects: 0 })
-  const sale = await api<{ sale: { id: string, saleNumber: number } }>(r, 'POST', '/api/sales', {
+  const sale = await api<{ sale: { id: string, saleNumber: number | string } }>(r, 'POST', '/api/sales', {
     submissionId: randomUUID(), type: 'delivery', saleDate: today(), clientId, lines: [{ sizeId, eggs: 60, pricePerTray: 250 }],
   })
-  const order = await api<{ order: { id: string, orderNumber: number } }>(r, 'POST', '/api/orders', {
+  const order = await api<{ order: { id: string, orderNumber: number | string } }>(r, 'POST', '/api/orders', {
     submissionId: randomUUID(), clientId, orderDate: today(), lines: [{ sizeId, eggs: 90, pricePerTray: 250 }],
   })
   return { clientName, saleId: sale.sale.id, saleNumber: sale.sale.saleNumber, orderId: order.order.id, orderNumber: order.order.orderNumber }
