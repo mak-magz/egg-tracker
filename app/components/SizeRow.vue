@@ -77,22 +77,40 @@ const downDisabled = computed(() => props.busy || props.last)
     />
     <div
       v-else
-      class="flex min-h-14 items-center gap-1 rounded-md bg-muted py-1.5 ps-3 pe-1.5 lg:min-h-12"
+      class="group/row flex min-h-14 items-center gap-1 rounded-md bg-muted border border-default/60 hover:border-default hover:bg-muted/80 transition-all duration-150 py-1.5 ps-3 pe-1.5 lg:min-h-12"
       :class="highlighted ? 'animate-[size-row-flash_1.5s_ease-out] motion-reduce:animate-none' : ''"
     >
       <button
         type="button"
-        class="flex min-w-0 flex-1 flex-wrap items-baseline gap-2 py-1 text-left rounded focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary cursor-pointer hover:opacity-80 transition-opacity"
+        class="group flex min-w-0 flex-1 flex-wrap items-baseline gap-2.5 py-1 text-left rounded focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary cursor-pointer"
         :aria-label="`Edit ${size.name}`"
         :disabled="busy"
         @click="onEdit"
       >
-        <span class="text-base font-medium break-words text-default">{{ size.name }}</span>
+        <span class="text-base font-semibold break-words text-default group-hover:text-primary transition-colors duration-150">
+          {{ size.name }}
+        </span>
         <span
           v-if="size.defaultPrice != null"
-          class="text-sm font-normal text-muted"
+          class="text-xs sm:text-sm font-medium text-primary bg-primary/10 border border-primary/20 px-2 py-0.5 rounded"
         >
           {{ formatPrice(size.defaultPrice, currency) }} / tray
+        </span>
+        <span
+          v-else
+          class="text-xs text-dimmed italic"
+        >
+          No default price set
+        </span>
+        <span
+          class="inline-flex items-center gap-1 text-xs text-muted opacity-0 group-hover:opacity-100 transition-opacity duration-150"
+          aria-hidden="true"
+        >
+          <UIcon
+            name="i-lucide-pencil"
+            class="size-3 text-primary"
+          />
+          <span>Click to edit</span>
         </span>
       </button>
       <UButton

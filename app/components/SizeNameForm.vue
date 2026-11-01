@@ -154,7 +154,7 @@ defineExpose({ focus: () => inputRef.value?.inputRef?.focus() })
   <UForm
     :state="state"
     :loading-auto="false"
-    class="flex flex-col gap-3 rounded-md bg-muted p-3"
+    class="flex flex-col gap-3 rounded-md bg-muted p-3 border border-primary/50 ring-2 ring-primary/20 shadow-xs transition-all duration-150"
     novalidate
     @submit="onSubmit"
     @keydown.esc.stop="onCancel"
