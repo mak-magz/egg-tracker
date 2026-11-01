@@ -33,12 +33,27 @@ Customer invoicing / accounts-receivable · delivery routing/scheduling · SaaS 
 
 | Layer | Choice |
 |---|---|
-| Frontend + backend | **Nuxt.js 4 (SSR) + TypeScript** — one codebase, one language |
+| Frontend + backend | **Nuxt.js 4 (SPA mode, `ssr: false`) + TypeScript** — one codebase, one language |
 | Server logic | **Nuxt server routes (Nitro)** — privileged ops + business logic |
 | Database | **Turso (libSQL) via Drizzle ORM** (database-per-tenant architecture) |
 | Auth | **Firebase Auth** (`nuxt-vuefire` on client, `firebase-admin` on server) |
 | Hosting | **Vercel** (hosts Nuxt frontend + server routes) |
 | UI library | **Nuxt UI v4 + Tailwind CSS v4** (see UI spec) |
+
+### 2.1 SPA Mode (`ssr: false`) & Offline-First Client Rendering
+
+Nuxt 4 is configured in **Single Page Application (SPA) mode (`ssr: false`)** with Service Worker precaching provided by `@vite-pwa/nuxt`.
+
+#### Why SSR was disabled:
+1. **Elimination of the Offline-First SSR Paradox**:
+   In a true offline-first architecture, farm data is stored locally in the browser's Origin Private File System (`OPFS`) via SQLite WASM. An SSR server cannot access a disconnected client's device-local OPFS database to render the initial HTML. Requiring SSR would create a fatal network dependency, breaking offline access.
+2. **Prevention of Hydration Mismatches**:
+   SSR rendering on the server would either render an empty skeleton or attempt to fetch cloud data. When the client boots against its local OPFS SQLite state (which may contain un-synced offline production logs or sales), the resulting DOM would mismatch the server-rendered HTML, causing hydration errors and UI flicker.
+3. **Instant 0ms App Shell Startup**:
+   With SPA mode and `@vite-pwa/nuxt` precaching, the HTML shell, compiled JavaScript bundles, CSS, and fonts load instantly (0ms) from the Service Worker cache without hitting the network. The app boots immediately in offline rural barns, initializing the local SQLite WASM worker without blocking on server roundtrips.
+4. **Architectural Separation of Concerns**:
+   - **Client-Side (SPA + Web Worker)**: Owns 100% of UI presentation, navigation, reactive state, and isomorphic domain queries/computations against local SQLite WASM.
+   - **Server-Side (Nitro Serverless Functions)**: Acts purely as an API gateway for cloud sync mutation replay (`/api/sync/push`), change data capture pull (`/api/sync/pull`), initial migration snapshot (`/api/sync/snapshot`), and tenant account provisioning (`/api/account/upgrade`).
 
 ### Why this stack
 - **All-TypeScript** collapses frontend + backend into one language and gives **shared types end-to-end** — a Supabase schema change surfaces as compile errors in the UI. (A separate Go backend was considered and rejected: the Nuxt server layer covers the same needs — privileged operations, business logic — without a second language or deploy. Go would only have been justified by heavy concurrent processing or long-running connections, which this app doesn't need.)

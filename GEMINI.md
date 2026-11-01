@@ -35,7 +35,11 @@ A multi-tenant SaaS for egg farms that tracks production, computed inventory, sa
 
 **Package manager:** **Bun** (`bun install`, `bun run <script>`, `bunx`). Don't use npm, npx, or `package-lock.json`. The app runs on Node at runtime (Nuxt/Nitro, Vercel), and tests use Vitest via `bun run test:unit`.
 
-**Stack:** Nuxt 4 (SSR) + TypeScript, Nitro server routes, **Firebase Auth** (`nuxt-vuefire` / Firebase Web SDK on client + `firebase-admin` on server), **Turso (libSQL)** + **Drizzle ORM** (database-per-tenant architecture with Control DB + Tenant DBs), hosted on Vercel, UI in Nuxt UI v4 + Tailwind CSS v4.
+**Stack:** Nuxt 4 (SPA mode, `ssr: false`) + TypeScript, Nitro server routes, **Firebase Auth** (`nuxt-vuefire` / Firebase Web SDK on client + `firebase-admin` on server), **Turso (libSQL)** + **Drizzle ORM** (database-per-tenant architecture with Control DB + Tenant DBs), hosted on Vercel, UI in Nuxt UI v4 + Tailwind CSS v4.
+
+**Client-Side Rendering (SPA) & Serverless Model:**
+- **Page rendering is 100% client-side SPA** (`ssr: false` in `nuxt.config.ts`), cached offline via Service Worker (`@vite-pwa/nuxt`). Local reads, mutations, and computed inventory execute directly on-device against client-side SQLite WASM in OPFS via a dedicated Web Worker (`app/local/worker.ts`), providing 0ms startup and full offline operation in barns without cellular connectivity.
+- **Nitro server routes (`server/api/*`)** run as serverless functions on Vercel solely for cloud sync (`/api/sync/*`), account provisioning (`/api/account/*`), and Firebase Auth verification. The server does not perform SSR or hold client state.
 
 ## Rules that span the whole system
 

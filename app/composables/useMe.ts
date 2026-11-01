@@ -28,40 +28,41 @@ export function useMe() {
   async function load(): Promise<MeEnsureResult> {
     status.value = 'loading'
     try {
-      if (import.meta.client) {
-        let user = null
-        try {
-          user = await getCurrentUser()
-        }
-        catch {
-          user = null
-        }
-        if (!user) {
-          // Free / Offline mode (Feature 08 AC1):
-          // Unauthenticated visitors operate locally via SQLite WASM in OPFS with zero network HTTP traffic.
-          const localMe = await localRouter.dispatch<MeResponse>('/api/me')
-          me.value = localMe
-          status.value = 'ready'
-          return 'ready'
-        }
+      let user = null
+      try {
+        user = await getCurrentUser()
+      }
+      catch {
+        user = null
       }
 
-      me.value = await requestFetch<MeResponse>('/api/me', { retry: 0 })
-      status.value = 'ready'
-      return 'ready'
+      if (!user) {
+        // Free / Offline mode (Feature 08 AC1):
+        // Unauthenticated visitors operate locally via SQLite WASM in OPFS with zero network HTTP traffic.
+        const localMe = await localRouter.dispatch<MeResponse>('/api/me')
+        me.value = localMe
+        status.value = 'ready'
+        return 'ready'
+      }
+
+      // Cloud user session exists: try network fetch
+      try {
+        me.value = await requestFetch<MeResponse>('/api/me', { retry: 0 })
+        status.value = 'ready'
+        return 'ready'
+      }
+      catch (netErr) {
+        if (statusCodeOf(netErr) === 401) {
+          throw netErr
+        }
+        // Fall back to local SQLite WASM if offline / network error
+        const localMe = await localRouter.dispatch<MeResponse>('/api/me')
+        me.value = localMe
+        status.value = 'ready'
+        return 'ready'
+      }
     }
     catch (e) {
-      if (import.meta.client) {
-        try {
-          const localMe = await localRouter.dispatch<MeResponse>('/api/me')
-          me.value = localMe
-          status.value = 'ready'
-          return 'ready'
-        }
-        catch {
-          // ignore fallback error
-        }
-      }
       me.value = null
       if (statusCodeOf(e) === 401) {
         status.value = 'idle'

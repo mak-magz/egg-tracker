@@ -42,10 +42,9 @@ export default defineNuxtRouteMiddleware(async (to) => {
       return navigateTo('/welcome')
     }
 
-    // On the client, initialize local farm settings and default sizes into `me.value`
-    if (import.meta.client) {
-      await ensure()
-    }
+    // Initialize local farm settings and default sizes into `me.value`
+    await ensure()
+
     // Allow through to all farm routes barnside without login prompt
     return
   }

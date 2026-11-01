@@ -70,6 +70,7 @@ export default defineNuxtConfig({
     '@vite-pwa/nuxt',
   ],
 
+  ssr: false,
   devtools: { enabled: true },
 
   app: {
@@ -135,7 +136,7 @@ export default defineNuxtConfig({
     },
     workbox: {
       navigateFallback: '/',
-      globPatterns: ['**/*.{js,css,html,png,svg,ico,woff2}'],
+      globPatterns: ['**/*.{js,css,html,png,svg,ico,woff2,wasm}'],
     },
   },
 
@@ -166,5 +167,4 @@ export default defineNuxtConfig({
       appId: process.env.NUXT_PUBLIC_FIREBASE_APP_ID ?? '1:000000000000:web:000000000000',
     },
   },
-  ssr: false
 })
