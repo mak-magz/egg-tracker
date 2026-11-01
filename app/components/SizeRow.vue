@@ -1,8 +1,9 @@
 <!--
   One active size in the Sizes list (feature 02 §2.5 "Settings, mobile"): name, optional default price per tray,
-  then ↑ ↓ and a ⋮ menu with Rename and Archive. A `<li>`, min 56px tall (48px at lg), controls 44px (40px at lg),
-  4px apart so a thumb doesn't hit the neighbour. The name wraps and never truncates. While it is being renamed
-  the `form` slot (the inline SizeNameForm) takes the place of the row. Nothing here changes data: it emits.
+  then ↑ ↓ and a ⋮ menu with Edit and Archive. A `<li>`, min 56px tall (48px at lg), controls 44px (40px at lg),
+  4px apart so a thumb doesn't hit the neighbour. Tapping the size or Edit opens the inline form.
+  The name wraps and never truncates. While it is being edited the `form` slot (the inline SizeNameForm)
+  takes the place of the row. Nothing here changes data: it emits.
 
   - First row: ↑ disabled; last row: ↓ disabled (dimmed and aria-disabled, no message: AC10).
   - Only one active size: Archive is disabled and says why in the item (AC14).
@@ -28,23 +29,29 @@ const props = defineProps<{
   moving: MoveDirection | null
   /** Just changed: the short tint. */
   highlighted?: boolean
-  /** The rename form is showing instead of the row. */
+  /** The edit/rename form is showing instead of the row. */
   renaming?: boolean
 }>()
 
 const emit = defineEmits<{
   move: [direction: MoveDirection]
+  edit: []
   rename: []
   archive: []
 }>()
+
+function onEdit() {
+  emit('edit')
+  emit('rename')
+}
 
 const { currency } = useFarm()
 
 const menuItems = computed<DropdownMenuItem[]>(() => [
   {
-    label: SIZE_COPY.rename,
+    label: SIZE_COPY.edit,
     icon: 'i-lucide-pencil',
-    onSelect: () => emit('rename'),
+    onSelect: onEdit,
   },
   {
     label: SIZE_COPY.archive,
@@ -73,7 +80,13 @@ const downDisabled = computed(() => props.busy || props.last)
       class="flex min-h-14 items-center gap-1 rounded-md bg-muted py-1.5 ps-3 pe-1.5 lg:min-h-12"
       :class="highlighted ? 'animate-[size-row-flash_1.5s_ease-out] motion-reduce:animate-none' : ''"
     >
-      <div class="flex min-w-0 flex-1 flex-wrap items-baseline gap-2 py-1">
+      <button
+        type="button"
+        class="flex min-w-0 flex-1 flex-wrap items-baseline gap-2 py-1 text-left rounded focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary cursor-pointer hover:opacity-80 transition-opacity"
+        :aria-label="`Edit ${size.name}`"
+        :disabled="busy"
+        @click="onEdit"
+      >
         <span class="text-base font-medium break-words text-default">{{ size.name }}</span>
         <span
           v-if="size.defaultPrice != null"
@@ -81,7 +94,7 @@ const downDisabled = computed(() => props.busy || props.last)
         >
           {{ formatPrice(size.defaultPrice, currency) }} / tray
         </span>
-      </div>
+      </button>
       <UButton
         color="neutral"
         variant="ghost"

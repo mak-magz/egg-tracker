@@ -178,7 +178,11 @@ async function submitForm(rawName: string, defaultPrice?: number | null) {
   if (!res) return
   if (!res.ok) return onFormFailure(res.error)
   notice.value = null
-  toast.add({ title: SIZE_COPY.toastRenamed(oldName, savedName(res.data.sizes, res.data.changedId, rawName)), icon: 'i-lucide-check' })
+  const newName = savedName(res.data.sizes, res.data.changedId, rawName)
+  const toastTitle = oldName !== newName
+    ? SIZE_COPY.toastRenamed(oldName, newName)
+    : SIZE_COPY.toastUpdated(newName)
+  toast.add({ title: toastTitle, icon: 'i-lucide-check' })
   closeForm(`menu:${mode.id}`)
   flash(mode.id)
 }
@@ -377,12 +381,13 @@ const retrying = computed(() => loading.value && showLoadError.value)
             :highlighted="highlightedId === size.id"
             :renaming="renamingId === size.id"
             @move="(dir: MoveDirection) => move(size, dir)"
+            @edit="openRename(size.id)"
             @rename="openRename(size.id)"
             @archive="openArchive(size)"
           >
             <template #form>
               <SizeNameForm
-                mode="rename"
+                mode="edit"
                 :sizes="sizes"
                 :self-id="size.id"
                 :initial-name="size.name"

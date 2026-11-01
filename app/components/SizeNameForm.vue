@@ -27,10 +27,10 @@ export interface SizeNameProblem {
 }
 
 const props = defineProps<{
-  mode: 'add' | 'rename'
+  mode: 'add' | 'edit' | 'rename'
   /** The farm's whole list (active and archived): the live name check runs against it. */
   sizes: readonly FarmSize[]
-  /** Rename: the size being renamed (excluded from the clash check) and its current name (pre-filled). */
+  /** Edit/Rename: the size being changed (excluded from the clash check) and its current name (pre-filled). */
   selfId?: string
   initialName?: string
   initialPrice?: number | null
@@ -52,7 +52,7 @@ const emit = defineEmits<{
   restore: [id: string]
 }>()
 
-const isRename = computed(() => props.mode === 'rename')
+const isEdit = computed(() => props.mode === 'edit' || props.mode === 'rename')
 const { currency, currencySymbol } = useFarm()
 
 const state = reactive({
@@ -101,10 +101,10 @@ const restorable = computed(() => (problem.value?.existing?.archived ? problem.v
 
 const inputRef = useTemplateRef<{ inputRef: HTMLInputElement | null }>('input')
 onMounted(() => {
-  // The owner just tapped Add size / Rename, so the keypad opening is expected. Rename pre-selects the name.
+  // The owner just tapped Add size / Edit, so the keypad opening is expected. Edit pre-selects the name.
   const el = inputRef.value?.inputRef
   el?.focus()
-  if (isRename.value) el?.select()
+  if (isEdit.value) el?.select()
   el?.scrollIntoView({ block: 'center' })
 })
 
@@ -132,9 +132,9 @@ function onSubmit(_event: FormSubmitEvent<unknown>) {
   if (!priceResult.ok) {
     return
   }
-  // A rename that leaves the name and price exactly as they are closes the form: no request, no toast.
+  // An edit that leaves the name and price exactly as they are closes the form: no request, no toast.
   if (
-    isRename.value
+    isEdit.value
     && nameResult.name === props.initialName
     && (priceResult.value ?? null) === (props.initialPrice ?? null)
   ) {
@@ -164,7 +164,7 @@ defineExpose({ focus: () => inputRef.value?.inputRef?.focus() })
       name="name"
       size="xl"
       :error="problem?.message"
-      :help="isRename ? SIZE_COPY.renameHelp : undefined"
+      :help="isEdit ? (SIZE_COPY.editHelp ?? SIZE_COPY.renameHelp) : undefined"
       :ui="{ label: 'text-base font-medium', help: 'mt-1.5 text-sm text-muted', error: 'mt-1.5 text-sm' }"
     >
       <UInput
@@ -173,7 +173,7 @@ defineExpose({ focus: () => inputRef.value?.inputRef?.focus() })
         type="text"
         size="xl"
         class="w-full"
-        :placeholder="isRename ? undefined : SIZE_COPY.namePlaceholder"
+        :placeholder="isEdit ? undefined : SIZE_COPY.namePlaceholder"
         :readonly="saving"
         autocapitalize="words"
         autocomplete="off"
@@ -291,7 +291,7 @@ defineExpose({ focus: () => inputRef.value?.inputRef?.focus() })
         type="submit"
         size="xl"
         class="flex-1 justify-center lg:flex-none lg:min-h-10 lg:px-6"
-        :label="isRename ? SIZE_COPY.save : SIZE_COPY.add"
+        :label="isEdit ? SIZE_COPY.save : SIZE_COPY.add"
         :loading="saving"
         :disabled="saving || disabled || hasProblem"
         :aria-disabled="hasProblem ? 'true' : undefined"
