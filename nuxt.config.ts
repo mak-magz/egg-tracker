@@ -17,7 +17,7 @@ const securityHeaders: Record<string, string> = {
   'Referrer-Policy': 'strict-origin-when-cross-origin',
   // The app uses none of these features; deny them so an injected script cannot either.
   'Permissions-Policy': [
-    'accelerometer', 'bluetooth', 'browsing-topics', 'camera', 'display-capture', 'geolocation',
+    'accelerometer', 'bluetooth', 'camera', 'display-capture', 'geolocation',
     'gyroscope', 'hid', 'magnetometer', 'microphone', 'midi', 'payment', 'serial', 'usb',
   ].map(feature => `${feature}=()`).join(', '),
   // Sign-in is email + password/OTP in the same tab (no popups, no OAuth window), so nothing
@@ -67,6 +67,7 @@ export default defineNuxtConfig({
     '@nuxt/ui',
     'nuxt-vuefire',
     '@nuxt/eslint',
+    '@vite-pwa/nuxt',
   ],
 
   devtools: { enabled: true },
@@ -118,6 +119,25 @@ export default defineNuxtConfig({
     serverBundle: 'local',
     clientBundle: { scan: true },
   },
+  pwa: {
+    registerType: 'autoUpdate',
+    manifest: {
+      name: 'Tamago - Egg Farm Tracker',
+      short_name: 'Tamago',
+      theme_color: '#f97316',
+      icons: [
+        {
+          src: '/favicon.svg',
+          sizes: 'any',
+          type: 'image/svg+xml',
+        },
+      ],
+    },
+    workbox: {
+      navigateFallback: '/',
+      globPatterns: ['**/*.{js,css,html,png,svg,ico,woff2}'],
+    },
+  },
 
   vuefire: {
     admin: {
@@ -146,4 +166,5 @@ export default defineNuxtConfig({
       appId: process.env.NUXT_PUBLIC_FIREBASE_APP_ID ?? '1:000000000000:web:000000000000',
     },
   },
+  ssr: false
 })
