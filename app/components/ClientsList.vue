@@ -43,6 +43,7 @@ const { width } = useElementSize(sizer)
 const wide = computed(() => width.value >= TABLE_MIN_WIDTH)
 
 const busy = computed(() => new Set(props.busyIds ?? []))
+const { formatPrice } = useFarm()
 
 // ---- Rows in the DOM: the first ROWS_PER_STEP, then more as the end comes near -------------------------
 const ROWS_PER_STEP = 60
@@ -87,7 +88,7 @@ const flash = 'animate-[size-row-flash_1.5s_ease-out] motion-reduce:animate-none
     <!-- Wide: the design's table -->
     <div
       v-if="wide"
-      class="overflow-hidden rounded-xl bg-default ring ring-inset ring-default"
+      class="overflow-hidden rounded-2xl bg-default border border-default/80 shadow-xs"
     >
       <table
         class="w-full border-collapse"
@@ -97,22 +98,22 @@ const flash = 'animate-[size-row-flash_1.5s_ease-out] motion-reduce:animate-none
           {{ CLIENT_COPY.tableCaption }}
         </caption>
         <thead>
-          <tr class="border-b border-default">
+          <tr class="border-b border-default/80 bg-muted/30">
             <th
               scope="col"
-              class="px-4 py-2.5 text-left text-sm font-medium text-muted"
+              class="px-4 py-3 text-left text-xs font-bold uppercase tracking-wider text-muted"
             >
               {{ CLIENT_COPY.headerClient }}
             </th>
             <th
               scope="col"
-              class="px-4 py-2.5 text-left text-sm font-medium text-muted"
+              class="px-4 py-3 text-left text-xs font-bold uppercase tracking-wider text-muted"
             >
               {{ CLIENT_COPY.headerPhone }}
             </th>
             <th
               scope="col"
-              class="px-4 py-2.5 text-right text-sm font-medium text-muted"
+              class="px-4 py-3 text-right text-xs font-bold uppercase tracking-wider text-muted"
             >
               {{ CLIENT_COPY.headerStatus }}
             </th>
@@ -161,7 +162,7 @@ const flash = 'animate-[size-row-flash_1.5s_ease-out] motion-reduce:animate-none
                 <div class="flex items-center gap-2.5">
                   <!-- Decorative initials (the design's avatar). A plain span, not UAvatar: 500 reka avatars are slow to mount. -->
                   <span
-                    class="flex size-8 shrink-0 items-center justify-center rounded-full bg-elevated text-sm font-medium text-muted select-none"
+                    class="flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary border border-primary/20 text-xs font-extrabold select-none"
                     aria-hidden="true"
                   >{{ clientInitials(client.name) }}</span>
                   <button
@@ -229,21 +230,44 @@ const flash = 'animate-[size-row-flash_1.5s_ease-out] motion-reduce:animate-none
           :data-client-row="client.id"
           :aria-posinset="i + 1"
           :aria-setsize="clients.length"
-          class="relative rounded-2xl bg-default p-4 ring ring-inset ring-default transition-colors [contain-intrinsic-size:auto_108px] [content-visibility:auto] active:bg-elevated"
+          class="relative rounded-2xl bg-default p-5 border border-default/70 hover:border-default shadow-xs hover:shadow-md transition-all [contain-intrinsic-size:auto_116px] [content-visibility:auto] active:bg-elevated flex flex-col justify-between gap-3 group"
           :class="highlightedId === client.id ? flash : ''"
         >
-          <div class="flex items-start gap-2">
-            <!-- The whole card is this button's hit area; the ⋮ below sits above it (z-10). -->
-            <button
-              type="button"
-              class="-my-2 flex min-h-11 min-w-0 flex-1 items-start rounded-2xl py-2 text-left text-base font-semibold wrap-anywhere text-highlighted after:absolute after:inset-0 after:rounded-2xl after:content-[''] focus-visible:outline-none focus-visible:after:ring-2 focus-visible:after:ring-primary"
-              :aria-label="CLIENT_COPY.editAria(client.name)"
-              :data-client-focus="`name:${client.id}`"
-              @click="emit('edit', client)"
-            >
-              {{ client.name }}
-            </button>
-            <div class="relative z-10 -mt-2 -me-2 shrink-0">
+          <div class="flex items-start justify-between gap-3">
+            <div class="flex items-center gap-3 min-w-0">
+              <span
+                class="flex size-10 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary border border-primary/20 text-sm font-extrabold select-none"
+                aria-hidden="true"
+              >{{ clientInitials(client.name) }}</span>
+              <div class="min-w-0">
+                <button
+                  type="button"
+                  class="flex min-h-6 min-w-0 flex-1 items-start text-left text-base font-bold wrap-anywhere text-highlighted after:absolute after:inset-0 after:rounded-2xl after:content-[''] focus-visible:outline-none focus-visible:after:ring-2 focus-visible:after:ring-primary"
+                  :aria-label="CLIENT_COPY.editAria(client.name)"
+                  :data-client-focus="`name:${client.id}`"
+                  @click="emit('edit', client)"
+                >
+                  {{ client.name }}
+                </button>
+                <div class="flex items-center gap-1.5 text-xs text-muted mt-0.5">
+                  <UIcon
+                    v-if="client.phone"
+                    name="i-lucide-phone"
+                    class="size-3 text-muted shrink-0"
+                  />
+                  <span>
+                    <template v-if="client.phone">
+                      {{ client.phone }}
+                    </template>
+                    <template v-else>
+                      <span aria-hidden="true">—</span><span class="sr-only">{{ CLIENT_COPY.noPhone }}</span>
+                    </template>
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            <div class="relative z-10 shrink-0">
               <ClientRowMenu
                 :client="client"
                 :busy="busy.has(client.id)"
@@ -253,22 +277,27 @@ const flash = 'animate-[size-row-flash_1.5s_ease-out] motion-reduce:animate-none
               />
             </div>
           </div>
-          <p class="text-base wrap-anywhere text-default">
-            <template v-if="client.phone">
-              {{ client.phone }}
-            </template>
-            <template v-else>
-              <span aria-hidden="true">—</span><span class="sr-only">{{ CLIENT_COPY.noPhone }}</span>
-            </template>
-          </p>
-          <div class="mt-1 flex items-center justify-end">
+
+          <div class="pt-3 border-t border-default/60 flex items-center justify-between text-xs">
+            <span
+              v-if="client.defaultPrice !== null"
+              class="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-muted/60 text-xs font-semibold text-muted"
+            >
+              Default: {{ formatPrice(client.defaultPrice) }} / tray
+            </span>
+            <span
+              v-else
+              class="text-xs text-dimmed"
+            >
+              No default price
+            </span>
             <ClientStatusBadge :active="client.active" />
           </div>
         </li>
       </ul>
       <div
         v-else
-        class="rounded-2xl bg-default ring ring-inset ring-default"
+        class="rounded-2xl bg-default border border-default/80 shadow-xs"
       >
         <slot name="empty" />
       </div>

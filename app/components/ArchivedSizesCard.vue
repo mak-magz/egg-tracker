@@ -39,7 +39,7 @@ function restoring(id: string): boolean {
         v-for="size in sizes"
         :key="size.id"
         :data-size-row="size.id"
-        class="flex min-h-14 list-none items-center gap-3 rounded-md bg-muted py-1.5 ps-3 pe-1.5 lg:min-h-12"
+        class="flex min-h-14 list-none items-center gap-3 rounded-xl border border-default/60 bg-muted/30 py-2 ps-3.5 pe-2 lg:min-h-12 hover:border-default transition-colors"
         :class="highlightedId === size.id ? 'animate-[size-row-flash_1.5s_ease-out] motion-reduce:animate-none' : ''"
       >
         <span class="flex min-w-0 flex-1 flex-col items-start gap-1 py-1 lg:flex-row lg:items-center lg:gap-2">

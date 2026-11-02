@@ -75,7 +75,7 @@ defineExpose({ focusSearch: () => searchInput.value?.inputRef?.focus() })
           v-model="status"
           :aria-label="CLIENT_COPY.statusLabel"
           :disabled="disabled"
-          class="h-11 w-full appearance-none rounded-md bg-default ps-3 pe-10 text-base text-highlighted ring ring-inset ring-accented transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:cursor-not-allowed disabled:opacity-75"
+          class="h-11 w-full appearance-none rounded-xl bg-default ps-3.5 pe-10 text-base text-highlighted border border-default/70 hover:border-default shadow-2xs transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:cursor-not-allowed disabled:opacity-75"
         >
           <option value="all">
             {{ CLIENT_COPY.statusAll }}

@@ -31,9 +31,8 @@ const headingId = useId()
       </p>
     </div>
 
-    <UCard
-      class="w-full min-w-0 lg:max-w-[720px]"
-      :ui="{ body: 'flex flex-col gap-3 p-4 sm:p-4 md:p-5' }"
+    <div
+      class="w-full min-w-0 lg:max-w-[720px] rounded-2xl border border-default/70 bg-default shadow-xs p-4 sm:p-5 flex flex-col gap-3"
       :aria-busy="busy ? 'true' : undefined"
     >
       <!-- One-column widths: the heading lives in the card (the section is labelled by the lg heading, which
@@ -47,6 +46,6 @@ const headingId = useId()
         </p>
       </div>
       <slot />
-    </UCard>
+    </div>
   </section>
 </template>

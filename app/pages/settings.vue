@@ -100,72 +100,100 @@ async function handleFileSelected(event: Event) {
       <div class="space-y-4">
         <div
           v-if="isFree"
-          class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3.5 rounded-lg bg-primary/10 border border-primary/20"
+          class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 rounded-xl bg-primary/10 border border-primary/20"
         >
-          <div>
-            <p class="font-medium text-highlighted text-sm">
-              Free Offline Mode
-            </p>
+          <div class="space-y-0.5">
+            <div class="flex items-center gap-2">
+              <span class="size-2 rounded-full bg-primary animate-pulse" />
+              <p class="font-bold text-highlighted text-sm">
+                Free Offline Mode
+              </p>
+            </div>
             <p class="text-xs text-muted">
-              Your data is stored securely on this device. Upgrade to Cloud Sync for automated multi-device sync.
+              Your data is stored securely in your browser's local database. Upgrade to Cloud Sync for automated multi-device sync.
             </p>
           </div>
           <UButton
             color="primary"
             icon="i-lucide-cloud-upload"
-            size="sm"
+            size="md"
+            class="shrink-0 font-bold"
             @click="upgradeModalOpen = true"
           >
             Upgrade to Cloud
           </UButton>
         </div>
 
-        <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <UButton
             variant="outline"
             color="neutral"
+            size="lg"
             icon="i-lucide-download"
             :loading="exporting"
+            class="justify-start p-3.5 rounded-xl border border-default/70 hover:border-primary/40 hover:bg-primary/5 transition-all text-left"
             @click="handleExportJson"
           >
-            Export Full Backup (JSON)
+            <div class="flex flex-col items-start gap-0.5">
+              <span class="font-bold text-highlighted text-sm">Export Full Backup</span>
+              <span class="text-xs text-muted font-normal">Complete farm snapshot (.json)</span>
+            </div>
           </UButton>
 
           <UButton
             variant="outline"
             color="neutral"
+            size="lg"
             icon="i-lucide-upload"
+            class="justify-start p-3.5 rounded-xl border border-default/70 hover:border-primary/40 hover:bg-primary/5 transition-all text-left"
             @click="triggerImport"
           >
-            Restore Backup (JSON)
+            <div class="flex flex-col items-start gap-0.5">
+              <span class="font-bold text-highlighted text-sm">Restore Farm Backup</span>
+              <span class="text-xs text-muted font-normal">Restore from .json backup file</span>
+            </div>
           </UButton>
+        </div>
 
-          <UButton
-            variant="ghost"
-            color="neutral"
-            icon="i-lucide-file-spreadsheet"
-            @click="handleExportProduction"
-          >
-            Export Production (CSV)
-          </UButton>
+        <!-- CSV Spreadsheets Group -->
+        <div class="pt-3 border-t border-default/60 flex flex-col gap-2">
+          <p class="text-xs font-bold uppercase tracking-wider text-muted">
+            CSV Spreadsheets
+          </p>
+          <div class="flex flex-wrap gap-2">
+            <UButton
+              variant="outline"
+              color="neutral"
+              size="sm"
+              icon="i-lucide-file-spreadsheet"
+              class="rounded-lg border-default/70 hover:bg-muted font-semibold text-xs"
+              @click="handleExportProduction"
+            >
+              Export Production
+            </UButton>
 
-          <UButton
-            variant="ghost"
-            color="neutral"
-            icon="i-lucide-file-spreadsheet"
-            @click="handleExportSales"
-          >
-            Export Sales (CSV)
-          </UButton>
+            <UButton
+              variant="outline"
+              color="neutral"
+              size="sm"
+              icon="i-lucide-file-spreadsheet"
+              class="rounded-lg border-default/70 hover:bg-muted font-semibold text-xs"
+              @click="handleExportSales"
+            >
+              Export Sales
+            </UButton>
 
-          <UButton
-            variant="ghost"
-            color="neutral"
-            icon="i-lucide-file-spreadsheet"
-            @click="handleExportClients"
-          >
-            Export Clients (CSV)
-          </UButton>
+            <UButton
+              variant="outline"
+              color="neutral"
+              size="sm"
+              icon="i-lucide-file-spreadsheet"
+              class="rounded-lg border-default/70 hover:bg-muted font-semibold text-xs"
+              @click="handleExportClients"
+            >
+              Export Clients
+            </UButton>
+          </div>
         </div>
 
         <input
