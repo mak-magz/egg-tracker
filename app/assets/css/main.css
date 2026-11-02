@@ -2,40 +2,27 @@
 @import "@nuxt/ui";
 
 /*
- * Theme tokens (T15). Source of truth: docs/design/source/template.html
- * (Figma variables + semantic aliases). Semantic colours are mapped in app/app.config.ts.
+ * Theme tokens (T15). Golden Yolk brand palette + DM Sans.
+ * Semantic colours are mapped in app/app.config.ts.
  */
 
 @theme static {
   /* DM Sans is self-hosted by @nuxt/fonts (nuxt.config `fonts`). */
   --font-sans: 'DM Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-
-  /* Brand green = the design's "Nuxt green" scale, not Tailwind's green. */
-  --color-green-50: #EFFDF5;
-  --color-green-100: #D9FBE8;
-  --color-green-200: #B3F5D1;
-  --color-green-300: #75EDAE;
-  --color-green-400: #00DC82;
-  --color-green-500: #00C16A;
-  --color-green-600: #00A155;
-  --color-green-700: #007F45;
-  --color-green-800: #016538;
-  --color-green-900: #0A5331;
-  --color-green-950: #052E16;
 }
 
 :root {
+  /* 4px base radius: rounded-2xl = 16px cards, rounded-xl = 12px, rounded-lg = 8px controls */
   --ui-radius: 0.25rem;
-  /* The design's top bar and sidebar header are 56px (Nuxt UI default is 4rem). */
+  /* Top bar and sidebar header are 56px (Nuxt UI default is 4rem). */
   --ui-header-height: 3.5rem;
-  /* Owner decision 6 (sunlight contrast), light mode only:
-     brand green 700 = #007F45 for buttons and links, red-600 = #E7000B for errors. */
-  --ui-primary: var(--ui-color-primary-700);
+  /* Sunlight contrast in light mode: rich amber-600 for buttons and links, red-600 for errors. */
+  --ui-primary: var(--ui-color-primary-600);
   --ui-error: var(--ui-color-error-600);
 }
 
 .dark {
-  /* Dark mode stays as designed. */
+  /* Dark mode: vibrant golden yolk amber-400/500 for high readability on dark slate. */
   --ui-primary: var(--ui-color-primary-400);
   --ui-error: var(--ui-color-error-400);
 }

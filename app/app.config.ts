@@ -2,9 +2,9 @@
 export default defineAppConfig({
   ui: {
     colors: {
-      primary: 'green',
+      primary: 'amber',
       secondary: 'blue',
-      success: 'green',
+      success: 'emerald',
       info: 'blue',
       warning: 'yellow',
       error: 'red',
@@ -39,12 +39,12 @@ export default defineAppConfig({
     navigationMenu: {
       compoundVariants: [
         {
-          // Design: the active nav item has a 12% primary tint (not the neutral elevated fill).
+          // Design: the active nav item has a luminous 15% primary tint with subtle border.
           color: 'primary',
           variant: 'pill',
           active: true,
           class: {
-            link: 'before:bg-primary/12',
+            link: 'before:bg-primary/15 font-semibold text-primary before:border before:border-primary/25 before:rounded-xl',
           },
         },
         {
@@ -53,7 +53,7 @@ export default defineAppConfig({
           active: false,
           disabled: false,
           class: {
-            link: 'hover:before:bg-elevated',
+            link: 'hover:before:bg-elevated hover:text-highlighted before:rounded-xl transition-all',
           },
         },
       ],

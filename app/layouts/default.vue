@@ -17,6 +17,7 @@ const route = useRoute()
 // (then `farmLoadFailed` replaces the whole shell with the retry card, T20).
 const { me, status: meStatus, ensure } = useMe()
 const { signOut } = useAuthActions()
+const { isFree } = useTier()
 const account = computed(() => ({ farmName: me.value?.farm?.name || 'My Farm', email: me.value?.email ?? '' }))
 const farmLoadFailed = computed(() => meStatus.value === 'error')
 const retrying = ref(false)
@@ -99,15 +100,15 @@ const { action: primaryAction, hasFab, fabVisible, trigger: triggerPrimaryAction
 // ---- Per-state sizing (layout only; colours live in app.config.ts) --------------------------
 const sidebarUi = computed(() => ({
   root: 'md:flex bg-default transition-[width] duration-200 ease-out motion-reduce:transition-none',
-  header: ['border-b border-default gap-2', collapsed.value ? 'px-0 justify-center' : 'px-4'],
-  body: 'px-2 py-2.5 gap-0',
-  footer: ['border-t border-default py-3', collapsed.value ? 'px-2.5 justify-center' : 'px-3'],
+  header: ['border-b border-default gap-2.5', collapsed.value ? 'px-0 justify-center' : 'px-3.5'],
+  body: 'px-2 py-3 gap-0',
+  footer: ['border-t border-default py-3', collapsed.value ? 'px-2 justify-center' : 'px-3'],
 }))
 
 const navUi = computed(() => ({
-  list: 'flex flex-col gap-0.5',
+  list: 'flex flex-col gap-1',
   link: [
-    'text-base gap-2.5 px-2.5 py-2 min-h-11 lg:min-h-10',
+    'text-sm font-medium gap-2.5 px-3 py-2.5 min-h-11 rounded-xl transition-all',
     collapsed.value && 'justify-center px-0',
   ],
   linkLeadingIcon: 'size-[18px]',
@@ -163,17 +164,26 @@ const navUi = computed(() => ({
         :ui="sidebarUi"
       >
         <template #header>
-          <AppLogo :size="28" />
-          <div
-            v-if="!collapsed"
-            class="min-w-0 flex-1"
-          >
-            <p class="truncate text-base leading-tight font-bold text-highlighted">
-              Tamago
-            </p>
-            <p class="truncate text-xs text-muted">
-              Egg farm tracker
-            </p>
+          <div class="flex items-center gap-2.5 min-w-0">
+            <div class="flex size-9 shrink-0 items-center justify-center rounded-xl bg-primary/10 border border-primary/20 text-primary shadow-xs">
+              <AppLogo :size="20" />
+            </div>
+            <div
+              v-if="!collapsed"
+              class="min-w-0 flex-1"
+            >
+              <div class="flex items-center gap-1.5">
+                <span class="truncate text-base leading-tight font-extrabold tracking-tight text-highlighted">
+                  Tamago
+                </span>
+                <span class="rounded bg-primary/10 px-1.5 py-0.2 text-[10px] font-bold text-primary border border-primary/20">
+                  farm
+                </span>
+              </div>
+              <p class="truncate text-xs font-medium text-muted mt-0.5">
+                {{ account.farmName || 'Egg farm tracker' }}
+              </p>
+            </div>
           </div>
         </template>
 
@@ -187,14 +197,37 @@ const navUi = computed(() => ({
         />
 
         <template #footer>
-          <!-- Expanded: full row, opens upward. Rail: avatar only, opens to the right. -->
-          <AppAccountMenu
-            :farm-name="account.farmName"
-            :email="account.email"
-            :variant="collapsed ? 'avatar' : 'row'"
-            :side="collapsed ? 'right' : 'top'"
-            :align="collapsed ? 'end' : 'start'"
-          />
+          <!-- Expanded: mode badge + account row. Rail: avatar only, opens to the right. -->
+          <div class="flex w-full flex-col gap-2">
+            <div
+              v-if="!collapsed"
+              class="flex items-center justify-between rounded-lg bg-muted/60 border border-default/60 px-2.5 py-1.5 text-xs"
+            >
+              <div class="flex items-center gap-1.5 truncate">
+                <span
+                  class="size-2 shrink-0 rounded-full"
+                  :class="isFree ? 'bg-emerald-500 animate-pulse' : 'bg-primary'"
+                />
+                <span class="truncate font-medium text-default">
+                  {{ isFree ? 'Free Offline' : 'Cloud Sync' }}
+                </span>
+              </div>
+              <NuxtLink
+                to="/settings"
+                class="shrink-0 font-semibold text-primary hover:underline text-[11px]"
+              >
+                {{ isFree ? 'Upgrade' : 'Settings' }}
+              </NuxtLink>
+            </div>
+
+            <AppAccountMenu
+              :farm-name="account.farmName"
+              :email="account.email"
+              :variant="collapsed ? 'avatar' : 'row'"
+              :side="collapsed ? 'right' : 'top'"
+              :align="collapsed ? 'end' : 'start'"
+            />
+          </div>
         </template>
       </UDashboardSidebar>
 
