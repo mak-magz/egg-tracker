@@ -86,41 +86,41 @@ const flash = 'animate-[size-row-flash_1.5s_ease-out] motion-reduce:animate-none
     <!-- Wide: the table -->
     <div
       v-if="wide"
-      class="overflow-hidden rounded-xl bg-default ring ring-inset ring-default"
+      class="overflow-hidden rounded-2xl bg-default border border-default/80 shadow-xs"
     >
       <table class="w-full border-collapse">
         <caption class="sr-only">
           {{ ORDER_COPY.tableCaption }}
         </caption>
         <thead>
-          <tr class="border-b border-default">
+          <tr class="border-b border-default/80 bg-muted/30">
             <th
               scope="col"
-              class="px-4 py-2.5 text-left text-sm font-medium text-muted"
+              class="px-4 py-3 text-left text-xs font-bold uppercase tracking-wider text-muted"
             >
               {{ ORDER_COPY.headerOrder }}
             </th>
             <th
               scope="col"
-              class="px-4 py-2.5 text-left text-sm font-medium text-muted"
+              class="px-4 py-3 text-left text-xs font-bold uppercase tracking-wider text-muted"
             >
               {{ ORDER_COPY.headerClient }}
             </th>
             <th
               scope="col"
-              class="px-4 py-2.5 text-left text-sm font-medium text-muted"
+              class="px-4 py-3 text-left text-xs font-bold uppercase tracking-wider text-muted"
             >
               {{ ORDER_COPY.headerProgress }}
             </th>
             <th
               scope="col"
-              class="px-4 py-2.5 text-right text-sm font-medium text-muted"
+              class="px-4 py-3 text-right text-xs font-bold uppercase tracking-wider text-muted"
             >
               {{ ORDER_COPY.headerTotal }}
             </th>
             <th
               scope="col"
-              class="px-4 py-2.5 text-left text-sm font-medium text-muted"
+              class="px-4 py-3 text-left text-xs font-bold uppercase tracking-wider text-muted"
             >
               {{ ORDER_COPY.headerStatus }}
             </th>
@@ -289,7 +289,7 @@ const flash = 'animate-[size-row-flash_1.5s_ease-out] motion-reduce:animate-none
           v-for="order in orders"
           :key="order.id"
           :data-order-row="order.id"
-          class="relative flex flex-col gap-1 rounded-2xl bg-default p-4 ring ring-inset ring-default transition-colors active:bg-elevated"
+          class="relative flex flex-col gap-1.5 rounded-2xl bg-default p-5 border border-default/70 hover:border-default shadow-xs hover:shadow-md transition-all active:bg-elevated"
           :class="highlightedId === order.id ? flash : ''"
         >
           <div class="flex items-start justify-between gap-2">
@@ -300,7 +300,7 @@ const flash = 'animate-[size-row-flash_1.5s_ease-out] motion-reduce:animate-none
               :data-order-focus="`open:${order.id}`"
               @click="emit('open', order)"
             >
-              <span class="text-base font-semibold text-highlighted">{{ ORDER_COPY.orderNumber(order.orderNumber) }} · {{ formatShortDate(order.orderDate, today) }}</span>
+              <span class="text-base font-bold text-highlighted">{{ ORDER_COPY.orderNumber(order.orderNumber) }} · {{ formatShortDate(order.orderDate, today) }}</span>
             </button>
             <OrderStatusBadge
               v-if="!closedShortNote(order)"
@@ -324,7 +324,7 @@ const flash = 'animate-[size-row-flash_1.5s_ease-out] motion-reduce:animate-none
           </div>
           <p
             v-if="clientName(order) !== null"
-            class="text-base font-semibold wrap-anywhere text-highlighted"
+            class="text-base font-bold wrap-anywhere text-highlighted"
           >
             {{ clientName(order) }}
           </p>

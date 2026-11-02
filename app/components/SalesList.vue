@@ -83,41 +83,41 @@ const flash = 'animate-[size-row-flash_1.5s_ease-out] motion-reduce:animate-none
     <!-- Wide: the design's table -->
     <div
       v-if="wide"
-      class="overflow-hidden rounded-xl bg-default ring ring-inset ring-default"
+      class="overflow-hidden rounded-2xl bg-default border border-default/80 shadow-xs"
     >
       <table class="w-full border-collapse">
         <caption class="sr-only">
           {{ SALE_COPY.tableCaption }}
         </caption>
         <thead>
-          <tr class="border-b border-default">
+          <tr class="border-b border-default/80 bg-muted/30">
             <th
               scope="col"
-              class="px-4 py-2.5 text-left text-sm font-medium text-muted"
+              class="px-4 py-3 text-left text-xs font-bold uppercase tracking-wider text-muted"
             >
               {{ SALE_COPY.headerSale }}
             </th>
             <th
               scope="col"
-              class="px-4 py-2.5 text-left text-sm font-medium text-muted"
+              class="px-4 py-3 text-left text-xs font-bold uppercase tracking-wider text-muted"
             >
               {{ SALE_COPY.headerClient }}
             </th>
             <th
               scope="col"
-              class="px-4 py-2.5 text-left text-sm font-medium text-muted"
+              class="px-4 py-3 text-left text-xs font-bold uppercase tracking-wider text-muted"
             >
               {{ SALE_COPY.headerSizes }}
             </th>
             <th
               scope="col"
-              class="px-4 py-2.5 text-right text-sm font-medium text-muted"
+              class="px-4 py-3 text-right text-xs font-bold uppercase tracking-wider text-muted"
             >
               {{ SALE_COPY.headerTotal }}
             </th>
             <th
               scope="col"
-              class="px-4 py-2.5 text-left text-sm font-medium text-muted"
+              class="px-4 py-3 text-left text-xs font-bold uppercase tracking-wider text-muted"
             >
               {{ SALE_COPY.headerType }}
             </th>
@@ -253,7 +253,7 @@ const flash = 'animate-[size-row-flash_1.5s_ease-out] motion-reduce:animate-none
           v-for="sale in sales"
           :key="sale.id"
           :data-sale-row="sale.id"
-          class="relative rounded-2xl bg-default p-4 ring ring-inset ring-default transition-colors active:bg-elevated"
+          class="relative flex flex-col gap-1.5 rounded-2xl bg-default p-5 border border-default/70 hover:border-default shadow-xs hover:shadow-md transition-all active:bg-elevated"
           :class="highlightedId === sale.id ? flash : ''"
         >
           <div class="flex items-start justify-between gap-2">
@@ -264,7 +264,7 @@ const flash = 'animate-[size-row-flash_1.5s_ease-out] motion-reduce:animate-none
               :data-sale-focus="`open:${sale.id}`"
               @click="emit('open', sale)"
             >
-              <span class="text-base font-semibold text-highlighted">{{ SALE_COPY.saleNumber(sale.saleNumber) }} · {{ formatShortDate(sale.saleDate, today) }}</span>
+              <span class="text-base font-bold text-highlighted">{{ SALE_COPY.saleNumber(sale.saleNumber) }} · {{ formatShortDate(sale.saleDate, today) }}</span>
             </button>
             <div class="relative z-10 shrink-0">
               <SaleRowMenu
@@ -275,7 +275,7 @@ const flash = 'animate-[size-row-flash_1.5s_ease-out] motion-reduce:animate-none
               />
             </div>
           </div>
-          <p class="text-base wrap-anywhere text-default">
+          <p class="text-base font-bold wrap-anywhere text-highlighted">
             {{ clientName(sale) }}
           </p>
           <p
@@ -292,7 +292,7 @@ const flash = 'animate-[size-row-flash_1.5s_ease-out] motion-reduce:animate-none
             {{ SALE_COPY.moreSizes(moreCount(sale)) }}
           </p>
           <div class="mt-1 flex items-center justify-between gap-2">
-            <p class="text-lg font-semibold text-highlighted">
+            <p class="text-lg font-black text-highlighted tabular-nums">
               {{ formatPrice(sale.saleTotal) }}
             </p>
             <span class="text-sm text-muted">{{ SALE_COPY.sizeCount(sale.lines.length) }}</span>
@@ -310,7 +310,7 @@ const flash = 'animate-[size-row-flash_1.5s_ease-out] motion-reduce:animate-none
       </ul>
       <div
         v-else
-        class="rounded-2xl bg-default ring ring-inset ring-default"
+        class="rounded-2xl bg-default border border-default/80 shadow-xs"
       >
         <slot name="empty" />
       </div>

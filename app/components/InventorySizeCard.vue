@@ -1,7 +1,6 @@
 <!--
-  One size on the Inventory screen (feature 06 §2.5). Read-only. Dot + name, trays, egg count, an owed row only
-  when above 0, "Short by" and the negative note as icon + words (never colour alone, AC24). Text uses
-  text-muted and darker warning shades for 4.5:1 on white.
+  One size on the Inventory screen (feature 06 §2.5). Read-only. Dot + name in a stable color pill,
+  trays, egg count, stock health indicator, owed row, and negative/short warning badges.
 -->
 <script setup lang="ts">
 import type { InventorySize } from '#shared/types/api'
@@ -22,61 +21,114 @@ const color = computed(() => sizeColor(props.size.colorSlot))
 </script>
 
 <template>
-  <UCard
+  <div
     role="group"
     :aria-label="INVENTORY_COPY.groupLabel(size.name, trays)"
-    :ui="{ root: 'rounded-2xl', body: 'p-4 sm:p-4 flex flex-col gap-1' }"
+    class="rounded-2xl border bg-default p-5 shadow-xs hover:shadow-md transition-all duration-200 flex flex-col justify-between group"
+    :class="negative ? 'border-red-200 dark:border-red-900/50' : 'border-default/70 hover:border-default'"
   >
-    <div class="flex items-center gap-2">
-      <span
-        aria-hidden="true"
-        class="size-2.5 shrink-0 rounded-full bg-current"
-        :class="color.class"
-      />
-      <span class="min-w-0 flex-1 truncate text-base font-semibold text-highlighted">{{ size.name }}</span>
-      <UBadge
-        v-if="!size.active"
-        color="neutral"
-        variant="outline"
-        size="sm"
-        :label="INVENTORY_COPY.inactiveBadge"
-      />
-    </div>
-    <p class="text-2xl font-bold text-highlighted tabular-nums">
-      {{ trays }}
-    </p>
-    <p class="text-sm text-muted tabular-nums">
-      {{ eggsLine }}
-    </p>
-    <p
-      v-if="negative"
-      class="mt-1 flex items-start gap-1.5 text-sm font-medium text-warning-700 dark:text-warning-300"
-    >
-      <UIcon
-        name="i-lucide-triangle-alert"
-        class="mt-0.5 size-4 shrink-0"
-      />
-      <span>{{ INVENTORY_COPY.negativeNote }}</span>
-    </p>
-    <template v-if="owed">
-      <div class="mt-2 flex items-center gap-2 border-t border-default pt-2 text-sm">
-        <UIcon
-          name="i-lucide-truck"
-          class="size-4 shrink-0 text-muted"
+    <div>
+      <!-- Header: Size pill + Stock health indicator -->
+      <div class="flex items-center justify-between gap-2">
+        <div
+          class="inline-flex items-center gap-2 px-2.5 py-1 rounded-lg bg-current/10 border border-current/20 text-xs font-bold min-w-0"
+          :class="color.class"
+        >
+          <span class="size-2 rounded-full bg-current shrink-0" />
+          <span class="truncate">{{ size.name }}</span>
+        </div>
+
+        <UBadge
+          v-if="!size.active"
+          color="neutral"
+          variant="outline"
+          size="sm"
+          :label="INVENTORY_COPY.inactiveBadge"
         />
-        <span class="flex-1 text-muted">{{ INVENTORY_COPY.owedSize }}</span>
-        <span class="font-semibold text-default tabular-nums">{{ owed }}</span>
+        <span
+          v-else-if="negative"
+          class="inline-flex items-center gap-1 text-[11px] font-bold text-red-600 dark:text-red-400 bg-red-500/10 px-2 py-0.5 rounded-full"
+        >
+          <UIcon
+            name="i-lucide-triangle-alert"
+            class="size-3"
+          />
+          Negative
+        </span>
+        <span
+          v-else-if="size.onHandEggs > 0"
+          class="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full"
+        >
+          <UIcon
+            name="i-lucide-check"
+            class="size-3"
+          />
+          In Stock
+        </span>
       </div>
-      <p
-        v-if="short"
-        class="flex items-center gap-1.5 text-sm font-medium text-warning-700 dark:text-warning-300"
+
+      <!-- Value: Hero trays & eggs -->
+      <div class="mt-4">
+        <p
+          class="text-3xl font-black tabular-nums tracking-tight"
+          :class="negative ? 'text-red-600 dark:text-red-400' : 'text-highlighted'"
+        >
+          {{ trays }}
+        </p>
+        <p
+          class="text-xs font-semibold mt-0.5 tabular-nums"
+          :class="negative ? 'text-red-500/80 dark:text-red-400/80' : 'text-muted'"
+        >
+          {{ eggsLine }}
+        </p>
+      </div>
+
+      <!-- Negative Note Callout -->
+      <div
+        v-if="negative"
+        class="mt-3 p-2 rounded-lg bg-amber-500/10 border border-amber-500/20 text-[11px] text-amber-700 dark:text-amber-300 font-semibold flex items-center gap-1.5"
       >
         <UIcon
           name="i-lucide-triangle-alert"
-          class="size-4 shrink-0"
+          class="size-3.5 shrink-0"
         />
-        <span>{{ short }}</span>
-      </p>
-    </template>
-  </UCard>
+        <span>{{ INVENTORY_COPY.negativeNote }}</span>
+      </div>
+    </div>
+
+    <!-- Footer: Owed status & Short alert -->
+    <div
+      class="mt-5 pt-3.5 border-t border-default/60 flex items-center justify-between text-xs"
+      :class="negative ? 'border-red-100 dark:border-red-950/80' : ''"
+    >
+      <div
+        class="flex items-center gap-1.5"
+        :class="owed ? 'text-blue-600 dark:text-blue-400 font-semibold' : 'text-muted'"
+      >
+        <UIcon
+          name="i-lucide-truck"
+          class="size-3.5 shrink-0"
+        />
+        <span>{{ INVENTORY_COPY.owedSize }}:</span>
+      </div>
+      <span
+        v-if="short"
+        class="font-black text-red-600 dark:text-red-400 tabular-nums bg-red-500/10 px-2 py-0.5 rounded-md"
+      >
+        {{ short }}
+      </span>
+      <span
+        v-else-if="owed"
+        class="font-bold text-blue-600 dark:text-blue-400 tabular-nums bg-blue-500/10 px-2 py-0.5 rounded-md"
+      >
+        {{ owed }}
+      </span>
+      <span
+        v-else
+        class="font-bold text-muted tabular-nums"
+      >
+        0 trays
+      </span>
+    </div>
+  </div>
 </template>
