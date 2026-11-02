@@ -13,6 +13,7 @@ import { inventoryTotals } from '#shared/utils/inventory'
 import { addDays } from '#shared/utils/local-date'
 import { formatPrice } from '#shared/utils/price'
 import { formatQty, formatQtySigned } from '#shared/utils/quantity'
+import { sizeColor } from '~/utils/size-colors'
 
 const { trayEggs, currency, sizeById } = useFarm()
 const prod = useProductionDays()
@@ -61,7 +62,9 @@ const todayBySize = computed(() => {
       const sz = sizeById(g.sizeId)
       return {
         id: g.sizeId,
-        label: `${sz.name}: ${formatQty(g.eggs, trayEggs.value)}`,
+        name: sz.name,
+        qty: formatQty(g.eggs, trayEggs.value),
+        colorClass: sizeColor(sz.colorSlot).class,
         sortOrder: sz.sortOrder,
       }
     })
@@ -80,6 +83,7 @@ const inventoryBreakdown = computed(() => {
     .map(s => ({
       id: s.id,
       name: s.name,
+      colorClass: sizeColor(s.colorSlot).class,
       qty: formatQtySigned(s.onHandEggs, trayEggs.value),
       negative: s.onHandEggs < 0,
     }))
@@ -95,6 +99,7 @@ const owedPreview = computed(() => {
     .map(s => ({
       id: s.id,
       name: s.name,
+      colorClass: sizeColor(s.colorSlot).class,
       qty: formatQty(s.owedEggs, trayEggs.value),
     }))
 })
@@ -112,6 +117,7 @@ const recentSales = computed(() => {
     return {
       id: s.id,
       client: clientName,
+      isDelivery: s.type === 'delivery',
       qty: formatQty(totalEggs, trayEggs.value),
       price: formatPrice(s.saleTotal, currency.value),
     }
@@ -149,7 +155,7 @@ const weekBars = computed(() => {
     date: d.date,
     eggs: d.eggs,
     qty: formatQty(d.eggs, trayEggs.value),
-    height: d.eggs > 0 ? `${Math.max(8, Math.round((d.eggs / maxWeekEggs.value) * 64))}px` : '4px',
+    height: d.eggs > 0 ? `${Math.max(8, Math.round((d.eggs / maxWeekEggs.value) * 68))}px` : '4px',
     isToday: d.isToday,
   }))
 })
@@ -214,81 +220,142 @@ const hasAnyActivity = computed(() => {
       <!-- Card 1: Today's production -->
       <NuxtLink
         to="/production"
-        class="group flex flex-col justify-between rounded-2xl bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 p-5 shadow-xs transition hover:shadow-md hover:border-neutral-300 dark:hover:border-neutral-700 focus:outline-hidden focus:ring-2 focus:ring-primary"
+        class="group relative flex flex-col justify-between rounded-2xl bg-default border border-default/70 hover:border-primary/40 p-5 shadow-xs hover:shadow-md transition-all duration-200 focus:outline-hidden focus:ring-2 focus:ring-primary"
       >
-        <div class="flex flex-col gap-2.5">
-          <div class="flex items-center gap-2 text-sm font-medium text-muted group-hover:text-highlighted transition-colors">
+        <div>
+          <div class="flex items-center justify-between">
+            <div class="flex items-center gap-2.5">
+              <div class="size-8 rounded-lg bg-primary/10 text-primary flex items-center justify-center">
+                <UIcon
+                  name="i-lucide-egg"
+                  class="size-4.5"
+                />
+              </div>
+              <span class="text-[11px] font-bold uppercase tracking-wider text-muted">Today's Production</span>
+            </div>
             <UIcon
-              name="i-lucide-clipboard"
-              class="size-4.5"
+              name="i-lucide-arrow-right"
+              class="size-4 text-muted group-hover:text-primary group-hover:translate-x-0.5 transition-all opacity-0 group-hover:opacity-100"
             />
-            <span>Today's production</span>
           </div>
 
-          <div class="text-3xl font-bold tracking-tight text-highlighted tabular-nums">
-            {{ todayQty }}
+          <div class="mt-3.5 flex items-baseline gap-2">
+            <span class="text-3xl sm:text-4xl font-extrabold tracking-tight text-highlighted tabular-nums">
+              {{ todayQty }}
+            </span>
           </div>
 
           <div
             v-if="todayBySize.length > 0"
-            class="flex flex-wrap gap-1.5 pt-1"
+            class="mt-3 flex flex-wrap gap-1.5"
           >
-            <UBadge
+            <div
               v-for="s in todayBySize"
               :key="s.id"
-              color="neutral"
-              variant="subtle"
-              size="sm"
+              class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-muted/60 text-xs font-medium text-default"
             >
-              {{ s.label }}
-            </UBadge>
+              <span
+                class="size-2 rounded-full shrink-0 bg-current"
+                :class="s.colorClass"
+              />
+              <span>{{ s.name }}:</span>
+              <span class="font-bold tabular-nums text-highlighted">{{ s.qty }}</span>
+            </div>
           </div>
           <p
             v-else
-            class="text-xs text-muted"
+            class="mt-2 text-xs text-muted"
           >
             No collection logged for today yet
           </p>
         </div>
 
-        <div class="pt-3 text-xs text-dimmed">
-          {{ todayRejects }} {{ todayRejects === 1 ? 'reject' : 'rejects' }} logged separately
+        <div class="mt-4 pt-3 border-t border-default/60 flex items-center justify-between text-xs">
+          <div
+            class="flex items-center gap-1.5"
+            :class="todayRejects > 0 ? 'text-amber-600 dark:text-amber-400 font-medium' : 'text-dimmed'"
+          >
+            <UIcon
+              :name="todayRejects > 0 ? 'i-lucide-alert-triangle' : 'i-lucide-check-circle-2'"
+              class="size-3.5"
+            />
+            <span>{{ todayRejects }} {{ todayRejects === 1 ? 'reject' : 'rejects' }} logged</span>
+          </div>
+          <span class="text-primary font-semibold group-hover:underline inline-flex items-center gap-0.5">
+            Log collection
+          </span>
         </div>
       </NuxtLink>
 
       <!-- Card 2: On hand now -->
       <NuxtLink
         to="/inventory"
-        class="group flex flex-col justify-between rounded-2xl bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 p-5 shadow-xs transition hover:shadow-md hover:border-neutral-300 dark:hover:border-neutral-700 focus:outline-hidden focus:ring-2 focus:ring-primary"
+        class="group relative flex flex-col justify-between rounded-2xl bg-default border border-default/70 hover:border-primary/40 p-5 shadow-xs hover:shadow-md transition-all duration-200 focus:outline-hidden focus:ring-2 focus:ring-primary"
       >
-        <div class="flex flex-col gap-2.5">
-          <div class="flex items-center gap-2 text-sm font-medium text-muted group-hover:text-highlighted transition-colors">
+        <div>
+          <div class="flex items-center justify-between">
+            <div class="flex items-center gap-2.5">
+              <div class="size-8 rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 flex items-center justify-center">
+                <UIcon
+                  name="i-lucide-package"
+                  class="size-4.5"
+                />
+              </div>
+              <span class="text-[11px] font-bold uppercase tracking-wider text-muted">On Hand Now</span>
+            </div>
             <UIcon
-              name="i-lucide-package"
-              class="size-4.5"
+              name="i-lucide-arrow-right"
+              class="size-4 text-muted group-hover:text-primary group-hover:translate-x-0.5 transition-all opacity-0 group-hover:opacity-100"
             />
-            <span>On hand now</span>
           </div>
 
-          <div
-            class="text-3xl font-bold tracking-tight tabular-nums"
-            :class="totalOnHandEggs < 0 ? 'text-error' : 'text-highlighted'"
-          >
-            {{ totalOnHandQty }}
+          <div class="mt-3.5 flex items-baseline justify-between gap-2">
+            <span
+              class="text-3xl sm:text-4xl font-extrabold tracking-tight tabular-nums"
+              :class="totalOnHandEggs < 0 ? 'text-error' : 'text-highlighted'"
+            >
+              {{ totalOnHandQty }}
+            </span>
+            <span
+              v-if="totalOnHandEggs > 0"
+              class="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-2.5 py-0.5 rounded-full"
+            >
+              <UIcon
+                name="i-lucide-check"
+                class="size-3"
+              />
+              In Stock
+            </span>
+            <span
+              v-else-if="totalOnHandEggs < 0"
+              class="inline-flex items-center gap-1 text-[11px] font-bold text-error bg-error/10 px-2.5 py-0.5 rounded-full"
+            >
+              <UIcon
+                name="i-lucide-alert-circle"
+                class="size-3"
+              />
+              Negative stock
+            </span>
           </div>
 
           <div
             v-if="inventoryBreakdown.length > 0"
-            class="flex flex-col gap-1 pt-1"
+            class="mt-3 flex flex-col gap-1.5"
           >
             <div
               v-for="item in inventoryBreakdown.slice(0, 4)"
               :key="item.id"
               class="flex justify-between items-center text-xs"
             >
-              <span class="text-muted">{{ item.name }}</span>
+              <div class="flex items-center gap-1.5">
+                <span
+                  class="size-2 rounded-full shrink-0 bg-current"
+                  :class="item.colorClass"
+                />
+                <span class="text-muted">{{ item.name }}</span>
+              </div>
               <span
-                class="font-medium tabular-nums"
+                class="font-bold tabular-nums"
                 :class="item.negative ? 'text-error font-semibold' : 'text-highlighted'"
               >
                 {{ item.qty }}
@@ -297,138 +364,210 @@ const hasAnyActivity = computed(() => {
           </div>
           <p
             v-else
-            class="text-xs text-muted"
+            class="mt-2 text-xs text-muted"
           >
             No inventory records
           </p>
         </div>
 
-        <div class="pt-3 text-xs text-dimmed flex items-center gap-1">
-          <span>Produced minus sales</span>
+        <div class="mt-4 pt-3 border-t border-default/60 flex items-center justify-between text-xs">
+          <span class="text-dimmed">Produced minus sales</span>
+          <span class="text-primary font-semibold group-hover:underline inline-flex items-center gap-0.5">
+            View Inventory
+          </span>
         </div>
       </NuxtLink>
 
       <!-- Card 3: Owed on open orders -->
       <NuxtLink
         to="/orders"
-        class="group flex flex-col justify-between rounded-2xl bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 p-5 shadow-xs transition hover:shadow-md hover:border-neutral-300 dark:hover:border-neutral-700 focus:outline-hidden focus:ring-2 focus:ring-primary"
+        class="group relative flex flex-col justify-between rounded-2xl bg-default border border-default/70 hover:border-primary/40 p-5 shadow-xs hover:shadow-md transition-all duration-200 focus:outline-hidden focus:ring-2 focus:ring-primary"
       >
-        <div class="flex flex-col gap-2.5">
-          <div class="flex items-center gap-2 text-sm font-medium text-muted group-hover:text-highlighted transition-colors">
+        <div>
+          <div class="flex items-center justify-between">
+            <div class="flex items-center gap-2.5">
+              <div class="size-8 rounded-lg bg-blue-500/10 text-blue-600 dark:text-blue-400 flex items-center justify-center">
+                <UIcon
+                  name="i-lucide-truck"
+                  class="size-4.5"
+                />
+              </div>
+              <span class="text-[11px] font-bold uppercase tracking-wider text-muted">Owed on Orders</span>
+            </div>
             <UIcon
-              name="i-lucide-truck"
-              class="size-4.5"
+              name="i-lucide-arrow-right"
+              class="size-4 text-muted group-hover:text-primary group-hover:translate-x-0.5 transition-all opacity-0 group-hover:opacity-100"
             />
-            <span>Owed on open orders</span>
           </div>
 
-          <div class="text-3xl font-bold tracking-tight text-highlighted tabular-nums">
-            {{ owedTotalQty }}
+          <div class="mt-3.5 flex items-baseline justify-between gap-2">
+            <span class="text-3xl sm:text-4xl font-extrabold tracking-tight text-highlighted tabular-nums">
+              {{ owedTotalQty }}
+            </span>
+            <span
+              v-if="totalOwedEggs > 0"
+              class="inline-flex items-center gap-1 text-[11px] font-bold text-blue-600 dark:text-blue-400 bg-blue-500/10 px-2.5 py-0.5 rounded-full"
+            >
+              <UIcon
+                name="i-lucide-clock"
+                class="size-3"
+              />
+              Pending
+            </span>
+            <span
+              v-else
+              class="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-2.5 py-0.5 rounded-full"
+            >
+              <UIcon
+                name="i-lucide-check-check"
+                class="size-3"
+              />
+              Fulfilled
+            </span>
           </div>
 
           <div
             v-if="owedPreview.length > 0"
-            class="flex flex-col gap-1 pt-1"
+            class="mt-3 flex flex-col gap-1.5"
           >
             <div
               v-for="p in owedPreview"
               :key="p.id"
               class="flex justify-between items-center text-xs"
             >
-              <span class="text-muted">{{ p.name }}</span>
-              <span class="font-medium text-highlighted tabular-nums">{{ p.qty }}</span>
+              <div class="flex items-center gap-1.5">
+                <span
+                  class="size-2 rounded-full shrink-0 bg-current"
+                  :class="p.colorClass"
+                />
+                <span class="text-muted">{{ p.name }}</span>
+              </div>
+              <span class="font-bold text-highlighted tabular-nums">{{ p.qty }}</span>
             </div>
           </div>
           <p
             v-else
-            class="text-xs text-muted"
+            class="mt-2 text-xs text-muted"
           >
             No pending deliveries
           </p>
         </div>
 
-        <div class="pt-3 text-xs text-dimmed">
-          {{ totalOwedEggs > 0 ? 'Awaiting fulfillment' : 'All orders fulfilled' }}
+        <div class="mt-4 pt-3 border-t border-default/60 flex items-center justify-between text-xs">
+          <span class="text-dimmed">{{ totalOwedEggs > 0 ? 'Awaiting fulfillment' : 'All orders fulfilled' }}</span>
+          <span class="text-primary font-semibold group-hover:underline inline-flex items-center gap-0.5">
+            View Orders
+          </span>
         </div>
       </NuxtLink>
 
       <!-- Card 4: Recent sales -->
       <NuxtLink
         to="/sales"
-        class="group flex flex-col justify-between rounded-2xl bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 p-5 shadow-xs transition hover:shadow-md hover:border-neutral-300 dark:hover:border-neutral-700 focus:outline-hidden focus:ring-2 focus:ring-primary"
+        class="group relative flex flex-col justify-between rounded-2xl bg-default border border-default/70 hover:border-primary/40 p-5 shadow-xs hover:shadow-md transition-all duration-200 focus:outline-hidden focus:ring-2 focus:ring-primary"
       >
-        <div class="flex flex-col gap-2.5">
-          <div class="flex items-center gap-2 text-sm font-medium text-muted group-hover:text-highlighted transition-colors">
+        <div>
+          <div class="flex items-center justify-between">
+            <div class="flex items-center gap-2.5">
+              <div class="size-8 rounded-lg bg-amber-500/10 text-amber-600 dark:text-amber-400 flex items-center justify-center">
+                <UIcon
+                  name="i-lucide-receipt"
+                  class="size-4.5"
+                />
+              </div>
+              <span class="text-[11px] font-bold uppercase tracking-wider text-muted">Recent Sales</span>
+            </div>
             <UIcon
-              name="i-lucide-shopping-cart"
-              class="size-4.5"
+              name="i-lucide-arrow-right"
+              class="size-4 text-muted group-hover:text-primary group-hover:translate-x-0.5 transition-all opacity-0 group-hover:opacity-100"
             />
-            <span>Recent sales</span>
           </div>
 
           <div
             v-if="recentSales.length > 0"
-            class="flex flex-col gap-2 pt-1"
+            class="mt-3.5 flex flex-col gap-2"
           >
             <div
               v-for="s in recentSales"
               :key="s.id"
-              class="flex justify-between items-center text-sm"
+              class="flex justify-between items-center text-xs py-0.5"
             >
-              <span class="truncate max-w-[130px] font-medium text-highlighted">{{ s.client }}</span>
-              <span class="text-xs text-muted shrink-0 tabular-nums">
-                {{ s.qty }} · <span class="font-medium text-highlighted">{{ s.price }}</span>
+              <div class="flex items-center gap-2 min-w-0">
+                <span
+                  class="size-1.5 rounded-full shrink-0"
+                  :class="s.isDelivery ? 'bg-blue-500' : 'bg-amber-500'"
+                />
+                <span class="truncate font-semibold text-highlighted">{{ s.client }}</span>
+              </div>
+              <span class="text-xs text-muted shrink-0 tabular-nums ps-2">
+                {{ s.qty }} · <span class="font-bold text-highlighted">{{ s.price }}</span>
               </span>
             </div>
           </div>
           <p
             v-else
-            class="text-xs text-muted py-2"
+            class="mt-2 text-xs text-muted py-2"
           >
             No sales recorded yet
           </p>
         </div>
 
-        <div class="pt-3 text-xs text-dimmed">
-          View all transactions in Sales
+        <div class="mt-4 pt-3 border-t border-default/60 flex items-center justify-between text-xs">
+          <span class="text-dimmed">Latest transactions</span>
+          <span class="text-primary font-semibold group-hover:underline inline-flex items-center gap-0.5">
+            View Sales
+          </span>
         </div>
       </NuxtLink>
 
       <!-- Card 5: This week's production (spans 2 or 3 columns) -->
-      <div class="sm:col-span-2 lg:col-span-2 flex flex-col justify-between rounded-2xl bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 p-5 shadow-xs">
+      <div class="sm:col-span-2 lg:col-span-2 flex flex-col justify-between rounded-2xl bg-default border border-default/70 p-5 shadow-xs">
         <div class="flex items-center justify-between">
-          <div class="flex items-center gap-2 text-sm font-medium text-muted">
-            <UIcon
-              name="i-lucide-trending-up"
-              class="size-4.5"
-            />
-            <span>This week's production</span>
+          <div class="flex items-center gap-2.5">
+            <div class="size-8 rounded-lg bg-primary/10 text-primary flex items-center justify-center">
+              <UIcon
+                name="i-lucide-trending-up"
+                class="size-4.5"
+              />
+            </div>
+            <div>
+              <span class="text-sm font-bold text-highlighted block">Production Trend</span>
+              <span class="text-[11px] text-muted">Daily volume over the past 7 days</span>
+            </div>
           </div>
-          <span class="text-xs text-dimmed">Last 7 days</span>
+          <UBadge
+            color="neutral"
+            variant="subtle"
+            size="sm"
+          >
+            Last 7 days
+          </UBadge>
         </div>
 
-        <div class="flex items-end gap-2.5 h-28 pt-4 pb-1 px-1">
+        <div class="flex items-end gap-2.5 sm:gap-4 h-32 pt-6 pb-1 px-1">
           <div
             v-for="bar in weekBars"
             :key="bar.date"
             class="flex-1 flex flex-col items-center justify-end h-full gap-2 group relative"
           >
             <!-- Hover Tooltip -->
-            <div class="opacity-0 group-hover:opacity-100 transition-opacity absolute -top-7 bg-neutral-950 text-white text-[11px] px-2 py-0.5 rounded-md pointer-events-none whitespace-nowrap shadow-xs z-10">
+            <div class="opacity-0 group-hover:opacity-100 transition-all duration-150 absolute -top-8 bg-neutral-900 text-white text-[11px] px-2.5 py-1 rounded-md pointer-events-none whitespace-nowrap shadow-md z-10 font-bold">
               {{ bar.qty }}
             </div>
 
-            <!-- Bar -->
-            <div
-              class="w-full max-w-[28px] rounded-t-sm transition-all"
-              :class="bar.isToday ? 'bg-primary' : 'bg-primary/25 dark:bg-primary/30 group-hover:bg-primary/40'"
-              :style="{ height: bar.height }"
-            />
+            <!-- Bar Column with Track -->
+            <div class="w-full max-w-[32px] h-full flex items-end justify-center">
+              <div
+                class="w-full rounded-t-md transition-all duration-200"
+                :class="bar.isToday ? 'bg-primary shadow-xs' : 'bg-primary/20 dark:bg-primary/25 group-hover:bg-primary/40'"
+                :style="{ height: bar.height }"
+              />
+            </div>
 
             <!-- Day Label -->
             <span
-              class="text-xs tabular-nums"
-              :class="bar.isToday ? 'font-bold text-primary' : 'text-dimmed'"
+              class="text-xs tabular-nums transition-colors"
+              :class="bar.isToday ? 'font-bold text-primary' : 'text-dimmed group-hover:text-default'"
             >
               {{ bar.day }}
             </span>

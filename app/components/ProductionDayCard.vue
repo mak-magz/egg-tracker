@@ -29,6 +29,7 @@ const emit = defineEmits<{
 const { sizeById } = useFarm()
 
 const label = computed(() => formatDayLabel(props.day.date, props.today))
+const isToday = computed(() => props.day.date === props.today)
 const total = computed(() => formatQty(props.day.goodTotal, props.eggsPerTray))
 const rejectsBadge = computed(() => (props.day.rejects > 0 ? formatLabelledQty('Rejects', props.day.rejects, props.eggsPerTray) : null))
 
@@ -53,27 +54,41 @@ defineExpose({ focus: () => toggleButton.value?.focus() })
 
 <template>
   <div
-    class="overflow-hidden rounded-2xl ring ring-default transition-colors duration-[1500ms] ease-out motion-reduce:transition-none"
-    :class="highlighted ? 'bg-primary/8 motion-reduce:bg-default' : 'bg-default'"
+    class="overflow-hidden rounded-2xl border border-default/70 hover:border-default bg-default shadow-xs transition-all duration-200"
+    :class="highlighted ? 'bg-primary/5 border-primary/40' : 'bg-default'"
     :data-day="day.date"
   >
-    <div class="flex items-center">
+    <div class="group/header relative flex items-center transition-colors hover:bg-muted/40">
       <button
         ref="toggleButton"
         type="button"
-        class="flex min-h-14 min-w-0 flex-1 items-center gap-3 py-3.5 ps-4 pe-2 text-left transition-colors hover:bg-muted focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary motion-reduce:transition-none md:ps-[18px]"
+        class="flex min-h-14 min-w-0 flex-1 items-center gap-3 py-3.5 ps-4 pe-2 text-left focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary motion-reduce:transition-none md:ps-5 after:absolute after:inset-x-0 after:top-0 after:bottom-0 after:content-['']"
         :aria-expanded="expanded"
         :aria-label="toggleLabel"
         @click="emit('toggle')"
       >
-        <UIcon
-          :name="expanded ? 'i-lucide-chevron-down' : 'i-lucide-chevron-right'"
-          class="size-4 shrink-0 text-muted"
-        />
-        <span class="flex min-w-0 flex-1 flex-col gap-1 md:flex-row md:items-center md:gap-3">
-          <span class="text-base font-semibold text-highlighted md:flex-1">{{ label }}</span>
-          <span class="flex flex-wrap items-center gap-2">
-            <span class="text-base font-semibold text-default tabular-nums">{{ total }}</span>
+        <div class="size-7 rounded-lg bg-muted/60 group-hover/header:bg-muted/90 flex items-center justify-center shrink-0 transition-colors">
+          <UIcon
+            name="i-lucide-chevron-right"
+            class="size-4 transition-transform duration-200"
+            :class="expanded ? 'rotate-90 text-primary' : 'text-muted'"
+          />
+        </div>
+        <div class="flex min-w-0 flex-1 flex-col gap-1 md:flex-row md:items-center md:gap-3">
+          <div class="flex items-center gap-2 md:flex-1">
+            <span class="text-base font-semibold text-highlighted">{{ label }}</span>
+            <UBadge
+              v-if="isToday"
+              color="primary"
+              variant="subtle"
+              size="sm"
+              label="Today"
+            />
+          </div>
+          <div class="flex flex-wrap items-center gap-2">
+            <span class="text-sm font-bold text-highlighted tabular-nums bg-muted/60 px-2.5 py-1 rounded-lg">
+              {{ total }}
+            </span>
             <UBadge
               v-if="rejectsBadge"
               color="error"
@@ -81,60 +96,74 @@ defineExpose({ focus: () => toggleButton.value?.focus() })
               size="md"
               :label="rejectsBadge"
             />
-          </span>
-        </span>
+          </div>
+        </div>
       </button>
       <UDropdownMenu
         :items="menuItems"
         :content="{ align: 'end' }"
         :ui="{ item: 'min-h-11 lg:min-h-9' }"
+        class="relative z-10"
       >
         <UButton
           color="neutral"
           variant="ghost"
           icon="i-lucide-ellipsis-vertical"
           :aria-label="`Actions for ${label}`"
-          class="me-1.5 size-11 shrink-0 justify-center lg:size-10"
+          class="me-2 size-10 shrink-0 justify-center rounded-lg hover:bg-muted/80 text-muted hover:text-highlighted transition-colors"
         />
       </UDropdownMenu>
     </div>
 
     <div
       v-if="expanded"
-      class="flex flex-col gap-2 px-4 pb-3.5 md:px-[18px]"
+      class="border-t border-default/60 px-4 py-3.5 md:px-5 bg-muted/20 flex flex-col gap-2"
     >
-      <div
-        v-for="line in lines"
-        :key="line.size.id"
-        class="flex items-center gap-3 rounded-md bg-muted px-3 py-2"
-      >
-        <span
-          class="min-w-0 truncate text-base font-medium text-default md:w-28 md:flex-none"
-          :title="line.size.name"
-        >{{ line.size.name }}</span>
-        <UBadge
-          color="success"
-          variant="subtle"
-          size="sm"
-          label="Good"
-        />
-        <span class="ms-auto shrink-0 text-right text-base font-semibold text-muted tabular-nums">{{ line.qty }}</span>
+      <div class="text-[11px] font-bold uppercase tracking-wider text-muted px-1">
+        Collection Breakdown
       </div>
-      <div
-        v-if="day.rejects > 0"
-        class="flex items-center gap-3 rounded-md bg-muted px-3 py-2"
-      >
-        <span
-          class="text-base font-medium text-default md:w-28 md:flex-none"
-          aria-label="No size"
-        >—</span>
-        <UBadge
-          color="error"
-          variant="subtle"
-          size="sm"
-          label="Reject"
-        />
-        <span class="ms-auto shrink-0 text-right text-base font-semibold text-error tabular-nums">{{ formatQty(day.rejects, eggsPerTray) }}</span>
+      <div class="flex flex-col gap-1.5">
+        <div
+          v-for="line in lines"
+          :key="line.size.id"
+          class="flex items-center gap-3 rounded-xl bg-default border border-default/50 px-3.5 py-2.5 shadow-2xs"
+        >
+          <span
+            class="min-w-0 truncate text-sm font-semibold text-highlighted md:w-32 md:flex-none"
+            :title="line.size.name"
+          >
+            {{ line.size.name }}
+          </span>
+          <UBadge
+            color="success"
+            variant="subtle"
+            size="sm"
+            label="Good"
+          />
+          <span class="ms-auto shrink-0 text-right text-sm font-bold text-highlighted tabular-nums">
+            {{ line.qty }}
+          </span>
+        </div>
+        <div
+          v-if="day.rejects > 0"
+          class="flex items-center gap-3 rounded-xl bg-default border border-error/20 px-3.5 py-2.5 shadow-2xs"
+        >
+          <span
+            class="text-sm font-semibold text-muted md:w-32 md:flex-none"
+            aria-label="No size"
+          >
+            —
+          </span>
+          <UBadge
+            color="error"
+            variant="subtle"
+            size="sm"
+            label="Reject"
+          />
+          <span class="ms-auto shrink-0 text-right text-sm font-bold text-error tabular-nums">
+            {{ formatQty(day.rejects, eggsPerTray) }}
+          </span>
+        </div>
       </div>
     </div>
   </div>
