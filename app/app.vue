@@ -25,6 +25,10 @@ const toaster = computed<AppProps['toaster']>(() => ({
 
 <template>
   <UApp :toaster="toaster">
+    <NuxtLoadingIndicator
+      color="var(--ui-primary)"
+      :height="3"
+    />
     <NuxtLayout>
       <NuxtPage />
     </NuxtLayout>
