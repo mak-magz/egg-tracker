@@ -40,6 +40,7 @@ export default defineNuxtPlugin((nuxtApp) => {
       || path.startsWith('/api/account/upgrade')
       || path.startsWith('/api/sync/')
       || path.startsWith('/api/__session')
+      || path.startsWith('/api/admin/')
     )
   }
 

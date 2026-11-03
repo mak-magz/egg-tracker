@@ -7,6 +7,14 @@ import { useTier } from '~/composables/useTier'
 import { loginLocation } from '~/utils/login-location'
 
 export default defineNuxtRouteMiddleware(async (to) => {
+  // 0. Admin & Operator routes are completely separated from barnside farm onboarding
+  if (to.path.startsWith('/admin') || to.path === '/login/admin') {
+    if (to.path === '/login/admin') {
+      return navigateTo('/admin/login', { replace: true })
+    }
+    return
+  }
+
   const level = to.meta.auth ?? 'farm'
   const { isFree, getAuthToken } = useTier()
   const hint = useSessionHint()
