@@ -27,14 +27,19 @@ Derived from the product context (single owner-operator, responsive web, fast da
 - **Tablet (~768–1024px):** collapsible sidebar (icon rail, expandable).
 - **Mobile (< ~768px):** bottom tab bar (thumb-reachable) for primary destinations; top bar for context/title and contextual actions.
 
-### Primary navigation destinations (5)
-1. **Dashboard** — home / overview.
-2. **Production** — log & view egg collection.
-3. **Sales** — log & view sales/deliveries.
-4. **Inventory** — current stock on hand.
-5. **Clients** — customer list.
+### Primary navigation destinations (6)
+1. **Dashboard** (`/`) — home / overview hero cards, today's collection, recent sales, and 7-day production trend.
+2. **Production** (`/production`) — log & view daily collection and rejects by egg size.
+3. **Orders** (`/orders`) — manage customer orders, statuses, and delivery intent.
+4. **Sales** (`/sales`) — recorded sales and completed deliveries (header + line items).
+5. **Inventory** (`/inventory`) — computed sellable stock on hand by size.
+6. **Clients** (`/clients`) — customer list and default pricing.
 
-> Rationale for 5: maps 1:1 to the v1 feature set, fits a mobile bottom tab bar (5 is the comfortable max), no nesting needed at this scale.
+> **Responsive navigation structure:**
+> - **Desktop (≥ ~1024px):** persistent left sidebar (224px, collapsible to 64px icon rail) with all 6 destinations + Settings and account footer.
+> - **Sidebar header:** `Tamago` wordmark, `AppLogo` mark, and dynamic workspace environment badge: `dev` in development environments (`import.meta.dev`) and `farm` in production builds.
+> - **Mobile (< ~768px):** bottom tab bar with 4 quick-access tabs (Dashboard, Production, Orders, Sales) + **More** sheet trigger for Inventory, Clients, and Settings.
+
 
 ### Persistent actions
 - **Primary "＋ Add" affordance** always reachable:
@@ -342,13 +347,32 @@ These are domain-specific and won't exist in the library — build them, but use
 - **Multi-size production entry form:** the per-size + rejects grid that writes multiple `(date, size, quality, count)` rows in one submit. Composed from Nuxt UI inputs.
 - **Day-summary production card:** groups a date's multiple production rows into one expandable card.
 
-### Theming / Tailwind approach
-- **Theme through Nuxt UI's configuration**, not scattered raw Tailwind utilities. Nuxt UI v4's token/theme system is where the look is set once (colors, radius, spacing scale). Leaning on it keeps spacing and responsive behavior coherent for free; ad-hoc per-component Tailwind classes drift and should be the exception.
-- Since this spec left **visual branding open**, Nuxt UI's theme config is the natural place to decide it at build time — set the primary color, neutral palette, radius, and font once in the theme rather than per-screen.
-- Raw Tailwind utilities are fine for **layout** (grid, flex, spacing on containers) where a component isn't involved; prefer library tokens for anything component-level.
+### Theming & Design System Tokens (Finalized)
+- **Brand Palette:** **Golden Yolk** (`primary: 'amber'`), with rich amber-600 in light mode for direct sunlight readability in barns and vibrant golden yolk amber-400 in dark mode.
+- **Neutral Palette:** **Slate** (`neutral: 'slate'`), providing cool dark navy slate backgrounds (`bg-muted`: `oklch(27.9% 0.041 260.031)` / `#1d293d` dark, `#f8fafc` light; `bg-default`: `oklch(20.8% 0.042 265.755)` / `#0f172b` dark, `#ffffff` light).
+- **Typography:** DM Sans (`'DM Sans', sans-serif`), self-hosted via `@nuxt/fonts`.
+- **Corner Radius Scale:** `--ui-radius: 0.25rem` (base 4px radius, yielding crisp `rounded-2xl` = 16px cards, `rounded-xl` = 12px, `rounded-lg` = 8px controls, matching the owner's Figma design).
+- **Header Height:** `--ui-header-height: 3.5rem` (56px).
+- **Touch Targets:** Form inputs and buttons use size `xl` (40px base + 2px vertical padding = 44px touch-target minimum, C5).
 
 ### Responsive implementation
 - The desktop-sidebar / mobile-bottom-tabs split (§11) is a layout concern — implement with a responsive app shell using Tailwind breakpoints, swapping the nav pattern at the `md`/`lg` boundary.
 - Forms: use the modal component on desktop and the slideover/sheet on mobile — check whether a single Nuxt UI component covers both responsively, or whether to switch by breakpoint.
 - Follow Nuxt UI v4's own responsive conventions where the library provides them rather than overriding with custom breakpoints.
-```
+
+---
+
+## 14. Initial Startup, Offline Boot & SPA Loading Template
+
+### 0ms Native SPA Loading Template (`app/spa-loading-template.html`)
+Because the application runs in client-side SPA mode (`ssr: false`) with SQLite WASM executing in OPFS via a dedicated Web Worker, Nuxt injects `app/spa-loading-template.html` directly into the initial HTML document served by the Service Worker / CDN:
+- **Instant Paint (0ms):** Rendered immediately while client-side JavaScript chunks download and the Web Worker / SQLite WASM database initializes.
+- **Visual Design Tokens Alignment:**
+  - Background is bound to `var(--ui-bg-muted, #1d293d)` in dark mode and `var(--ui-bg-muted, #f8fafc)` in light mode, seamlessly matching the main canvas of the Dashboard and auth screens with zero brightness flash.
+  - Features the clean vector `AppLogo` egg in Golden Yolk Amber-400 (`#fbbf24`) with a gentle breathing pulse animation.
+  - Features a subtle environment badge (`dev` in local development, `farm` in production) and amber indeterminate progress bar.
+- **FOUC Prevention Script:** Contains a small synchronous inline `<script>` that reads `localStorage.getItem('nuxt-color-mode')` and `window.matchMedia('(prefers-color-scheme: dark)')` to immediately apply `.dark` and `.is-dark` classes before the first paint, preventing any white flashes on dark-mode devices.
+
+### Route Transitions (`NuxtLoadingIndicator`)
+- Rendered in `app/app.vue`: `<NuxtLoadingIndicator color="var(--ui-primary)" :height="3" />`.
+- Provides a thin 3px Golden Yolk amber progress bar at the very top of the screen during client-side route navigation.

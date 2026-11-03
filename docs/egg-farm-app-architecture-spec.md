@@ -49,53 +49,62 @@ Nuxt 4 is configured in **Single Page Application (SPA) mode (`ssr: false`)** wi
    In a true offline-first architecture, farm data is stored locally in the browser's Origin Private File System (`OPFS`) via SQLite WASM. An SSR server cannot access a disconnected client's device-local OPFS database to render the initial HTML. Requiring SSR would create a fatal network dependency, breaking offline access.
 2. **Prevention of Hydration Mismatches**:
    SSR rendering on the server would either render an empty skeleton or attempt to fetch cloud data. When the client boots against its local OPFS SQLite state (which may contain un-synced offline production logs or sales), the resulting DOM would mismatch the server-rendered HTML, causing hydration errors and UI flicker.
-3. **Instant 0ms App Shell Startup**:
-   With SPA mode and `@vite-pwa/nuxt` precaching, the HTML shell, compiled JavaScript bundles, CSS, and fonts load instantly (0ms) from the Service Worker cache without hitting the network. The app boots immediately in offline rural barns, initializing the local SQLite WASM worker without blocking on server roundtrips.
+3. **Instant 0ms App Shell Startup via `spa-loading-template.html`**:
+   With SPA mode and `@vite-pwa/nuxt` precaching, the HTML shell, compiled JavaScript bundles, CSS, and fonts load instantly (0ms) from the Service Worker cache without hitting the network.
+   - Nuxt injects [`app/spa-loading-template.html`](file:///D:/Projects/magz-egg-tracker/app/spa-loading-template.html) as the 0ms native loading template inside the root `#teleports`/`#__nuxt` mount point.
+   - It is self-contained with inline CSS matching the application's `bg-muted` design token (Slate-800 `#1d293d` in dark mode, Slate-50 `#f8fafc` in light mode) and the official `AppLogo` vector egg, eliminating layout shift and dark-mode flashes.
+   - The app boots immediately in offline rural barns, initializing the local SQLite WASM worker without blocking on server roundtrips.
 4. **Architectural Separation of Concerns**:
-   - **Client-Side (SPA + Web Worker)**: Owns 100% of UI presentation, navigation, reactive state, and isomorphic domain queries/computations against local SQLite WASM.
+   - **Client-Side (SPA + Web Worker)**: Owns 100% of UI presentation, navigation, reactive state, and isomorphic domain queries/computations against local SQLite WASM (`app/local/worker.ts`).
    - **Server-Side (Nitro Serverless Functions)**: Acts purely as an API gateway for cloud sync mutation replay (`/api/sync/push`), change data capture pull (`/api/sync/pull`), initial migration snapshot (`/api/sync/snapshot`), and tenant account provisioning (`/api/account/upgrade`).
 
 ### Why this stack
-- **All-TypeScript** collapses frontend + backend into one language and gives **shared types end-to-end** — a Supabase schema change surfaces as compile errors in the UI. (A separate Go backend was considered and rejected: the Nuxt server layer covers the same needs — privileged operations, business logic — without a second language or deploy. Go would only have been justified by heavy concurrent processing or long-running connections, which this app doesn't need.)
-- **Relational data** (production, sales, clients, inventory with clean foreign-key relationships and aggregations) fits **PostgreSQL** far better than a NoSQL store.
-- **Supabase** bundles Postgres + Auth + generated types in one platform, minimizing glue.
+- **All-TypeScript** collapses frontend + backend into one language and gives **shared types end-to-end** via Drizzle ORM schemas.
+- **Relational data** (production, sales, orders, clients, inventory with foreign keys and aggregations) fits **libSQL / SQLite** natively, enabling isomorphic schemas between local SQLite WASM in the browser and cloud Turso databases.
+- **Turso (libSQL)** provides native database-per-tenant physical isolation at edge scale, combined with sub-millisecond edge replicas.
+- **Firebase Auth** provides robust client-side session persistence across offline boundaries with verified server-side claims via Firebase Admin SDK.
 
 ### Stack constraints to respect at build time
 - **Serverless execution model (Vercel):** Nuxt server routes run as serverless functions, not a long-running process.
-  - **No persistent connection pool** — connect to Supabase through its **connection pooler** (transaction mode), or via `supabase-js`. Do not hold a classic long-lived pool.
-  - **Execution time limits** — long-running work (large reports, batch jobs) must not live in a request handler; defer to a worker / scheduled job (e.g. Vercel Cron) when that need arises.
-- **Service-role key is strictly server-side** — only in Nuxt's `server/` directory, in server-only runtime config, never bundled to the client. The browser uses the **anon key** only (RLS protects it).
-- If a long-running process is ever needed (real pool, background workers, no timeout), the fork is a Node host running Nuxt as a persistent server — keeps all-TypeScript, drops serverless constraints.
+  - **No persistent in-memory state or long-lived connections** — connect to Turso databases using scoped `@libsql/client` instances.
+  - **Execution time limits** — keep server handlers fast and idempotent.
+- **Server-only secrets:** Firebase Admin credentials (`FIREBASE_SERVICE_ACCOUNT` / `GOOGLE_APPLICATION_CREDENTIALS`), Turso auth tokens, and Turso platform tokens are **server-only** and never exposed to the client or `runtimeConfig.public` (enforced via `bun run check:build`).
+- **Clients personal data privacy:** Client personal data (names, phones) are never put into logs, error messages, URLs, or SSR payloads. Repositories log SQL error codes, not raw error objects.
 
-### Pinned versions (settled in `docs/features/00-project-scaffold.md` §3.1, 2026-09-25)
-Nuxt **4.5** (the `app/` directory layout, with `server/` and `shared/`) · Nuxt UI **4.x** (it bundles `@nuxt/fonts`, `@nuxt/icon` and `@nuxtjs/color-mode`) · Tailwind **4** · `@nuxtjs/supabase` **2.x** (on `@supabase/ssr`, with its redirect turned off in favour of our own middleware) · TypeScript **~6.0** (not 7; vue-tsc needs the TS 6 API) · Node **24** · Vitest **5** for unit tests · pgTAP via `supabase test db` for DB and isolation tests · ESLint via `@nuxt/eslint`.
+### Pinned versions
+Nuxt **4.x** (SPA mode, `app/` directory layout with `server/` and `shared/`) · Nuxt UI **4.x** (bundles `@nuxt/fonts`, `@nuxt/icon`, and `@nuxtjs/color-mode`) · Tailwind **4** · **Firebase Auth** (`nuxt-vuefire` + `firebase-admin`) · **Turso (libSQL)** + **Drizzle ORM** · TypeScript **~6.0** · Node **24** · Vitest **5** · Bun as package manager and task runner.
 
 ---
 
 ## 3. Multi-Tenancy
 
-**Model: shared tables with a `tenant_id` column, enforced by Row Level Security (RLS).**
-(Not schema-per-tenant.)
+**Model: Physical Database-per-Tenant with Control DB + Tenant DBs.**
 
-### Why shared tables (not schema-per-tenant)
-- One migration per change (vs N migrations across N schemas).
-- Onboarding a tenant is a row insert (vs provisioning a whole schema).
-- Cross-tenant analytics (internal/admin) are a single query.
-- Postgres handles many tenants comfortably in shared tables.
-- Schema-per-tenant only wins for noisy-neighbor isolation, per-tenant customization, or contractual physical separation — none needed in v1.
-- **Escape hatch preserved:** a large tenant can later be peeled into its own schema/database while the rest stay pooled.
+```mermaid
+graph TD
+    Client["Client Browser (SPA + Local SQLite WASM)"]
+    Server["Nitro Serverless API (Vercel)"]
+    ControlDB[("Control Database (Turso / libSQL)")]
+    TenantDBA[("Tenant DB: Farm A (Turso / libSQL)")]
+    TenantDBB[("Tenant DB: Farm B (Turso / libSQL)")]
 
-### Isolation rules (non-negotiable)
-1. **Every table carries `tenant_id`** from the very first migration — even while testing with one farm.
-2. **RLS enforces isolation at the database level** — a user only ever sees their tenant's rows.
-3. **Derive `tenant_id` server-side** from the authenticated user (via a `users`/`memberships` mapping). **Never trust a `tenant_id` sent by the client.**
-4. **Centralize tenant scoping** in a repository/query layer so `tenant_id` is injected automatically, not hand-written per query.
-5. **Test isolation explicitly** — a CI test asserting tenant A cannot read tenant B's rows. Clients are the first real PII → a natural first isolation target.
+    Client -->|Bearer Token / Sync API| Server
+    Server -->|Resolve Auth & Tenant Mappings| ControlDB
+    Server -->|Sync / Isolate Query| TenantDBA
+    Server -.->|Cross-Tenant Strictly Disallowed| TenantDBB
+```
 
-### Auth integration
-- Supabase Auth issues JWTs; the Nuxt server validates them (JWT secret, or JWKS endpoint for asymmetric keys).
-- A `users` / `memberships` table maps a user to one or more `tenant_id`s; the server resolves tenant per request.
-- **Defense-in-depth:** keep RLS armed even when server routes use a privileged role. Connect with a non-superuser role and set tenant context per transaction (e.g. `SET LOCAL app.current_tenant`) so RLS backstops a forgotten `WHERE tenant_id = ...` — turning a missed filter from a data leak into an empty result.
+### Architectural Structure:
+1. **Control Database (`server/db/schema/control.ts`)**:
+   - Stores global SaaS metadata: `tenants` (farms, database URLs, settings), `users` (credentials, accounts), and `memberships` (role & farm mappings).
+2. **Tenant Database (`server/db/schema/tenant.ts`)**:
+   - Each farm has its own physically isolated libSQL database (`file:local-tenant-<id>.db` in local development, or a dedicated Turso database in the cloud).
+   - Contains tenant domain tables: `sizes`, `production`, `clients`, `orders`, `order_lines`, `sales`, `sale_lines`, and `change_log`.
+3. **Defense-in-Depth Tenant Scoping**:
+   - On top of physical database isolation, all queries flow through `TenantDb` / `server/repositories/`, which automatically injects `tenant_id` filters.
+   - The authenticated `tenant_id` is derived on the server from the Firebase user session via `findMembershipWithFarm` (`server/repositories/memberships.ts`). Never trust a client-supplied `tenant_id`.
+   - Every server route handler is guarded by `defineAuthedHandler` or `defineTenantHandler` (`server/utils/handlers.ts`).
+
 
 ### As built (feature 00, 2026-09-25)
 - **Server DB access in v1 = `supabase-js` acting as the signed-in user** (`serverSupabaseClient(event)`: the publishable key plus the user's session cookies). PostgREST runs every query as the non-superuser role `authenticated` and `SET LOCAL`s the user's JWT claims per transaction. That is how the defense-in-depth rule above is met, and there's no privileged DB credential in the request path. A direct pooler connection with `SET LOCAL app.current_tenant` is reserved for future non-request work (cron/workers), which must then also `set local role authenticated`.
