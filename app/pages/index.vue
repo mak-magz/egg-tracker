@@ -10,7 +10,6 @@
 -->
 <script setup lang="ts">
 import { inventoryTotals } from '#shared/utils/inventory'
-import { addDays } from '#shared/utils/local-date'
 import { formatPrice } from '#shared/utils/price'
 import { formatQty, formatQtySigned } from '#shared/utils/quantity'
 import { sizeColor } from '~/utils/size-colors'
@@ -122,42 +121,6 @@ const recentSales = computed(() => {
       price: formatPrice(s.saleTotal, currency.value),
     }
   })
-})
-
-// --- 5. This Week's Production Trend ---
-const WEEKDAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
-
-const weekDays = computed(() => {
-  const res = []
-  const todayStr = prod.today.value
-  for (let i = 6; i >= 0; i--) {
-    const dateStr = addDays(todayStr, -i)
-    const dayData = prod.days.value.find(day => day.date === dateStr)
-    const eggs = dayData?.goodTotal ?? 0
-    const [y, m, d] = dateStr.split('-').map(Number)
-    const localDate = new Date(y!, m! - 1, d!)
-    const dayLabel = WEEKDAY_NAMES[localDate.getDay()]!
-    res.push({
-      date: dateStr,
-      day: dayLabel,
-      eggs,
-      isToday: i === 0,
-    })
-  }
-  return res
-})
-
-const maxWeekEggs = computed(() => Math.max(...weekDays.value.map(d => d.eggs), 1))
-
-const weekBars = computed(() => {
-  return weekDays.value.map(d => ({
-    day: d.day,
-    date: d.date,
-    eggs: d.eggs,
-    qty: formatQty(d.eggs, trayEggs.value),
-    height: d.eggs > 0 ? `${Math.max(8, Math.round((d.eggs / maxWeekEggs.value) * 68))}px` : '4px',
-    isToday: d.isToday,
-  }))
 })
 
 // --- Empty State Detection ---
@@ -521,59 +484,12 @@ const hasAnyActivity = computed(() => {
       </NuxtLink>
 
       <!-- Card 5: This week's production (spans 2 or 3 columns) -->
-      <div class="sm:col-span-2 lg:col-span-2 flex flex-col justify-between rounded-2xl bg-default border border-default/70 p-5 shadow-xs">
-        <div class="flex items-center justify-between">
-          <div class="flex items-center gap-2.5">
-            <div class="size-8 rounded-lg bg-primary/10 text-primary flex items-center justify-center">
-              <UIcon
-                name="i-lucide-trending-up"
-                class="size-4.5"
-              />
-            </div>
-            <div>
-              <span class="text-sm font-bold text-highlighted block">Production Trend</span>
-              <span class="text-[11px] text-muted">Daily volume over the past 7 days</span>
-            </div>
-          </div>
-          <UBadge
-            color="neutral"
-            variant="subtle"
-            size="sm"
-          >
-            Last 7 days
-          </UBadge>
-        </div>
-
-        <div class="flex items-end gap-2.5 sm:gap-4 h-32 pt-6 pb-1 px-1">
-          <div
-            v-for="bar in weekBars"
-            :key="bar.date"
-            class="flex-1 flex flex-col items-center justify-end h-full gap-2 group relative"
-          >
-            <!-- Hover Tooltip -->
-            <div class="opacity-0 group-hover:opacity-100 transition-all duration-150 absolute -top-8 bg-neutral-900 text-white text-[11px] px-2.5 py-1 rounded-md pointer-events-none whitespace-nowrap shadow-md z-10 font-bold">
-              {{ bar.qty }}
-            </div>
-
-            <!-- Bar Column with Track -->
-            <div class="w-full max-w-[32px] h-full flex items-end justify-center">
-              <div
-                class="w-full rounded-t-md transition-all duration-200"
-                :class="bar.isToday ? 'bg-primary shadow-xs' : 'bg-primary/20 dark:bg-primary/25 group-hover:bg-primary/40'"
-                :style="{ height: bar.height }"
-              />
-            </div>
-
-            <!-- Day Label -->
-            <span
-              class="text-xs tabular-nums transition-colors"
-              :class="bar.isToday ? 'font-bold text-primary' : 'text-dimmed group-hover:text-default'"
-            >
-              {{ bar.day }}
-            </span>
-          </div>
-        </div>
-      </div>
+      <DashboardProductionTrend
+        :days="prod.days.value"
+        :today="prod.today.value"
+        :eggs-per-tray="trayEggs"
+        class="sm:col-span-2 lg:col-span-2"
+      />
     </div>
   </div>
 </template>

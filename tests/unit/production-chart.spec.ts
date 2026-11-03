@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'vitest'
-import { buildChartModel, nearestIndex, thinLabelIndices, xPercent, yPercent } from '../../app/utils/production-chart'
+import {
+  buildChartModel,
+  buildDashboardBarDays,
+  nearestIndex,
+  thinLabelIndices,
+  toChartJsDatasets,
+  xPercent,
+  yPercent,
+} from '../../app/utils/production-chart'
+import { REJECT_HEX_DARK, REJECT_HEX_LIGHT, SIZE_HEX_DARK, SIZE_HEX_LIGHT } from '../../app/utils/size-colors'
 import type { FarmSize, ProductionDay } from '../../shared/types/api'
 
 const size = (id: string, name: string, sortOrder: number, colorSlot: number, active = true): FarmSize =>
@@ -60,6 +69,59 @@ describe('buildChartModel (AC20)', () => {
   it('handles no days and one day without errors', () => {
     expect(buildChartModel([], SIZES).max).toBe(1)
     expect(xPercent(0, 1)).toBe(50)
+  })
+})
+
+describe('toChartJsDatasets (Chart.js integration)', () => {
+  it('converts ChartModel to Chart.js datasets with correct theme hex colors', () => {
+    const m = buildChartModel([day('2026-09-25', [['s', 30], ['l', 60]], 4)], SIZES)
+    const lightDatasets = toChartJsDatasets(m, false)
+    expect(lightDatasets).toHaveLength(5) // Small, Medium, Large, Jumbo, Rejects
+    expect(lightDatasets[0]?.label).toBe('Small')
+    expect(lightDatasets[0]?.borderColor).toBe(SIZE_HEX_LIGHT[0])
+    expect(lightDatasets[0]?.tension).toBe(0.3)
+    expect(lightDatasets[0]?.borderDash).toBeUndefined()
+
+    // Rejects is last and red
+    const rejectsLight = lightDatasets[4]!
+    expect(rejectsLight.label).toBe('Rejects')
+    expect(rejectsLight.borderColor).toBe(REJECT_HEX_LIGHT)
+
+    // Dark mode
+    const darkDatasets = toChartJsDatasets(m, true)
+    expect(darkDatasets[0]?.borderColor).toBe(SIZE_HEX_DARK[0])
+    expect(darkDatasets[4]?.borderColor).toBe(REJECT_HEX_DARK)
+  })
+
+  it('handles dashed lines for slots 10+', () => {
+    const twelve = Array.from({ length: 12 }, (_, i) => size(`s${i}`, `Size ${i}`, i, i))
+    const m = buildChartModel([day('2026-09-25', [['s10', 10]])], twelve)
+    const datasets = toChartJsDatasets(m, false)
+    const slot10 = datasets.find(d => d.label === 'Size 10')
+    expect(slot10?.borderDash).toEqual([5, 4])
+  })
+})
+
+describe('buildDashboardBarDays (Dashboard 7-day trend)', () => {
+  it('returns exactly 7 days ending on today with correct weekday names', () => {
+    const today = '2026-09-25' as const // Friday
+    const days = [
+      day('2026-09-25', [['s', 100]]),
+      day('2026-09-24', [['s', 80]]),
+      day('2026-09-23', [['s', 70]]),
+    ]
+    const barDays = buildDashboardBarDays(days, today)
+    expect(barDays).toHaveLength(7)
+    expect(barDays[6]?.date).toBe('2026-09-25')
+    expect(barDays[6]?.isToday).toBe(true)
+    expect(barDays[6]?.eggs).toBe(100)
+    expect(barDays[5]?.date).toBe('2026-09-24')
+    expect(barDays[5]?.isToday).toBe(false)
+    expect(barDays[5]?.eggs).toBe(80)
+    expect(barDays[0]?.date).toBe('2026-09-19')
+    expect(barDays[0]?.eggs).toBe(0)
+    expect(barDays[6]?.day).toBe('Fri')
+    expect(barDays[5]?.day).toBe('Thu')
   })
 })
 

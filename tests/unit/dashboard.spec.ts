@@ -3,6 +3,7 @@ import type { InventorySize, ProductionDay, Sale } from '../../shared/types/api'
 import { formatQty, formatQtySigned } from '../../shared/utils/quantity'
 import { formatPrice } from '../../shared/utils/price'
 import { inventoryTotals } from '../../shared/utils/inventory'
+import { buildDashboardBarDays } from '../../app/utils/production-chart'
 
 describe('Dashboard Data & Metrics (Feature: Farm Overview)', () => {
   const EGGS_PER_TRAY = 30
@@ -103,5 +104,19 @@ describe('Dashboard Data & Metrics (Feature: Farm Overview)', () => {
     expect(hasActivity(1, 0, 0)).toBe(true)
     expect(hasActivity(0, 1, 0)).toBe(true)
     expect(hasActivity(0, 0, 1)).toBe(true)
+  })
+
+  it('computes 7-day volume trend bar data ending on today for Chart.js', () => {
+    const days: ProductionDay[] = [
+      { date: '2026-11-01', good: [{ sizeId: 's-large', eggs: 90 }], goodTotal: 90, rejects: 0 },
+      { date: '2026-10-31', good: [{ sizeId: 's-large', eggs: 60 }], goodTotal: 60, rejects: 0 },
+    ]
+    const bars = buildDashboardBarDays(days, '2026-11-01')
+    expect(bars).toHaveLength(7)
+    expect(bars[6]?.isToday).toBe(true)
+    expect(bars[6]?.eggs).toBe(90)
+    expect(bars[5]?.isToday).toBe(false)
+    expect(bars[5]?.eggs).toBe(60)
+    expect(bars[0]?.eggs).toBe(0)
   })
 })

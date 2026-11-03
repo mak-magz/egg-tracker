@@ -3,12 +3,14 @@
 // farm size (active, or present in the range) in the farm's order, then Rejects. A logged day with no
 // entry for a size plots 0. Relative imports: tests/unit imports this file outside Nuxt.
 import type { FarmSize, IsoDate, ProductionDay } from '#shared/types/api'
-import { REJECT_COLOR, sizeColor } from './size-colors'
+import { addDays } from '#shared/utils/local-date'
+import { REJECT_COLOR, rejectColorHex, sizeColor, sizeColorHex } from './size-colors'
 
 export interface ChartSeries {
   key: string
   name: string
   colorClass: string
+  colorSlot?: number
   dashed: boolean
   /** One value (eggs) per chart day, oldest first. */
   values: number[]
@@ -42,6 +44,7 @@ export function buildChartModel(daysNewestFirst: readonly ProductionDay[], sizes
       key: s.id,
       name: s.name,
       colorClass: color.class,
+      colorSlot: s.colorSlot,
       dashed: color.dashed,
       values: days.map(d => d.good.find(g => g.sizeId === s.id)?.eggs ?? 0),
     }
@@ -56,6 +59,81 @@ export function buildChartModel(daysNewestFirst: readonly ProductionDay[], sizes
 
   const max = Math.max(1, ...series.flatMap(s => s.values))
   return { dates: days.map(d => d.date), series, max }
+}
+
+export interface ChartJsDataset {
+  label: string
+  data: number[]
+  borderColor: string
+  backgroundColor: string
+  borderDash?: number[]
+  borderWidth: number
+  tension: number
+  pointRadius: number
+  pointHoverRadius: number
+  pointBackgroundColor: string
+  pointBorderColor: string
+  pointHitRadius: number
+  spanGaps: boolean
+}
+
+/**
+ * Maps a ChartModel into tree-shaken Chart.js line datasets with theme-aware hex colors.
+ */
+export function toChartJsDatasets(model: ChartModel, isDark = false): ChartJsDataset[] {
+  return model.series.map((s) => {
+    const isRejects = s.key === REJECTS_SERIES_KEY
+    const color = isRejects
+      ? { hex: rejectColorHex(isDark), dashed: false }
+      : sizeColorHex(s.colorSlot ?? 0, isDark)
+    const isDashed = s.dashed || color.dashed
+
+    return {
+      label: s.name,
+      data: s.values,
+      borderColor: color.hex,
+      backgroundColor: color.hex,
+      borderDash: isDashed ? [5, 4] : undefined,
+      borderWidth: 2,
+      tension: 0.3, // Monotone smooth curve
+      pointRadius: 2,
+      pointHoverRadius: 5,
+      pointHitRadius: 10,
+      pointBackgroundColor: color.hex,
+      pointBorderColor: color.hex,
+      spanGaps: false,
+    }
+  })
+}
+
+export interface DashboardBarDay {
+  date: IsoDate
+  day: string
+  eggs: number
+  isToday: boolean
+}
+
+/**
+ * Builds the last 7 calendar days up to `today` for the dashboard production volume trend bar chart.
+ */
+export function buildDashboardBarDays(days: readonly ProductionDay[], today: IsoDate): DashboardBarDay[] {
+  const WEEKDAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+  const res: DashboardBarDay[] = []
+  for (let i = 6; i >= 0; i--) {
+    const dateStr = addDays(today, -i)
+    const dayData = days.find(d => d.date === dateStr)
+    const eggs = dayData?.goodTotal ?? 0
+    const [y, m, d] = dateStr.split('-').map(Number)
+    const localDate = new Date(y!, m! - 1, d!)
+    const dayLabel = WEEKDAY_NAMES[localDate.getDay()]!
+    res.push({
+      date: dateStr,
+      day: dayLabel,
+      eggs,
+      isToday: i === 0,
+    })
+  }
+  return res
 }
 
 /** Horizontal position in % (a single day is centred). */

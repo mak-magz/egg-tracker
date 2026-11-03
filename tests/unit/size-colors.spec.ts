@@ -1,5 +1,15 @@
 import { describe, expect, it } from 'vitest'
-import { REJECT_COLOR, SIZE_PALETTE, sizeColor } from '../../app/utils/size-colors'
+import {
+  REJECT_COLOR,
+  REJECT_HEX_DARK,
+  REJECT_HEX_LIGHT,
+  rejectColorHex,
+  SIZE_HEX_DARK,
+  SIZE_HEX_LIGHT,
+  SIZE_PALETTE,
+  sizeColor,
+  sizeColorHex,
+} from '../../app/utils/size-colors'
 
 describe('sizeColor (UX R2)', () => {
   it('keeps the design colours for the seeded slots 0-3', () => {
@@ -34,5 +44,34 @@ describe('sizeColor (UX R2)', () => {
   it('depends only on the slot, not on list position', () => {
     expect(sizeColor(4)).toEqual(sizeColor(4))
     expect(sizeColor(-1)).toEqual(sizeColor(0))
+  })
+})
+
+describe('sizeColorHex and rejectColorHex (Chart.js canvas)', () => {
+  it('returns light palette hex when isDark is false', () => {
+    expect(sizeColorHex(0, false)).toEqual({ hex: SIZE_HEX_LIGHT[0], dashed: false })
+    expect(sizeColorHex(1, false)).toEqual({ hex: SIZE_HEX_LIGHT[1], dashed: false })
+    expect(sizeColorHex(2, false)).toEqual({ hex: SIZE_HEX_LIGHT[2], dashed: false })
+    expect(sizeColorHex(3, false)).toEqual({ hex: SIZE_HEX_LIGHT[3], dashed: false })
+    expect(rejectColorHex(false)).toBe(REJECT_HEX_LIGHT)
+  })
+
+  it('returns dark palette hex when isDark is true', () => {
+    expect(sizeColorHex(0, true)).toEqual({ hex: SIZE_HEX_DARK[0], dashed: false })
+    expect(sizeColorHex(1, true)).toEqual({ hex: SIZE_HEX_DARK[1], dashed: false })
+    expect(rejectColorHex(true)).toBe(REJECT_HEX_DARK)
+  })
+
+  it('flags dashed for slot 10+ in hex mode', () => {
+    expect(sizeColorHex(9, false).dashed).toBe(false)
+    expect(sizeColorHex(10, false)).toEqual({ hex: SIZE_HEX_LIGHT[0], dashed: true })
+    expect(sizeColorHex(10, true)).toEqual({ hex: SIZE_HEX_DARK[0], dashed: true })
+  })
+
+  it('never uses red for a size hex; rejects are red hex', () => {
+    for (const hex of SIZE_HEX_LIGHT) expect(hex.toLowerCase()).not.toBe(REJECT_HEX_LIGHT.toLowerCase())
+    for (const hex of SIZE_HEX_DARK) expect(hex.toLowerCase()).not.toBe(REJECT_HEX_DARK.toLowerCase())
+    expect(rejectColorHex(false)).toBe('#dc2626')
+    expect(rejectColorHex(true)).toBe('#f87171')
   })
 })
