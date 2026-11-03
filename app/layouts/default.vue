@@ -97,6 +97,14 @@ watch(() => route.path, () => {
 const { action: primaryAction, hasFab, fabVisible, trigger: triggerPrimaryAction } = usePrimaryAction()
 // ---------------------------------------------------------------------------------------------
 
+// Dynamic workspace environment badge ('dev' in local dev, 'farm' in production)
+const envBadge = computed(() => {
+  if (import.meta.dev) {
+    return { label: 'dev', class: 'bg-primary/10 text-primary border-primary/20' }
+  }
+  return { label: 'farm', class: 'bg-primary/10 text-primary border-primary/20' }
+})
+
 // ---- Per-state sizing (layout only; colours live in app.config.ts) --------------------------
 const sidebarUi = computed(() => ({
   root: 'md:flex bg-default transition-[width] duration-200 ease-out motion-reduce:transition-none',
@@ -176,8 +184,11 @@ const navUi = computed(() => ({
                 <span class="truncate text-base leading-tight font-extrabold tracking-tight text-highlighted">
                   Tamago
                 </span>
-                <span class="rounded bg-primary/10 px-1.5 py-0.2 text-[10px] font-bold text-primary border border-primary/20">
-                  farm
+                <span
+                  class="rounded px-1.5 py-0.2 text-[10px] font-bold uppercase tracking-wider border"
+                  :class="envBadge.class"
+                >
+                  {{ envBadge.label }}
                 </span>
               </div>
               <p class="truncate text-xs font-medium text-muted mt-0.5">
