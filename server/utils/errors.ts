@@ -2,10 +2,11 @@ import { createError, isError } from 'h3'
 import type { H3Error } from 'h3'
 import type { ApiErrorCode, ApiErrorData } from '../../shared/types/api'
 
-const API_ERROR_CODES: readonly ApiErrorCode[] = ['unauthenticated', 'no_farm', 'validation_failed', 'not_found', 'conflict', 'internal']
+const API_ERROR_CODES: readonly ApiErrorCode[] = ['unauthenticated', 'forbidden', 'no_farm', 'validation_failed', 'not_found', 'conflict', 'internal']
 
 const STATUS_MESSAGES: Record<ApiErrorCode, string> = {
   unauthenticated: 'Unauthorized',
+  forbidden: 'Forbidden',
   no_farm: 'Forbidden',
   validation_failed: 'Bad Request',
   not_found: 'Not Found',
@@ -65,6 +66,7 @@ export function toApiError(e: unknown): H3Error<ApiErrorData> {
   if (isError(e)) {
     if (e.statusCode === 400 || e.statusCode === 422) return apiError(400, 'validation_failed')
     if (e.statusCode === 401) return apiError(401, 'unauthenticated')
+    if (e.statusCode === 403) return apiError(403, 'forbidden')
     if (e.statusCode === 404) return apiError(404, 'not_found')
   }
   const o = (e ?? {}) as { name?: unknown, code?: unknown }

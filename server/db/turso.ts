@@ -12,12 +12,27 @@ export type TenantDrizzleDb = LibSQLDatabase<typeof tenantSchema>
 let controlDbInstance: ControlDrizzleDb | null = null
 const tenantDbPool = new Map<string, TenantDrizzleDb>()
 
+let controlBootstrapPromise: Promise<void> | null = null
+
+export function ensureControlDbBootstrapped(): Promise<void> {
+  if (!controlBootstrapPromise) {
+    const url = process.env.NUXT_TURSO_CONTROL_URL || 'file:local-control.db'
+    const authToken = process.env.NUXT_TURSO_CONTROL_AUTH_TOKEN || undefined
+    const client = createClient({ url, authToken })
+    controlBootstrapPromise = initControlDbSchema(client)
+  }
+  return controlBootstrapPromise
+}
+
 export function getControlDb(): ControlDrizzleDb {
   if (!controlDbInstance) {
     const url = process.env.NUXT_TURSO_CONTROL_URL || 'file:local-control.db'
     const authToken = process.env.NUXT_TURSO_CONTROL_AUTH_TOKEN || undefined
     const client = createClient({ url, authToken })
     controlDbInstance = drizzle(client, { schema: controlSchema })
+    if (url.startsWith('file:')) {
+      ensureControlDbBootstrapped().catch(() => {})
+    }
   }
   return controlDbInstance
 }
@@ -42,6 +57,7 @@ export async function initControlDbSchema(client: LibSqlClient): Promise<void> {
     `CREATE TABLE IF NOT EXISTS tenants (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
+      tier TEXT NOT NULL DEFAULT 'free',
       eggs_per_tray INTEGER NOT NULL DEFAULT 30,
       currency TEXT NOT NULL DEFAULT 'PHP',
       db_url TEXT NOT NULL,
@@ -56,7 +72,26 @@ export async function initControlDbSchema(client: LibSqlClient): Promise<void> {
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     )`,
+    `CREATE TABLE IF NOT EXISTS admin_audit_logs (
+      id TEXT PRIMARY KEY,
+      operator_email TEXT NOT NULL,
+      action_type TEXT NOT NULL,
+      target_id TEXT NOT NULL,
+      summary TEXT NOT NULL,
+      details TEXT,
+      created_at TEXT NOT NULL
+    )`,
+    `CREATE INDEX IF NOT EXISTS admin_audit_logs_created_at_idx ON admin_audit_logs (created_at)`,
+    `CREATE INDEX IF NOT EXISTS admin_audit_logs_operator_idx ON admin_audit_logs (operator_email)`,
   ], 'write')
+
+  // Backwards compatibility migration check: add tier column if table previously existed without it
+  try {
+    await client.execute(`ALTER TABLE tenants ADD COLUMN tier TEXT NOT NULL DEFAULT 'free'`)
+  }
+  catch {
+    // Column already exists, safe to ignore
+  }
 }
 
 /** Bootstraps a newly created Tenant DB with the business tables and seeds default sizes & counters. */

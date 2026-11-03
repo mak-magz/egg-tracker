@@ -79,18 +79,28 @@ describe('server guards', () => {
     expect(deletes).toEqual([])
   })
 
-  it('(a) every server/api route is wrapped in defineAuthedHandler or defineTenantHandler', () => {
+  it('(a) every server/api route is wrapped in defineAuthedHandler, defineTenantHandler, defineAdminHandler, or defineAdminLoginHandler', () => {
     const offenders = apiFiles.filter((f) => {
       const src = code(f)
-      return !/export\s+default\s+define(?:Authed|Tenant)Handler\s*[(<]/.test(src)
+      return !/export\s+default\s+define(?:Authed|Tenant|Admin|AdminLogin)Handler\s*[(<]/.test(src)
         || /\bdefine(?:Cached)?EventHandler\b|\beventHandler\s*\(/.test(src)
     })
     expect(offenders.map(rel)).toEqual([])
   })
 
-  it('(b) firebase-admin and server/db/turso are imported only by auth, db, memberships, and cli layers', () => {
+  it('(b) firebase-admin and server/db/turso are imported only by auth, db, memberships, admin, and cli layers', () => {
     const allowedAuth = new Set(['server/utils/auth.ts', 'server/cli/provision.ts', 'server/services/provision.ts'])
-    const allowedTurso = new Set(['server/utils/db.ts', 'server/repositories/memberships.ts', 'server/cli/provision.ts', 'server/services/provision.ts'])
+    const allowedTurso = new Set([
+      'server/utils/db.ts',
+      'server/repositories/memberships.ts',
+      'server/cli/provision.ts',
+      'server/services/provision.ts',
+      'server/repositories/admin-tenants.ts',
+      'server/repositories/admin-users.ts',
+      'server/repositories/admin-migrations.ts',
+      'server/repositories/admin-sync.ts',
+      'server/repositories/admin-audit.ts',
+    ])
     const allFiles = [...serverFiles, ...walk(join(ROOT, 'app')), ...walk(join(ROOT, 'shared'))]
     const authOffenders = allFiles.filter(f => /['"]firebase-admin/.test(code(f)) && !allowedAuth.has(rel(f)))
     const tursoOffenders = allFiles.filter(f => /['"](?:.*\/)?db\/turso['"]/.test(code(f)) && !allowedTurso.has(rel(f)))
@@ -103,9 +113,9 @@ describe('server guards', () => {
     expect(offenders.map(rel)).toEqual([])
   })
 
-  it('(c) Turso platform API token is never used at app runtime', () => {
+  it('(c) Turso platform API token is never used at app runtime (only cli, provisioning, and turso-platform service)', () => {
     const offenders = serverFiles
-      .filter(f => !rel(f).startsWith('server/cli/') && rel(f) !== 'server/services/provision.ts')
+      .filter(f => !rel(f).startsWith('server/cli/') && rel(f) !== 'server/services/provision.ts' && rel(f) !== 'server/services/turso-platform.ts')
       .filter(f => /TURSO_API_TOKEN|TURSO_ORG/.test(code(f)))
     expect(offenders.map(rel)).toEqual([])
   })
@@ -118,9 +128,11 @@ describe('server guards', () => {
     expect(offenders.map(rel)).toEqual([])
   })
 
-  it('(d) no server/api route takes a tenant id from the request', () => {
-    // Routes get the tenant from ctx (membership) only; tenant_id is injected by the repository layer.
-    const offenders = apiFiles.filter((f) => {
+  it('(d) no farm server/api route takes a tenant id from the request (admin routes excluded)', () => {
+    // Farm routes get the tenant from ctx (membership) only; tenant_id is injected by the repository layer.
+    // Admin routes operate on the fleet control plane where tenant id is a URL parameter.
+    const farmApiFiles = apiFiles.filter(f => !rel(f).startsWith('server/api/admin/'))
+    const offenders = farmApiFiles.filter((f) => {
       const src = code(f)
       const mentionsRawTenant = /\btenant_id\b/.test(src)
       const bareTenantId = src.replace(/\bctx\.tenantId\b/g, '').match(/\btenantId\b/)
@@ -129,12 +141,13 @@ describe('server guards', () => {
     expect(offenders.map(rel)).toEqual([])
   })
 
-  it('(f) both handler wrappers refuse cross-site writes before touching auth (security audit L1)', () => {
+  it('(f) all handler wrappers refuse cross-site writes before touching auth (security audit L1)', () => {
     // Every route is wrapped (rule a), so the check lives once, in the wrappers, ahead of any auth or database work.
     const src = code(join(ROOT, 'server', 'utils', 'handlers.ts'))
-    expect(src.match(/\bassertRequestAllowed\(event\)/g) ?? []).toHaveLength(2)
+    expect(src.match(/\bassertRequestAllowed\(event\)/g) ?? []).toHaveLength(4)
     expect(src).toMatch(/assertRequestAllowed\(event\)\s*\n\s*const \w+ = await requireAuth\(event\)/)
     expect(src).toMatch(/assertRequestAllowed\(event\)\s*\n\s*const tenant = await requireTenant\(event\)/)
+    expect(src).toMatch(/assertRequestAllowed\(event\)\s*\n\s*const \w+ = await requireAdmin\(event\)/)
     expect(src).toMatch(/import \{[^}]*\bcheckRequest\b[^}]*\} from '\.\/request-guard'/)
   })
 

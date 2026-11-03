@@ -22,6 +22,9 @@ export interface TenantContext extends AuthContext {
   farm: FarmSummary
 }
 
+// Admin routes operate across the fleet; tenantId is NOT bound to the context.
+export type AdminContext = AuthContext
+
 declare module 'h3' {
   interface H3EventContext {
     /** Per-request caches (promises, so concurrent callers share one lookup). */
@@ -50,7 +53,7 @@ function getOrInitAdminApp(event: H3Event): AdminApp {
     process.env.FIREBASE_AUTH_EMULATOR_HOST ||= '127.0.0.1:9099'
   }
   if (
-    event.context.firebaseApp
+    event.context?.firebaseApp
     && (!('options' in event.context.firebaseApp) || Boolean(event.context.firebaseApp.options?.projectId))
   ) {
     return event.context.firebaseApp
@@ -132,4 +135,26 @@ export async function requireTenant(event: H3Event): Promise<TenantContext> {
   const membership = await getMembership(event)
   if (!membership) throw apiError(403, 'no_farm')
   return { ...auth, tenantId: membership.tenantId, farm: membership.farm }
+}
+
+export function getFirebaseAdminAuth(event?: H3Event) {
+  const adminApp = getOrInitAdminApp(event || ({} as H3Event))
+  return getAdminAuth(adminApp)
+}
+
+/** Enforces verified Firebase Auth and ADMIN_EMAILS environment check (AC1, AC3). */
+export async function requireAdmin(event: H3Event): Promise<AdminContext> {
+  const auth = await requireAuth(event)
+  const adminEmailsRaw = process.env.ADMIN_EMAILS?.trim() || ''
+  const adminEmails = adminEmailsRaw
+    .split(',')
+    .map(e => e.trim().toLowerCase())
+    .filter(Boolean)
+
+  const userEmail = (auth.email || '').toLowerCase()
+  if (!userEmail || !adminEmails.includes(userEmail)) {
+    throw apiError(403, 'forbidden')
+  }
+
+  return auth
 }

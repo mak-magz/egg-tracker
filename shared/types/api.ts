@@ -2,7 +2,8 @@
 // exact shapes; change them only together with the feature doc.
 
 // 'conflict' (409) is new in feature 02 (docs/features/02-farm-settings.md §3.3).
-export type ApiErrorCode = 'unauthenticated' | 'no_farm' | 'validation_failed' | 'not_found' | 'conflict' | 'internal'
+// 'forbidden' (403) is added in feature 10 (docs/features/10-admin-dashboard-and-control-plane.md §3.2).
+export type ApiErrorCode = 'unauthenticated' | 'forbidden' | 'no_farm' | 'validation_failed' | 'not_found' | 'conflict' | 'internal'
 
 /** Why a 'conflict' (409) happened. The UI has copy for each (feature 02 §2.5 "Copy"; feature 04 §3.3 for the sales reasons). */
 export type ApiErrorReason

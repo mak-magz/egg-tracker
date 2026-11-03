@@ -2,6 +2,7 @@ import type { ApiErrorCode, ApiErrorData } from '../shared/types/api'
 
 export const API_ERROR_CODES: readonly ApiErrorCode[] = [
   'unauthenticated',
+  'forbidden',
   'no_farm',
   'validation_failed',
   'not_found',
@@ -11,6 +12,7 @@ export const API_ERROR_CODES: readonly ApiErrorCode[] = [
 
 export const STATUS_MESSAGES: Record<ApiErrorCode, string> = {
   unauthenticated: 'Unauthorized',
+  forbidden: 'Forbidden',
   no_farm: 'Forbidden',
   validation_failed: 'Bad Request',
   not_found: 'Not Found',
