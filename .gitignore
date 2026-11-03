@@ -43,3 +43,6 @@ test-results/
 
 # Playwright MCP session output
 .playwright-mcp/
+
+# Scratch directory (temporary development prototypes & screenshots)
+scratch/

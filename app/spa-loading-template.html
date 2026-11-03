@@ -1,0 +1,186 @@
+<!--
+  Tamago SPA Loading Template (Nuxt 4 native)
+  Rendered immediately in 0ms while the client-side JavaScript bundles and SQLite WASM initialize.
+  Self-contained with inline CSS and embedded brand SVG; matches the Tamago design system tokens.
+-->
+<style>
+  :root {
+    --tamago-loader-bg: #f8fafc;
+    --tamago-loader-text: #0f172a;
+    --tamago-loader-muted: #64748b;
+    --tamago-loader-primary: #d97706;
+    --tamago-loader-track: rgba(148, 163, 184, 0.25);
+  }
+
+  /* Dark mode theme tokens matching Tamago bg-muted (Slate-800 / #1d293d) */
+  html.dark,
+  .tamago-spa-loader.is-dark {
+    --tamago-loader-bg: #1d293d;
+    --tamago-loader-text: #ffffff;
+    --tamago-loader-muted: #94a3b8;
+    --tamago-loader-primary: #fbbf24;
+    --tamago-loader-track: rgba(148, 163, 184, 0.2);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    html:not(.light) {
+      --tamago-loader-bg: #1d293d;
+      --tamago-loader-text: #ffffff;
+      --tamago-loader-muted: #94a3b8;
+      --tamago-loader-primary: #fbbf24;
+      --tamago-loader-track: rgba(148, 163, 184, 0.2);
+    }
+  }
+
+  .tamago-spa-loader {
+    position: fixed;
+    inset: 0;
+    z-index: 9999;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    background-color: var(--ui-bg-muted, var(--tamago-loader-bg));
+    color: var(--ui-text-highlighted, var(--tamago-loader-text));
+    font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    user-select: none;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .tamago-spa-loader .loader-content {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    padding: 24px;
+    max-width: 320px;
+    width: 100%;
+    animation: tamagoFadeIn 0.3s ease-out forwards;
+  }
+
+  .tamago-spa-loader .egg-icon {
+    width: 48px;
+    height: 48px;
+    color: var(--ui-primary, var(--tamago-loader-primary));
+    margin-bottom: 16px;
+    animation: tamagoEggPulse 2.4s ease-in-out infinite;
+  }
+
+  .tamago-spa-loader .brand-title {
+    font-size: 20px;
+    font-weight: 800;
+    letter-spacing: -0.02em;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 4px;
+    color: var(--ui-text-highlighted, var(--tamago-loader-text));
+  }
+
+  .tamago-spa-loader .brand-badge {
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    padding: 1px 6px;
+    border-radius: 4px;
+    color: var(--ui-primary, var(--tamago-loader-primary));
+    background: rgba(245, 158, 11, 0.12);
+    border: 1px solid rgba(245, 158, 11, 0.25);
+  }
+
+  .tamago-spa-loader .brand-subtitle {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--ui-text-muted, var(--tamago-loader-muted));
+    margin-bottom: 24px;
+  }
+
+  .tamago-spa-loader .progress-track {
+    width: 130px;
+    height: 4px;
+    background-color: var(--tamago-loader-track);
+    border-radius: 9999px;
+    overflow: hidden;
+    position: relative;
+    margin-bottom: 12px;
+  }
+
+  .tamago-spa-loader .progress-bar {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 50%;
+    background: linear-gradient(90deg, #f59e0b, #fbbf24);
+    border-radius: 9999px;
+    animation: tamagoIndeterminate 1.6s cubic-bezier(0.65, 0.815, 0.735, 0.395) infinite;
+  }
+
+  .tamago-spa-loader .status-text {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--ui-text-muted, var(--tamago-loader-muted));
+    letter-spacing: 0.01em;
+    animation: tamagoPulseText 2s ease-in-out infinite;
+  }
+
+  @keyframes tamagoFadeIn {
+    from { opacity: 0; transform: translateY(6px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  @keyframes tamagoEggPulse {
+    0%, 100% { transform: scale(1); opacity: 1; }
+    50% { transform: scale(1.05); opacity: 0.9; }
+  }
+
+  @keyframes tamagoIndeterminate {
+    0% { left: -50%; width: 30%; }
+    50% { left: 25%; width: 60%; }
+    100% { left: 105%; width: 30%; }
+  }
+
+  @keyframes tamagoPulseText {
+    0%, 100% { opacity: 0.6; }
+    50% { opacity: 1; }
+  }
+</style>
+
+<div id="tamago-spa-loader" class="tamago-spa-loader">
+  <div class="loader-content">
+    <svg class="egg-icon" viewBox="0 0 32 32" fill="currentColor">
+      <path d="M16 2C9.6 2 5 11.4 5 18.6 5 25.2 9.9 30 16 30s11-4.8 11-11.4C27 11.4 22.4 2 16 2Z" />
+      <ellipse cx="11.6" cy="13.5" rx="2.2" ry="3.6" transform="rotate(20 11.6 13.5)" fill="#fff" fill-opacity=".35" />
+    </svg>
+
+    <div class="brand-title">
+      <span>Tamago</span>
+      <span class="brand-badge">farm</span>
+    </div>
+    <div class="brand-subtitle">Egg Farm Tracker</div>
+
+    <div class="progress-track">
+      <div class="progress-bar"></div>
+    </div>
+
+    <div class="status-text">Loading your farm...</div>
+  </div>
+
+  <script>
+    (function() {
+      try {
+        var mode = localStorage.getItem('nuxt-color-mode');
+        var isDark = mode === 'dark' || (mode !== 'light' && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
+        if (isDark) {
+          document.documentElement.classList.add('dark');
+          var l = document.getElementById('tamago-spa-loader');
+          if (l) l.classList.add('is-dark');
+        }
+        if (location.hostname === 'localhost' || location.hostname === '127.0.0.1') {
+          var b = document.querySelector('#tamago-spa-loader .brand-badge');
+          if (b) b.textContent = 'dev';
+        }
+      } catch (e) {}
+    })();
+  </script>
+</div>
