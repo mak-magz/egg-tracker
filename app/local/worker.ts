@@ -2,6 +2,7 @@
 /// <reference lib="webworker" />
 
 import sqlite3InitModule from '@sqlite.org/sqlite-wasm'
+import wasmUrl from '@sqlite.org/sqlite-wasm/sqlite3.wasm?url'
 import { drizzle } from 'drizzle-orm/sqlite-proxy'
 import { createDrizzleBackedClient, type TenantMeta } from '../../core/db/adapter'
 import * as schema from '../../core/db/schema'
@@ -272,7 +273,14 @@ const TABLE_DEFINITIONS: string[] = [
 ]
 
 async function initDatabase(): Promise<void> {
-  const sqlite3 = await sqlite3InitModule()
+  const sqlite3 = await (sqlite3InitModule as any)({
+    locateFile: (file: string) => {
+      if (file.endsWith('.wasm')) {
+        return wasmUrl || '/sqlite3.wasm'
+      }
+      return file
+    },
+  })
   let initialized = false
 
   // 1. Primary: Modern SyncAccessHandle Pool VFS (OPFS SAHPool)

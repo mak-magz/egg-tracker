@@ -98,12 +98,18 @@ export default defineNuxtConfig({
     fallback: 'light',
     classSuffix: '',
   },
-
   routeRules: {
     '/**': { headers: securityHeaders },
   },
 
   compatibilityDate: '2026-09-01',
+
+  nitro: {
+    prerender: {
+      routes: ['/'],
+    },
+  },
+
   vite: {
     server: {
       headers: {

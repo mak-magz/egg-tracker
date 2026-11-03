@@ -63,6 +63,17 @@ export async function initControlDbSchema(client: LibSqlClient): Promise<void> {
 export async function initTenantDbSchema(client: LibSqlClient): Promise<void> {
   const now = new Date().toISOString()
   await client.batch([
+    `CREATE TABLE IF NOT EXISTS farm_settings (
+      id TEXT PRIMARY KEY DEFAULT 'default',
+      farm_name TEXT NOT NULL DEFAULT 'My Farm',
+      eggs_per_tray INTEGER NOT NULL DEFAULT 30,
+      currency TEXT NOT NULL DEFAULT 'PHP',
+      device_id TEXT NOT NULL DEFAULT 'D1',
+      tier TEXT NOT NULL DEFAULT 'free',
+      onboarding_completed INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )`,
     `CREATE TABLE IF NOT EXISTS sizes (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
