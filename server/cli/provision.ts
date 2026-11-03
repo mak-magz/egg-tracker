@@ -14,13 +14,14 @@ import type { Auth } from 'firebase-admin/auth'
 import * as controlSchema from '../db/schema/control'
 import { getControlDb, initControlDbSchema, initTenantDbSchema } from '../db/turso'
 import {
+  adminOutcomeMessage,
   USAGE,
   isLocalTarget,
   outcomeMessage,
   parseProvisionArgs,
   validatePassword,
 } from './provision-args'
-import type { ProvisionCommand, ProvisionOutcome, ResetPasswordCommand } from './provision-args'
+import type { AdminCommand, ProvisionCommand, ProvisionOutcome, ResetPasswordCommand } from './provision-args'
 
 class CliError extends Error { }
 
@@ -294,6 +295,64 @@ async function resetPassword(adminAuth: Auth, cmd: ResetPasswordCommand) {
   console.log(`Password updated for ${cmd.email}. All their devices are signed out.`)
 }
 
+async function provisionAdmin(adminAuth: Auth, cmd: AdminCommand) {
+  let userId = await findUserId(adminAuth, cmd.email)
+  let status: 'created' | 'updated' = 'updated'
+
+  if (!userId) {
+    const password = cmd.password ?? await promptNewPassword()
+    try {
+      const user = await adminAuth.createUser({
+        email: cmd.email,
+        password,
+        emailVerified: true,
+      })
+      userId = user.uid
+      status = 'created'
+    }
+    catch (e) {
+      throw new CliError(`Couldn't create the admin account for ${cmd.email}: ${(e as Error).message}`)
+    }
+  }
+  else if (cmd.password) {
+    try {
+      await adminAuth.updateUser(userId, { password: cmd.password, emailVerified: true })
+      await adminAuth.revokeRefreshTokens(userId)
+    }
+    catch (e) {
+      throw new CliError(`Couldn't update admin credentials for ${cmd.email}: ${(e as Error).message}`)
+    }
+  }
+
+  // Set custom claims for defense-in-depth
+  try {
+    await adminAuth.setCustomUserClaims(userId, { admin: true })
+  }
+  catch (e) {
+    console.warn(`[admin] Warning: could not set custom claims: ${(e as Error).message}`)
+  }
+
+  console.log(adminOutcomeMessage(cmd.email, status))
+
+  // Check ADMIN_EMAILS configuration
+  const adminEmailsRaw = process.env.ADMIN_EMAILS?.trim() || ''
+  const adminEmails = adminEmailsRaw
+    .split(',')
+    .map(e => e.trim().toLowerCase())
+    .filter(Boolean)
+
+  if (!adminEmails.includes(cmd.email.toLowerCase())) {
+    console.log(
+      `\nNotice: "${cmd.email}" is NOT currently in ADMIN_EMAILS in your environment.\n`
+      + `To allow this account to access /admin, add it to your environment variables:\n`
+      + `  ADMIN_EMAILS="${adminEmailsRaw ? `${adminEmailsRaw},${cmd.email}` : cmd.email}"\n`,
+    )
+  }
+  else {
+    console.log(`Verified: "${cmd.email}" is authorized in ADMIN_EMAILS.`)
+  }
+}
+
 async function main(argv: string[]): Promise<number> {
   const parsed = parseProvisionArgs(argv)
   if (!parsed.ok) {
@@ -312,6 +371,7 @@ async function main(argv: string[]): Promise<number> {
   const adminAuth = getFirebaseAdminAuth()
 
   if (cmd.command === 'provision') await provision(adminAuth, cmd)
+  else if (cmd.command === 'admin') await provisionAdmin(adminAuth, cmd)
   else await resetPassword(adminAuth, cmd)
   return 0
 }

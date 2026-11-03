@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  adminOutcomeMessage,
   isLocalTarget,
   outcomeMessage,
   parseProvisionArgs,
@@ -69,6 +70,35 @@ describe('parseProvisionArgs: provision', () => {
   })
 })
 
+describe('parseProvisionArgs: admin', () => {
+  it('parses admin command with password', () => {
+    expect(ok(['admin', '--email', 'Admin@Tamago.Farm', '--password', 'longenough123', '--yes']))
+      .toEqual({ command: 'admin', email: 'admin@tamago.farm', password: 'longenough123', yes: true })
+  })
+
+  it('parses admin command without password and default yes=false', () => {
+    expect(ok(['admin', '--email', 'admin@example.com']))
+      .toEqual({ command: 'admin', email: 'admin@example.com', password: undefined, yes: false })
+  })
+
+  it('requires --email', () => {
+    expect(err(['admin'])).toMatch(/--email is required/)
+  })
+
+  it('rejects invalid email', () => {
+    expect(err(['admin', '--email', 'not-valid'])).toMatch(/not a valid email/)
+  })
+
+  it('rejects short password', () => {
+    expect(err(['admin', '--email', 'a@b.com', '--password', 'short'])).toMatch(/at least 8/)
+  })
+
+  it('rejects unknown flags for admin command', () => {
+    expect(err(['admin', '--email', 'a@b.com', '--farm', 'Test Farm'])).toMatch(/Unknown option --farm/)
+    expect(err(['admin', '--email', 'a@b.com', '--update'])).toMatch(/Unknown option --update/)
+  })
+})
+
 describe('parseProvisionArgs: reset-password', () => {
   it('parses it', () => {
     expect(ok(['reset-password', '--email', 'A@B.co', '--password', 'longenough', '--yes']))
@@ -85,7 +115,7 @@ describe('parseProvisionArgs: reset-password', () => {
   })
 })
 
-describe('isLocalTarget / outcomeMessage', () => {
+describe('isLocalTarget / outcomeMessage / adminOutcomeMessage', () => {
   it('recognises the local stack only', () => {
     expect(isLocalTarget('http://127.0.0.1:54321')).toBe(true)
     expect(isLocalTarget('http://localhost:54321')).toBe(true)
@@ -99,5 +129,7 @@ describe('isLocalTarget / outcomeMessage', () => {
     expect(outcomeMessage('unchanged', 'o@x.co', 'Hendricks Farm', 30)).toBe(
       'o@x.co already has farm "Hendricks Farm" (eggs per tray: 30). No changes made. Use --update to change the farm name or eggs per tray, or reset-password to change the password.')
     expect(outcomeMessage('updated', 'o@x.co', 'H', 24)).toBe('Updated farm "H" (eggs per tray: 24) for o@x.co.')
+    expect(adminOutcomeMessage('admin@tamago.farm', 'created')).toBe('Provisioned operator account for admin@tamago.farm. Custom claims: { admin: true }.')
+    expect(adminOutcomeMessage('admin@tamago.farm', 'updated')).toBe('Updated operator account for admin@tamago.farm. Custom claims: { admin: true }.')
   })
 })

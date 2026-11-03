@@ -23,7 +23,14 @@ export interface ResetPasswordCommand {
   yes: boolean
 }
 
-export type CliCommand = ProvisionCommand | ResetPasswordCommand | { command: 'help' }
+export interface AdminCommand {
+  command: 'admin'
+  email: string
+  password?: string
+  yes: boolean
+}
+
+export type CliCommand = ProvisionCommand | ResetPasswordCommand | AdminCommand | { command: 'help' }
 
 export type ParseResult = { ok: true, value: CliCommand } | { ok: false, error: string }
 
@@ -32,6 +39,7 @@ const INT4_MAX = 2_147_483_647
 
 export const USAGE = `Usage:
   bun run provision -- --farm "<farm name>" --email <owner email> [--password <pw>] [--eggs-per-tray <n>] [--update] [--yes]
+  bun run provision -- admin --email <admin email> [--password <pw>] [--yes]
   bun run provision -- reset-password --email <owner email> [--password <pw>] [--yes]
 
 Provision (idempotent): creates the owner account (email confirmed) and the farm. Re-running for the same
@@ -40,6 +48,9 @@ updates the farm name and (if given) eggs per tray. It never changes an existing
 
 reset-password: sets a new password for an existing owner and signs out ALL their devices
 (Firebase Auth revokes refresh tokens on an admin password reset).
+
+admin: provisions an operator account in Firebase Auth with verified email and custom claims
+without creating an unnecessary farm. Add the email to ADMIN_EMAILS to grant access to /admin.
 
 --password is optional: without it you're prompted (hidden input), which keeps it out of shell history.
 --eggs-per-tray must be a whole number >= 1. Without it a new farm gets the database default (30).
@@ -50,6 +61,9 @@ type FlagSpec = Record<string, 'string' | 'boolean'>
 
 const PROVISION_FLAGS: FlagSpec = {
   'farm': 'string', 'email': 'string', 'password': 'string', 'eggs-per-tray': 'string', 'update': 'boolean', 'yes': 'boolean',
+}
+const ADMIN_FLAGS: FlagSpec = {
+  email: 'string', password: 'string', yes: 'boolean',
 }
 const RESET_FLAGS: FlagSpec = {
   email: 'string', password: 'string', yes: 'boolean',
@@ -138,8 +152,27 @@ export function parseProvisionArgs(argv: string[]): ParseResult {
     }
   }
 
+  if (argv[0] === 'admin') {
+    const parsed = parseFlags(argv.slice(1), ADMIN_FLAGS)
+    if (!parsed.ok) return parsed
+    const f = parsed.flags
+    if (typeof f.email !== 'string') return { ok: false, error: '--email is required.' }
+    const email = validateEmail(f.email)
+    if (!email.ok) return email
+    let password: string | undefined
+    if (typeof f.password === 'string') {
+      const p = validatePassword(f.password)
+      if (!p.ok) return p
+      password = p.value
+    }
+    return {
+      ok: true,
+      value: { command: 'admin', email: email.value, password, yes: f.yes === true },
+    }
+  }
+
   if (argv[0] !== undefined && !argv[0].startsWith('--')) {
-    return { ok: false, error: `Unknown command "${argv[0]}". Use reset-password, or options only to provision.` }
+    return { ok: false, error: `Unknown command "${argv[0]}". Use admin, reset-password, or options only to provision.` }
   }
 
   const parsed = parseFlags(argv, PROVISION_FLAGS)
@@ -181,6 +214,13 @@ export function isLocalTarget(url: string): boolean {
 }
 
 export type ProvisionOutcome = 'created' | 'unchanged' | 'updated'
+
+export function adminOutcomeMessage(email: string, status: 'created' | 'updated'): string {
+  if (status === 'created') {
+    return `Provisioned operator account for ${email}. Custom claims: { admin: true }.`
+  }
+  return `Updated operator account for ${email}. Custom claims: { admin: true }.`
+}
 
 export function outcomeMessage(outcome: ProvisionOutcome, email: string, farm: string, eggsPerTray: number): string {
   switch (outcome) {
