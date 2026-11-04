@@ -31,7 +31,8 @@ export default defineAdminLoginHandler(async (event) => {
       verifiedEmail = (decoded.email || '').toLowerCase()
       verifiedUid = decoded.uid
     }
-    catch {
+    catch (err) {
+      console.error('[admin:login] Token verification failed:', err)
       throw apiError(401, 'unauthenticated')
     }
   }
@@ -74,6 +75,7 @@ export default defineAdminLoginHandler(async (event) => {
 
   // Verify email is in ADMIN_EMAILS
   if (!verifiedEmail || !adminEmails.includes(verifiedEmail)) {
+    console.warn(`[admin:login] Access denied for "${verifiedEmail}". Configured ADMIN_EMAILS (${adminEmails.length}):`, adminEmails)
     throw apiError(403, 'forbidden')
   }
 

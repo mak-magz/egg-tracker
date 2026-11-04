@@ -93,7 +93,14 @@ async function handleLogin() {
       const status = (e as { statusCode?: number })?.statusCode
       if (status === 403) {
         // Sign out immediately to purge non-admin session
-        await firebaseSignOut(auth)
+        const signingOut = useState('auth:signingOut', () => false)
+        signingOut.value = true
+        try {
+          await firebaseSignOut(auth)
+        }
+        finally {
+          signingOut.value = false
+        }
         errorMessage.value = 'Access denied: This account does not have administrator privileges.'
       }
       else {

@@ -52,8 +52,16 @@ export default defineNuxtPlugin((nuxtApp) => {
   const networkApi = $fetch.create({
     headers,
     retry: 0,
-    async onResponseError({ response }) {
+    async onResponseError({ request, response }) {
       if (import.meta.client && response?.status === 401) {
+        const path = extractPathname(request)
+        if (path.startsWith('/api/admin/')) {
+          return
+        }
+        const router = (nuxtApp as any).$router
+        if (router?.currentRoute?.value?.path?.startsWith('/admin')) {
+          return
+        }
         await nuxtApp.runWithContext(() => useAuthActions().handleSessionExpired())
       }
     },
