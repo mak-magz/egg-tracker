@@ -5,14 +5,38 @@ import { requireAdmin } from '../../server/utils/auth'
 import * as authUtils from '../../server/utils/auth'
 import { listAdminTenants, getAdminTenantDetails } from '../../server/repositories/admin-tenants'
 import { runBatchMigrations } from '../../server/repositories/admin-migrations'
+import { assignUserToFarm, reassignUserFarm, listFirebaseUsers } from '../../server/repositories/admin-users'
 import * as tursoDb from '../../server/db/turso'
+import * as controlSchema from '../../server/db/schema/control'
 import * as adminAudit from '../../server/repositories/admin-audit'
 
 describe('Admin Authorization (requireAdmin)', () => {
   const originalAdminEmails = process.env.ADMIN_EMAILS
+  let mockAdmins: any[] = []
+  let insertedAdmins: any[] = []
+
+  beforeEach(() => {
+    mockAdmins = []
+    insertedAdmins = []
+    vi.spyOn(tursoDb, 'ensureControlDbBootstrapped').mockResolvedValue(undefined)
+    vi.spyOn(tursoDb, 'getControlDb').mockReturnValue({
+      select: () => ({
+        from: () => ({
+          where: vi.fn().mockImplementation(() => Promise.resolve(mockAdmins)),
+        }),
+      }),
+      insert: () => ({
+        values: vi.fn().mockImplementation((val: any) => {
+          insertedAdmins.push(val)
+          return Promise.resolve()
+        }),
+      }),
+    } as any)
+  })
 
   afterEach(() => {
     process.env.ADMIN_EMAILS = originalAdminEmails
+    vi.restoreAllMocks()
   })
 
   function makeMockEvent(email: string, userId = 'user-123'): H3Event {
@@ -23,16 +47,44 @@ describe('Admin Authorization (requireAdmin)', () => {
     } as unknown as H3Event
   }
 
-  it('allows access when user email matches single ADMIN_EMAILS entry', async () => {
-    process.env.ADMIN_EMAILS = 'admin@tamago.farm'
+  it('allows access when user is active in admins table', async () => {
+    process.env.ADMIN_EMAILS = ''
+    mockAdmins = [{ id: 'adm-1', userId: 'user-123', email: 'admin@tamago.farm', role: 'superadmin', isActive: 1 }]
     const event = makeMockEvent('admin@tamago.farm')
     const ctx = await requireAdmin(event)
     expect(ctx.email).toBe('admin@tamago.farm')
     expect(ctx.userId).toBe('user-123')
   })
 
+  it('throws 403 forbidden when user is inactive in admins table', async () => {
+    process.env.ADMIN_EMAILS = 'admin@tamago.farm'
+    mockAdmins = [{ id: 'adm-1', userId: 'user-123', email: 'admin@tamago.farm', role: 'superadmin', isActive: 0 }]
+    const event = makeMockEvent('admin@tamago.farm')
+    await expect(requireAdmin(event)).rejects.toMatchObject({
+      statusCode: 403,
+      data: { code: 'forbidden' },
+    })
+  })
+
+  it('allows access and inserts into admins table when user matches ADMIN_EMAILS fallback', async () => {
+    process.env.ADMIN_EMAILS = 'admin@tamago.farm'
+    mockAdmins = []
+    const event = makeMockEvent('admin@tamago.farm', 'user-new')
+    const ctx = await requireAdmin(event)
+    expect(ctx.email).toBe('admin@tamago.farm')
+    expect(ctx.userId).toBe('user-new')
+    expect(insertedAdmins.length).toBe(1)
+    expect(insertedAdmins[0]).toMatchObject({
+      userId: 'user-new',
+      email: 'admin@tamago.farm',
+      role: 'superadmin',
+      isActive: 1,
+    })
+  })
+
   it('allows access with case-insensitive and trimmed email matching in comma-separated list', async () => {
     process.env.ADMIN_EMAILS = ' Ops@Tamago.Farm , admin@example.com '
+    mockAdmins = []
     const event = makeMockEvent('ops@tamago.farm')
     const ctx = await requireAdmin(event)
     expect(ctx.email).toBe('ops@tamago.farm')
@@ -40,6 +92,7 @@ describe('Admin Authorization (requireAdmin)', () => {
 
   it('throws 403 forbidden when user email is not in ADMIN_EMAILS', async () => {
     process.env.ADMIN_EMAILS = 'admin@tamago.farm'
+    mockAdmins = []
     const event = makeMockEvent('farmer@farm.com')
     await expect(requireAdmin(event)).rejects.toMatchObject({
       statusCode: 403,
@@ -49,11 +102,104 @@ describe('Admin Authorization (requireAdmin)', () => {
 
   it('throws 403 forbidden when ADMIN_EMAILS is unset or empty', async () => {
     process.env.ADMIN_EMAILS = '   '
+    mockAdmins = []
     const event = makeMockEvent('admin@tamago.farm')
     await expect(requireAdmin(event)).rejects.toMatchObject({
       statusCode: 403,
       data: { code: 'forbidden' },
     })
+  })
+})
+
+describe('Platform Operator Isolation in User Assignment', () => {
+  const mockTenant = { id: 't-1', name: 'Pastures Farm' }
+  const mockMembership = { id: 'm-1', tenantId: 't-old', userId: 'user-operator' }
+
+  beforeEach(() => {
+    vi.spyOn(tursoDb, 'ensureControlDbBootstrapped').mockResolvedValue(undefined)
+    vi.spyOn(adminAudit, 'recordAdminAuditLog').mockResolvedValue({} as any)
+    vi.spyOn(authUtils, 'getFirebaseAdminAuth').mockReturnValue({
+      revokeRefreshTokens: vi.fn().mockResolvedValue(undefined),
+      listUsers: vi.fn().mockResolvedValue({
+        users: [
+          { uid: 'op-1', email: 'op@tamago.farm', emailVerified: true, metadata: {} },
+          { uid: 'cust-1', email: 'cust@farm.com', emailVerified: true, metadata: {} },
+        ],
+      }),
+    } as any)
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('prevents assignUserToFarm for active platform operators', async () => {
+    vi.spyOn(tursoDb, 'getControlDb').mockReturnValue({
+      select: () => ({
+        from: (table: any) => ({
+          where: vi.fn().mockImplementation(() => {
+            if (table === controlSchema.tenants) return Promise.resolve([mockTenant])
+            if (table === controlSchema.admins) return Promise.resolve([{ id: 'adm-1', userId: 'op-1', isActive: 1 }])
+            return Promise.resolve([])
+          }),
+        }),
+      }),
+    } as any)
+
+    await expect(assignUserToFarm('op-1', 't-1', 'admin@tamago.farm')).rejects.toMatchObject({
+      statusCode: 400,
+      data: { code: 'bad_request' },
+    })
+  })
+
+  it('prevents reassignUserFarm for active platform operators', async () => {
+    vi.spyOn(tursoDb, 'getControlDb').mockReturnValue({
+      select: () => ({
+        from: (table: any) => ({
+          where: vi.fn().mockImplementation(() => {
+            if (table === controlSchema.tenants) return Promise.resolve([mockTenant])
+            if (table === controlSchema.admins) return Promise.resolve([{ id: 'adm-1', userId: 'op-1', isActive: 1 }])
+            if (table === controlSchema.memberships) return Promise.resolve([mockMembership])
+            return Promise.resolve([])
+          }),
+        }),
+      }),
+    } as any)
+
+    await expect(reassignUserFarm('op-1', 't-1', 'admin@tamago.farm')).rejects.toMatchObject({
+      statusCode: 400,
+      data: { code: 'bad_request' },
+    })
+  })
+
+  it('decorates users with admin metadata in listFirebaseUsers', async () => {
+    vi.spyOn(tursoDb, 'getControlDb').mockReturnValue({
+      select: () => ({
+        from: (table: any) => {
+          if (table === controlSchema.memberships) return Promise.resolve([])
+          if (table === controlSchema.tenants) return Promise.resolve([])
+          if (table === controlSchema.admins) {
+            return Promise.resolve([
+              { id: 'adm-1', userId: 'op-1', email: 'op@tamago.farm', role: 'superadmin', isActive: 1 },
+            ])
+          }
+          return Promise.resolve([])
+        },
+      }),
+    } as any)
+
+    const res = await listFirebaseUsers()
+    expect(res.users.length).toBe(2)
+
+    const op = res.users.find(u => u.uid === 'op-1')
+    expect(op?.isAdmin).toBe(true)
+    expect(op?.adminRole).toBe('superadmin')
+    expect(op?.adminActive).toBe(true)
+
+    const cust = res.users.find(u => u.uid === 'cust-1')
+    expect(cust?.isAdmin).toBe(false)
+    expect(cust?.adminRole).toBeNull()
+    expect(cust?.adminActive).toBeNull()
   })
 })
 

@@ -10,6 +10,7 @@ import { getAuth as getAdminAuth } from 'firebase-admin/auth'
 import type { FarmSummary } from '../../shared/types/api'
 import { findMembershipWithFarm } from '../repositories/memberships'
 import type { MembershipWithFarm } from '../repositories/memberships'
+import { findAdminByUserId, upsertAdminUser } from '../repositories/admin-users'
 import { apiError } from './errors'
 
 export interface AuthContext {
@@ -30,7 +31,7 @@ declare module 'h3' {
     /** Per-request caches (promises, so concurrent callers share one lookup). */
     tamagoAuth?: Promise<AuthContext | null>
     tamagoMembership?: Promise<MembershipWithFarm | null>
-
+    tamagoAdmin?: Promise<AdminContext>
   }
 }
 
@@ -142,19 +143,38 @@ export function getFirebaseAdminAuth(event?: H3Event) {
   return getAdminAuth(adminApp)
 }
 
-/** Enforces verified Firebase Auth and ADMIN_EMAILS environment check (AC1, AC3). */
-export async function requireAdmin(event: H3Event): Promise<AdminContext> {
-  const auth = await requireAuth(event)
-  const adminEmailsRaw = process.env.ADMIN_EMAILS?.trim() || ''
-  const adminEmails = adminEmailsRaw
-    .split(',')
-    .map(e => e.trim().toLowerCase())
-    .filter(Boolean)
-
-  const userEmail = (auth.email || '').toLowerCase()
-  if (!userEmail || !adminEmails.includes(userEmail)) {
-    throw apiError(403, 'forbidden')
+/** Enforces verified Firebase Auth and platform operator authorization via Control DB admins table (with ADMIN_EMAILS fallback). */
+export function requireAdmin(event: H3Event): Promise<AdminContext> {
+  if (event.context.tamagoAdmin) {
+    return event.context.tamagoAdmin
   }
 
-  return auth
+  const promise = (async () => {
+    const auth = await requireAuth(event)
+    const adminRecord = await findAdminByUserId(auth.userId)
+
+    if (adminRecord) {
+      if (adminRecord.isActive) {
+        return auth
+      }
+      throw apiError(403, 'forbidden')
+    }
+
+    const adminEmailsRaw = process.env.ADMIN_EMAILS?.trim() || ''
+    const adminEmails = adminEmailsRaw
+      .split(',')
+      .map(e => e.trim().toLowerCase())
+      .filter(Boolean)
+
+    const userEmail = (auth.email || '').toLowerCase()
+    if (userEmail && adminEmails.includes(userEmail)) {
+      await upsertAdminUser(auth.userId, userEmail, 'superadmin')
+      return auth
+    }
+
+    throw apiError(403, 'forbidden')
+  })()
+
+  event.context.tamagoAdmin = promise
+  return promise
 }

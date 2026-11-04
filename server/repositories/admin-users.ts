@@ -13,6 +13,7 @@ export async function listFirebaseUsers(filter?: { search?: string }) {
   const listResult = await adminAuth.listUsers(1000)
   const memberships = await controlDb.select().from(controlSchema.memberships)
   const tenants = await controlDb.select().from(controlSchema.tenants)
+  const allAdmins = await controlDb.select().from(controlSchema.admins)
 
   const tenantMap = new Map<string, string>()
   for (const t of tenants) tenantMap.set(t.id, t.name)
@@ -25,14 +26,26 @@ export async function listFirebaseUsers(filter?: { search?: string }) {
     })
   }
 
+  const adminMap = new Map<string, { role: string, isActive: number }>()
+  for (const a of allAdmins) {
+    adminMap.set(a.userId, {
+      role: a.role,
+      isActive: a.isActive,
+    })
+  }
+
   let users = listResult.users.map((u) => {
     const mem = membershipMap.get(u.uid)
+    const adm = adminMap.get(u.uid)
     return {
       uid: u.uid,
       email: u.email || '',
       emailVerified: u.emailVerified,
       tenantId: mem?.tenantId || null,
       farmName: mem?.farmName || null,
+      isAdmin: Boolean(adm),
+      adminRole: adm ? adm.role : null,
+      adminActive: adm ? adm.isActive === 1 : null,
       createdAt: u.metadata.creationTime,
       lastSignInAt: u.metadata.lastSignInTime || null,
     }
@@ -58,6 +71,16 @@ export async function assignUserToFarm(uid: string, tenantId: string, operatorEm
     .where(eq(controlSchema.tenants.id, tenantId))
 
   if (!existingTenant) throw apiError(404, 'not_found')
+
+  // Check if uid is an active platform operator
+  const [adminRow] = await controlDb
+    .select()
+    .from(controlSchema.admins)
+    .where(eq(controlSchema.admins.userId, uid))
+
+  if (adminRow && adminRow.isActive === 1) {
+    throw apiError(400, 'bad_request', 'Platform operators cannot be assigned to a tenant farm')
+  }
 
   const [existingMembership] = await controlDb
     .select()
@@ -96,6 +119,16 @@ export async function reassignUserFarm(uid: string, newTenantId: string, operato
     .where(eq(controlSchema.tenants.id, newTenantId))
 
   if (!targetTenant) throw apiError(404, 'not_found')
+
+  // Check if uid is an active platform operator
+  const [adminRow] = await controlDb
+    .select()
+    .from(controlSchema.admins)
+    .where(eq(controlSchema.admins.userId, uid))
+
+  if (adminRow && adminRow.isActive === 1) {
+    throw apiError(400, 'bad_request', 'Platform operators cannot be assigned to a tenant farm')
+  }
 
   const [membership] = await controlDb
     .select()
@@ -174,4 +207,69 @@ export async function sendUserPasswordReset(uid: string, operatorEmail: string) 
   })
 
   return { success: true, emailSent: true }
+}
+
+export interface AdminRecord {
+  id: string
+  userId: string
+  email: string
+  role: string
+  isActive: boolean
+}
+
+export async function findAdminByUserId(userId: string): Promise<AdminRecord | null> {
+  await ensureControlDbBootstrapped()
+  const controlDb = getControlDb()
+  const [row] = await controlDb
+    .select()
+    .from(controlSchema.admins)
+    .where(eq(controlSchema.admins.userId, userId))
+
+  if (!row) return null
+  return {
+    id: row.id,
+    userId: row.userId,
+    email: row.email,
+    role: row.role,
+    isActive: row.isActive === 1,
+  }
+}
+
+export async function upsertAdminUser(
+  userId: string,
+  email: string,
+  role: 'superadmin' | 'support' | 'viewer' = 'superadmin',
+): Promise<void> {
+  await ensureControlDbBootstrapped()
+  const controlDb = getControlDb()
+  const now = new Date().toISOString()
+  const normalizedEmail = email.toLowerCase()
+
+  const [existing] = await controlDb
+    .select()
+    .from(controlSchema.admins)
+    .where(eq(controlSchema.admins.userId, userId))
+
+  if (existing) {
+    await controlDb
+      .update(controlSchema.admins)
+      .set({
+        email: normalizedEmail,
+        role,
+        isActive: 1,
+        updatedAt: now,
+      })
+      .where(eq(controlSchema.admins.id, existing.id))
+  }
+  else {
+    await controlDb.insert(controlSchema.admins).values({
+      id: crypto.randomUUID(),
+      userId,
+      email: normalizedEmail,
+      role,
+      isActive: 1,
+      createdAt: now,
+      updatedAt: now,
+    })
+  }
 }

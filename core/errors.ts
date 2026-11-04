@@ -8,6 +8,7 @@ export const API_ERROR_CODES: readonly ApiErrorCode[] = [
   'not_found',
   'conflict',
   'internal',
+  'bad_request',
 ]
 
 export const STATUS_MESSAGES: Record<ApiErrorCode, string> = {
@@ -18,6 +19,7 @@ export const STATUS_MESSAGES: Record<ApiErrorCode, string> = {
   not_found: 'Not Found',
   conflict: 'Conflict',
   internal: 'Internal Server Error',
+  bad_request: 'Bad Request',
 }
 
 export type ApiErrorExtra = Pick<

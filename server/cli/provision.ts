@@ -334,6 +334,46 @@ async function provisionAdmin(adminAuth: Auth, cmd: AdminCommand) {
 
   console.log(adminOutcomeMessage(cmd.email, status))
 
+  // Upsert operator in Control DB admins table
+  const controlUrl = process.env.NUXT_TURSO_CONTROL_URL?.trim() || 'file:local-control.db'
+  const controlToken = process.env.NUXT_TURSO_CONTROL_AUTH_TOKEN?.trim() || undefined
+  const rawControlClient = createClient({ url: controlUrl, authToken: controlToken })
+  await initControlDbSchema(rawControlClient)
+
+  const controlDb = getControlDb()
+  const [existingAdmin] = await controlDb
+    .select()
+    .from(controlSchema.admins)
+    .where(eq(controlSchema.admins.userId, userId))
+
+  const now = new Date().toISOString()
+  const normalizedEmail = cmd.email.toLowerCase()
+
+  if (existingAdmin) {
+    await controlDb
+      .update(controlSchema.admins)
+      .set({
+        email: normalizedEmail,
+        role: 'superadmin',
+        isActive: 1,
+        updatedAt: now,
+      })
+      .where(eq(controlSchema.admins.id, existingAdmin.id))
+  }
+  else {
+    await controlDb.insert(controlSchema.admins).values({
+      id: randomUUID(),
+      userId,
+      email: normalizedEmail,
+      role: 'superadmin',
+      isActive: 1,
+      createdAt: now,
+      updatedAt: now,
+    })
+  }
+
+  console.log(`Operator recorded in Control DB admins table (${normalizedEmail}, role: superadmin, active: 1).`)
+
   // Check ADMIN_EMAILS configuration
   const adminEmailsRaw = process.env.ADMIN_EMAILS?.trim() || ''
   const adminEmails = adminEmailsRaw
