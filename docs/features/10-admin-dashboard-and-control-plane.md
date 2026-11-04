@@ -288,7 +288,7 @@ The **Operator Admin Dashboard** (`/admin`) is an internal mission-control inter
 - If authenticated non-admin owner accesses `/admin`:
   - Route middleware halts rendering, preventing any Control DB data from loading.
   - Displays dedicated **403 Access Denied** card: *"Administrator privileges required"*.
-  - Primary button **"Return to Farm Dashboard"** [1 tap] returns owner safely to `/`.
+  - Primary button **"Return to Farm Dashboard"** [1 tap] returns owner safely to `/`. 
 
 ---
 
