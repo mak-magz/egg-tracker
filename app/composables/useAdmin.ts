@@ -255,6 +255,13 @@ export function useAdmin() {
   }
 
   async function adminFetch<T>(path: string, options: FetchOptions = {}): Promise<T> {
+    type GenericFetch = <R>(url: string, opts?: unknown) => Promise<R>
+
+    if (import.meta.server) {
+      const fetcher = useRequestFetch()
+      return await (fetcher as unknown as GenericFetch)<T>(path, options)
+    }
+
     const token = await getAuthToken()
     const headers: Record<string, string> = {
       ...(options.headers as Record<string, string> || {}),
@@ -262,7 +269,6 @@ export function useAdmin() {
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
     }
 
-    type GenericFetch = <R>(url: string, opts?: unknown) => Promise<R>
     return await (globalThis.$fetch as unknown as GenericFetch)<T>(path, {
       ...options,
       headers,
