@@ -2,8 +2,9 @@ name: CI/CD
 
 on:
   pull_request:
+    branches: [main, develop]
   push:
-    branches: [main]
+    branches: [main, develop]
 
 permissions:
   contents: read
@@ -49,10 +50,13 @@ jobs:
   migrate:
     name: Turso Control Database Migrations
     needs: [checks]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop')
     runs-on: ubuntu-latest
-    environment: production
+    environment: ${{ github.ref == 'refs/heads/main' && 'production' || 'development' }}
     timeout-minutes: 10
+    env:
+      NUXT_TURSO_CONTROL_URL: ${{ secrets.NUXT_TURSO_CONTROL_URL }}
+      NUXT_TURSO_CONTROL_AUTH_TOKEN: ${{ secrets.NUXT_TURSO_CONTROL_AUTH_TOKEN }}
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
@@ -68,6 +72,3 @@ jobs:
       - name: Push Control DB Migrations
         if: env.NUXT_TURSO_CONTROL_URL != ''
         run: bun run db:push:control
-        env:
-          NUXT_TURSO_CONTROL_URL: ${{ secrets.NUXT_TURSO_CONTROL_URL }}
-          NUXT_TURSO_CONTROL_AUTH_TOKEN: ${{ secrets.NUXT_TURSO_CONTROL_AUTH_TOKEN }}
