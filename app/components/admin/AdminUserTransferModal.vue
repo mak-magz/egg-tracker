@@ -37,7 +37,7 @@ watch(() => props.user, (u) => {
 })
 
 async function onConfirm() {
-  if (!props.user || !selectedTenantId.value) return
+  if (!props.user || !selectedTenantId.value || props.user.isAdmin) return
   submitting.value = true
   try {
     if (props.user.tenantId) {
@@ -134,7 +134,7 @@ const ui = sheetUi(480)
             size="md"
             :label="user.tenantId ? 'Confirm Transfer' : 'Confirm Assignment'"
             :loading="submitting"
-            :disabled="!selectedTenantId || (user.tenantId === selectedTenantId)"
+            :disabled="!selectedTenantId || (user.tenantId === selectedTenantId) || Boolean(user.isAdmin)"
             class="flex-1 min-h-11"
             @click="onConfirm"
           />

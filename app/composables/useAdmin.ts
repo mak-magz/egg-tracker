@@ -106,6 +106,9 @@ export interface AdminUserItem {
   emailVerified: boolean
   tenantId?: string | null
   farmName?: string | null
+  isAdmin?: boolean
+  adminRole?: string | null
+  adminActive?: boolean | null
   createdAt: string
   lastSignInAt?: string | null
 }
