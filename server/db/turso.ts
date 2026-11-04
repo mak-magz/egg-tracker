@@ -81,6 +81,17 @@ export async function initControlDbSchema(client: LibSqlClient): Promise<void> {
       details TEXT,
       created_at TEXT NOT NULL
     )`,
+    `CREATE TABLE IF NOT EXISTS admins (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL UNIQUE,
+      email TEXT NOT NULL,
+      role TEXT NOT NULL DEFAULT 'superadmin',
+      is_active INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS admins_user_id_key ON admins (user_id)`,
+    `CREATE INDEX IF NOT EXISTS admins_email_idx ON admins (email)`,
     `CREATE INDEX IF NOT EXISTS admin_audit_logs_created_at_idx ON admin_audit_logs (created_at)`,
     `CREATE INDEX IF NOT EXISTS admin_audit_logs_operator_idx ON admin_audit_logs (operator_email)`,
   ], 'write')

@@ -32,6 +32,27 @@ export const memberships = sqliteTable(
   ],
 )
 
+export const admins = sqliteTable(
+  'admins',
+  {
+    id: text('id').primaryKey(),
+    /** Firebase Auth UID */
+    userId: text('user_id').notNull(),
+    /** Lowercased operator email */
+    email: text('email').notNull(),
+    /** Operator role permissions */
+    role: text('role', { enum: ['superadmin', 'support', 'viewer'] }).notNull().default('superadmin'),
+    /** Status flag: 1 = active operator, 0 = suspended/revoked */
+    isActive: integer('is_active').notNull().default(1),
+    createdAt: text('created_at').notNull().$defaultFn(() => new Date().toISOString()),
+    updatedAt: text('updated_at').notNull().$defaultFn(() => new Date().toISOString()),
+  },
+  table => [
+    uniqueIndex('admins_user_id_key').on(table.userId),
+    index('admins_email_idx').on(table.email),
+  ],
+)
+
 export const adminAuditLogs = sqliteTable(
   'admin_audit_logs',
   {
@@ -63,5 +84,7 @@ export const adminAuditLogs = sqliteTable(
 
 export type ControlTenantRow = typeof tenants.$inferSelect
 export type ControlMembershipRow = typeof memberships.$inferSelect
+export type ControlAdminRow = typeof admins.$inferSelect
+export type NewControlAdminRow = typeof admins.$inferInsert
 export type ControlAdminAuditLogRow = typeof adminAuditLogs.$inferSelect
 export type NewControlAdminAuditLogRow = typeof adminAuditLogs.$inferInsert
