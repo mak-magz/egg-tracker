@@ -42,7 +42,10 @@ export default defineNuxtRouteMiddleware(async (to) => {
         }
         return
       }
-      throw err
+      console.error('[admin:ssr] SSR probe error, redirecting to login:', err)
+      return navigateTo(`/admin/login?redirect=${encodeURIComponent(to.fullPath)}`, {
+        redirectCode: 302,
+      })
     }
     return
   }
