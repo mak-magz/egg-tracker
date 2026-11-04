@@ -13,6 +13,14 @@ import type { MembershipWithFarm } from '../repositories/memberships'
 import { findAdminByUserId, upsertAdminUser } from '../repositories/admin-users'
 import { apiError } from './errors'
 
+// Bridge FIREBASE_SERVICE_ACCOUNT into GOOGLE_APPLICATION_CREDENTIALS if omitted,
+// enabling nuxt-vuefire's session cookie minter (/api/__session) to authenticate on Vercel.
+if (typeof process !== 'undefined' && process.env) {
+  if (!process.env.GOOGLE_APPLICATION_CREDENTIALS && process.env.FIREBASE_SERVICE_ACCOUNT) {
+    process.env.GOOGLE_APPLICATION_CREDENTIALS = process.env.FIREBASE_SERVICE_ACCOUNT
+  }
+}
+
 export interface AuthContext {
   userId: string
   email: string
@@ -50,7 +58,7 @@ export function isTransientAuthFailure(error: { status?: number, code?: string, 
 }
 
 function getOrInitAdminApp(event: H3Event): AdminApp {
-  if (process.env.NODE_ENV !== 'production' && !process.env.FIREBASE_SERVICE_ACCOUNT?.trim()) {
+  if (process.env.NODE_ENV !== 'production' && !process.env.FIREBASE_SERVICE_ACCOUNT?.trim() && !process.env.GOOGLE_APPLICATION_CREDENTIALS?.trim()) {
     process.env.FIREBASE_AUTH_EMULATOR_HOST ||= '127.0.0.1:9099'
   }
   if (
@@ -62,7 +70,7 @@ function getOrInitAdminApp(event: H3Event): AdminApp {
   const existing = getApps().find(app => !('options' in app) || Boolean(app.options?.projectId))
   if (existing) return existing
 
-  const rawServiceAccount = process.env.FIREBASE_SERVICE_ACCOUNT?.trim()
+  const rawServiceAccount = (process.env.FIREBASE_SERVICE_ACCOUNT || process.env.GOOGLE_APPLICATION_CREDENTIALS)?.trim()
   const projectId = process.env.NUXT_PUBLIC_FIREBASE_PROJECT_ID?.trim() || 'demo-no-project'
 
   if (rawServiceAccount && rawServiceAccount.startsWith('{')) {
