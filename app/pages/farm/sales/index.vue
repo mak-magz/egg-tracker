@@ -340,7 +340,7 @@ function onStackedDelivery(delivery: OrderDelivery) {
 }
 
 async function openOrderInOrders(order: { id: string }) {
-  await stack.handoffTo({ kind: 'order', id: order.id }, '/orders')
+  await stack.handoffTo({ kind: 'order', id: order.id }, '/farm/orders')
 }
 
 // ---- Mount ----------------------------------------------------------------------------------------------------

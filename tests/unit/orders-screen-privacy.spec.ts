@@ -46,15 +46,15 @@ const appOrdersFiles = [
   ...walk(join(ROOT, 'app', 'components')).filter(f => /\/(Order[A-Za-z]*|Orders[A-Za-z]*|DeliverOrderDialog|CancelOrderDialog|CloseShortDialog|FromOrderLink|AppMoreSheet|SaleVoidDialog)\.vue$/.test(rel(f))),
   ...walk(join(ROOT, 'app', 'composables')).filter(f => /\/use(Orders|OrderMutations|DetailStack)\.ts$/.test(rel(f))),
   ...walk(join(ROOT, 'app', 'utils')).filter(f => /\/order-[a-z-]+\.ts$/.test(rel(f))),
-  join(ROOT, 'app', 'pages', 'orders.vue'),
-  join(ROOT, 'app', 'pages', 'sales', 'index.vue'),
+  join(ROOT, 'app', 'pages', 'farm', 'orders.vue'),
+  join(ROOT, 'app', 'pages', 'farm', 'sales', 'index.vue'),
 ].filter(isFile)
 
 describe('orders screen code', () => {
   it('finds the orders screen sources', () => {
     const names = appOrdersFiles.map(rel)
     for (const expected of [
-      'app/pages/orders.vue',
+      'app/pages/farm/orders.vue',
       'app/composables/useOrders.ts',
       'app/composables/useOrderMutations.ts',
       'app/composables/useDetailStack.ts',
@@ -85,7 +85,7 @@ describe('orders screen code', () => {
   })
 
   it('AC53: the orders page declares no route params or query of its own', () => {
-    const src = code(join(ROOT, 'app', 'pages', 'orders.vue'))
+    const src = code(join(ROOT, 'app', 'pages', 'farm', 'orders.vue'))
     expect(src).not.toMatch(/useRoute\b|definePageMeta\(\{[^}]*(?:validate|key)/)
   })
 

@@ -3,7 +3,7 @@ import { APP_NAV, findActiveNavItem } from '../../app/utils/nav'
 import { releaseSubtitle, resolveShellSubtitle } from '../../app/utils/shell-subtitle'
 import type { ShellSubtitleInput } from '../../app/utils/shell-subtitle'
 
-const clients = findActiveNavItem('/clients')
+const clients = findActiveNavItem('/farm/clients')
 const base: ShellSubtitleInput = { ownSubtitle: false, override: null, item: undefined, metaSubtitle: undefined, today: null }
 
 describe('resolveShellSubtitle', () => {

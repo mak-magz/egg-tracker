@@ -41,7 +41,7 @@ const appClientFiles = [
   ...walk(join(ROOT, 'app', 'components')).filter(f => /\/Client[A-Za-z]*\.vue$/.test(rel(f))),
   ...walk(join(ROOT, 'app', 'composables')).filter(f => /\/useClient[A-Za-z]*\.ts$/.test(rel(f))),
   ...walk(join(ROOT, 'app', 'utils')).filter(f => /\/client-[a-z-]+\.ts$/.test(rel(f))),
-  join(ROOT, 'app', 'pages', 'clients.vue'),
+  join(ROOT, 'app', 'pages', 'farm', 'clients.vue'),
 ].filter((f) => {
   try {
     return statSync(f).isFile()

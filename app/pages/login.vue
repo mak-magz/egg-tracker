@@ -128,7 +128,7 @@ async function onSubmit(event: FormSubmitEvent<SignInInput>) {
 
       <div class="border-t border-default pt-2 text-center">
         <UButton
-          to="/production"
+          to="/farm"
           variant="ghost"
           color="neutral"
           size="lg"

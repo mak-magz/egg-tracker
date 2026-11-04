@@ -27,7 +27,7 @@ export default defineNuxtRouteMiddleware(async (to) => {
 
     if (to.path === '/welcome') {
       if (hasCompletedOnboarding) {
-        return navigateTo('/production', { replace: true })
+        return navigateTo('/farm', { replace: true })
       }
       return
     }
@@ -56,7 +56,7 @@ export default defineNuxtRouteMiddleware(async (to) => {
   }
 
   if (token && to.path === '/welcome') {
-    return navigateTo('/production', { replace: true })
+    return navigateTo('/farm', { replace: true })
   }
 
   // 3. Settle session
@@ -71,7 +71,7 @@ export default defineNuxtRouteMiddleware(async (to) => {
     if (result === 'ready' && !me.value?.farm) {
       return navigateTo('/no-farm', { replace: true })
     }
-    return navigateTo(safeReturnTo(to.query.redirect) ?? '/', { replace: true })
+    return navigateTo(safeReturnTo(to.query.redirect) ?? '/farm', { replace: true })
   }
 
   // 5. Cloud Farm Gating

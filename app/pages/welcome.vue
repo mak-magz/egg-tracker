@@ -48,7 +48,7 @@ async function onSubmit(event: FormSubmitEvent<OnboardingInput>) {
     onboarded.value = 'true'
 
     await ensure({ force: true })
-    await navigateTo('/production', { replace: true })
+    await navigateTo('/farm', { replace: true })
   }
   catch (err: unknown) {
     submitting.value = false

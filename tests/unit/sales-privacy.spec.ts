@@ -43,7 +43,7 @@ const appSalesFiles = [
   ...walk(join(ROOT, 'app', 'components')).filter(f => /\/(Sale[A-Za-z]*|ClientPicker|SizeChipPicker|StockShortfallDialog)\.vue$/.test(rel(f))),
   ...walk(join(ROOT, 'app', 'composables')).filter(f => /\/use(Sale[A-Za-z]*|OnHand)\.ts$/.test(rel(f))),
   ...walk(join(ROOT, 'app', 'utils')).filter(f => /\/sale-[a-z-]+\.ts$/.test(rel(f))),
-  join(ROOT, 'app', 'pages', 'sales', 'index.vue'),
+  join(ROOT, 'app', 'pages', 'farm', 'sales', 'index.vue'),
 ].filter((f) => {
   try {
     return statSync(f).isFile()
@@ -120,7 +120,7 @@ describe('sales screen code (whichever files exist)', () => {
 })
 
 // Feature 07's invoice (AC22, AC23): page, sheet, composable and helpers.
-const invoicePage = join(ROOT, 'app', 'pages', 'sales', '[id]', 'invoice.vue')
+const invoicePage = join(ROOT, 'app', 'pages', 'farm', 'sales', '[id]', 'invoice.vue')
 const invoiceFiles = [
   invoicePage,
   ...walk(join(ROOT, 'app', 'components')).filter(f => /\/Invoice[A-Za-z]*\.vue$/.test(rel(f))),
@@ -133,7 +133,7 @@ describe('invoice code (feature 07, AC22, AC23)', () => {
     expect(invoiceFiles.map(rel).sort()).toEqual([
       'app/components/InvoiceSheet.vue',
       'app/composables/useInvoice.ts',
-      'app/pages/sales/[id]/invoice.vue',
+      'app/pages/farm/sales/[id]/invoice.vue',
       'app/utils/invoice-copy.ts',
       'app/utils/invoice-load.ts',
       'app/utils/invoice-view.ts',

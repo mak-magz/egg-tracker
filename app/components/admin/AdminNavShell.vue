@@ -70,7 +70,7 @@ const tabs = computed(() => [
             Operator: <span class="text-highlighted font-medium">{{ operatorEmail }}</span>
           </span>
           <UButton
-            to="/"
+            to="/farm"
             color="neutral"
             variant="ghost"
             size="sm"

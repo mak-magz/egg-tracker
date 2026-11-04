@@ -55,7 +55,7 @@ async function handleRetry() {
           class="min-h-11"
         />
         <UButton
-          to="/"
+          to="/farm"
           color="neutral"
           variant="ghost"
           size="md"

@@ -84,7 +84,7 @@ const subtitle = computed(() => resolveShellSubtitle({
 const router = useRouter()
 function goBack() {
   if (import.meta.client && window.history.state?.back) router.back()
-  else void navigateTo('/')
+  else void navigateTo('/farm')
 }
 
 // The phone bar's More sheet (feature 05 AC1). Closed by any route change, so a row tap just navigates.
@@ -224,7 +224,7 @@ const navUi = computed(() => ({
                 </span>
               </div>
               <NuxtLink
-                to="/settings"
+                to="/farm/settings"
                 class="shrink-0 font-semibold text-primary hover:underline text-[11px]"
               >
                 {{ isFree ? 'Upgrade' : 'Settings' }}
