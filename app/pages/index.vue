@@ -55,7 +55,10 @@ await navigateTo(target, { replace: true, redirectCode: 302 })
 <template>
   <div class="min-h-screen bg-muted flex items-center justify-center">
     <div class="flex flex-col items-center gap-3">
-      <AppLogo :size="48" class="animate-pulse" />
+      <AppLogo
+        :size="48"
+        class="animate-pulse"
+      />
       <span class="text-xs font-medium text-muted">Loading Tamago...</span>
     </div>
   </div>

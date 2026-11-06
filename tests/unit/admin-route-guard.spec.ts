@@ -249,8 +249,8 @@ describe('Admin Route Guards & Redirection', () => {
     const localRouterDispatchMock = vi.fn()
 
     async function simulateUseMeLoad(currentPath: string, isServer = false) {
-      let me: any = null
-      let status: 'idle' | 'loading' | 'ready' | 'error' = 'loading'
+      let me: any
+      let status: 'idle' | 'loading' | 'ready' | 'error'
 
       try {
         if (isServer) {
