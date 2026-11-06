@@ -8,8 +8,8 @@ import { loginLocation } from '~/utils/login-location'
 
 export default defineNuxtRouteMiddleware(async (to) => {
   // 0. Admin & Operator routes are completely separated from barnside farm onboarding
-  if (to.path.startsWith('/admin') || to.path === '/login/admin') {
-    if (to.path === '/login/admin') {
+  if (to.path.startsWith('/admin') || to.path.startsWith('/login/admin')) {
+    if (to.path.startsWith('/login/admin')) {
       return navigateTo('/admin/login', { replace: true })
     }
     return

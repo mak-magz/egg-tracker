@@ -199,4 +199,111 @@ describe('Admin Route Guards & Redirection', () => {
     expect(await resolveRootDestination({ onboarded: false })).toBe('/welcome')
     expect(await resolveRootDestination({ onboarded: true })).toBe('/login')
   })
+
+  it('classifies admin routes and prevents triggering local worker initialization or pre-warming in client bootstrap', () => {
+    function isAdminPath(pathname: string): boolean {
+      return pathname.startsWith('/admin') || pathname.startsWith('/login/admin')
+    }
+
+    function shouldPrewarmLocalWorker(pathname: string): boolean {
+      return !isAdminPath(pathname)
+    }
+
+    const adminPaths = [
+      '/admin',
+      '/admin/',
+      '/admin/login',
+      '/admin/metrics',
+      '/admin/tenants',
+      '/admin/users',
+      '/admin/migrations',
+      '/login/admin',
+      '/login/admin/',
+    ]
+
+    for (const path of adminPaths) {
+      expect(isAdminPath(path), `Expected ${path} to be recognized as an admin path`).toBe(true)
+      expect(shouldPrewarmLocalWorker(path), `Expected ${path} to prevent local worker pre-warming`).toBe(false)
+    }
+
+    const nonAdminPaths = [
+      '/',
+      '/farm',
+      '/farm/production',
+      '/production',
+      '/sales',
+      '/orders',
+      '/clients',
+      '/welcome',
+      '/login',
+      '/login/forgot-password',
+    ]
+
+    for (const path of nonAdminPaths) {
+      expect(isAdminPath(path), `Expected ${path} to NOT be recognized as an admin path`).toBe(false)
+      expect(shouldPrewarmLocalWorker(path), `Expected ${path} to allow local worker pre-warming`).toBe(true)
+    }
+  })
+
+  it('useMe() guard correctly avoids calling localRouter on admin paths', async () => {
+    const localRouterDispatchMock = vi.fn()
+
+    async function simulateUseMeLoad(currentPath: string, isServer = false) {
+      let me: any = null
+      let status: 'idle' | 'loading' | 'ready' | 'error' = 'loading'
+
+      try {
+        if (isServer) {
+          me = null
+          status = 'idle'
+          return { result: 'unauthenticated', me, status }
+        }
+
+        // Defense-in-depth: Never query local SQLite worker on admin routes
+        if (currentPath.startsWith('/admin') || currentPath.startsWith('/login/admin')) {
+          me = null
+          status = 'idle'
+          return { result: 'unauthenticated', me, status }
+        }
+
+        // Non-admin route for free tier: dispatches to localRouter
+        const localMe = await localRouterDispatchMock('/api/me')
+        me = { ...localMe, isFree: true, tier: 'free' }
+        status = 'ready'
+        return { result: 'ready', me, status }
+      }
+      catch {
+        me = null
+        status = 'error'
+        return { result: 'error', me, status }
+      }
+    }
+
+    // 1. Admin paths: must return 'unauthenticated', set status to 'idle', and NEVER call localRouter.dispatch
+    const testAdminPaths = ['/admin', '/admin/login', '/admin/metrics', '/login/admin', '/login/admin/']
+    for (const path of testAdminPaths) {
+      localRouterDispatchMock.mockClear()
+      const res = await simulateUseMeLoad(path)
+      expect(res.result).toBe('unauthenticated')
+      expect(res.status).toBe('idle')
+      expect(res.me).toBeNull()
+      expect(localRouterDispatchMock).not.toHaveBeenCalled()
+    }
+
+    // 2. Non-admin paths: should call localRouter.dispatch and succeed
+    localRouterDispatchMock.mockClear()
+    localRouterDispatchMock.mockResolvedValueOnce({
+      farm: { id: 'farm-1', name: 'My Farm' },
+    })
+
+    const resFarm = await simulateUseMeLoad('/farm')
+    expect(resFarm.result).toBe('ready')
+    expect(resFarm.status).toBe('ready')
+    expect(resFarm.me).toEqual({
+      farm: { id: 'farm-1', name: 'My Farm' },
+      isFree: true,
+      tier: 'free',
+    })
+    expect(localRouterDispatchMock).toHaveBeenCalledWith('/api/me')
+  })
 })

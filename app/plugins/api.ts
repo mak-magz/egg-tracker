@@ -59,7 +59,8 @@ export default defineNuxtPlugin((nuxtApp) => {
           return
         }
         const router = (nuxtApp as any).$router
-        if (router?.currentRoute?.value?.path?.startsWith('/admin')) {
+        const routePath = router?.currentRoute?.value?.path || ''
+        if (routePath.startsWith('/admin') || routePath.startsWith('/login/admin')) {
           return
         }
         await nuxtApp.runWithContext(() => useAuthActions().handleSessionExpired())
@@ -95,11 +96,16 @@ export default defineNuxtPlugin((nuxtApp) => {
     globalThis.$fetch = apiFetch as any
     nuxtApp.$fetch = apiFetch
 
-    const { ensure, me } = useMe()
-    if (!me.value) {
-      void ensure().catch((err) => {
-        console.warn('[api-plugin] Failed to initialize local farm on startup:', err)
-      })
+    const currentPath = typeof window !== 'undefined' ? window.location.pathname : ''
+    const isAdminPath = currentPath.startsWith('/admin') || currentPath.startsWith('/login/admin')
+
+    if (!isAdminPath) {
+      const { ensure, me } = useMe()
+      if (!me.value) {
+        void ensure().catch((err) => {
+          console.warn('[api-plugin] Failed to initialize local farm on startup:', err)
+        })
+      }
     }
   }
 
