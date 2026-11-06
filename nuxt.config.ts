@@ -223,16 +223,6 @@ export default defineNuxtConfig({
       navigateFallback: '/farm',
       navigateFallbackDenylist: [/^\/admin/, /^\/api/],
       globPatterns: ['**/*.{js,css,html,png,svg,ico,woff2,wasm}'],
-      runtimeCaching: [
-        {
-          urlPattern: /^\/admin/,
-          handler: 'NetworkOnly',
-        },
-        {
-          urlPattern: /^\/api/,
-          handler: 'NetworkOnly',
-        },
-      ],
     },
   },
 
