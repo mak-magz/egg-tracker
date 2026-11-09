@@ -45,6 +45,7 @@ export default defineAdminHandler(async (event, ctx) => {
     farmName,
     ownerEmail,
     ownerUid: uid,
+    tier,
     eggsPerTray,
     currency,
   })

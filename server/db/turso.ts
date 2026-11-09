@@ -120,12 +120,28 @@ export async function initTenantDbSchema(client: LibSqlClient): Promise<void> {
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     )`,
+    `CREATE TABLE IF NOT EXISTS local_counters (
+      id TEXT PRIMARY KEY,
+      next_number INTEGER NOT NULL DEFAULT 1,
+      updated_at TEXT NOT NULL
+    )`,
+    `CREATE TABLE IF NOT EXISTS sale_counters (
+      id INTEGER PRIMARY KEY DEFAULT 1,
+      next_number INTEGER NOT NULL DEFAULT 1,
+      updated_at TEXT NOT NULL
+    )`,
+    `CREATE TABLE IF NOT EXISTS order_counters (
+      id INTEGER PRIMARY KEY DEFAULT 1,
+      next_number INTEGER NOT NULL DEFAULT 1,
+      updated_at TEXT NOT NULL
+    )`,
     `CREATE TABLE IF NOT EXISTS sizes (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
       sort_order INTEGER NOT NULL,
       color_slot INTEGER NOT NULL UNIQUE,
       archived_at TEXT,
+      default_price REAL,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     )`,
@@ -169,26 +185,16 @@ export async function initTenantDbSchema(client: LibSqlClient): Promise<void> {
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     )`,
-    `CREATE TABLE IF NOT EXISTS sale_counters (
-      id INTEGER PRIMARY KEY DEFAULT 1,
-      next_number INTEGER NOT NULL DEFAULT 1,
-      updated_at TEXT NOT NULL
-    )`,
-    `CREATE TABLE IF NOT EXISTS order_counters (
-      id INTEGER PRIMARY KEY DEFAULT 1,
-      next_number INTEGER NOT NULL DEFAULT 1,
-      updated_at TEXT NOT NULL
-    )`,
     `CREATE TABLE IF NOT EXISTS orders (
       id TEXT PRIMARY KEY,
-      order_number INTEGER NOT NULL UNIQUE,
+      order_number TEXT NOT NULL UNIQUE,
       client_id TEXT NOT NULL REFERENCES clients(id),
       order_date TEXT NOT NULL,
       wanted_by TEXT,
       status TEXT NOT NULL DEFAULT 'requested',
       cancelled_at TEXT,
       closed_short_at TEXT,
-      converted_from_sale_number INTEGER,
+      converted_from_sale_number TEXT,
       version INTEGER NOT NULL DEFAULT 1,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
@@ -213,11 +219,12 @@ export async function initTenantDbSchema(client: LibSqlClient): Promise<void> {
     )`,
     `CREATE TABLE IF NOT EXISTS sales (
       id TEXT PRIMARY KEY,
-      sale_number INTEGER NOT NULL UNIQUE,
+      sale_number TEXT NOT NULL UNIQUE,
       client_id TEXT REFERENCES clients(id),
       type TEXT NOT NULL,
       sale_date TEXT NOT NULL,
       order_id TEXT REFERENCES orders(id),
+      order_number TEXT,
       version INTEGER NOT NULL DEFAULT 1,
       voided_at TEXT,
       created_at TEXT NOT NULL,
@@ -240,12 +247,53 @@ export async function initTenantDbSchema(client: LibSqlClient): Promise<void> {
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     )`,
+    `CREATE TABLE IF NOT EXISTS outbox_mutations (
+      id TEXT PRIMARY KEY,
+      device_id TEXT NOT NULL,
+      mutation_type TEXT NOT NULL,
+      payload TEXT NOT NULL,
+      occurred_at TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending',
+      error TEXT,
+      created_at TEXT NOT NULL
+    )`,
+    `CREATE TABLE IF NOT EXISTS sync_state (
+      id TEXT PRIMARY KEY DEFAULT 'default',
+      tenant_id TEXT,
+      cloud_url TEXT,
+      cloud_token TEXT,
+      last_pulled_version INTEGER NOT NULL DEFAULT 0,
+      last_pulled_at TEXT,
+      last_pushed_at TEXT,
+      status TEXT NOT NULL DEFAULT 'local_only',
+      last_error TEXT,
+      updated_at TEXT NOT NULL
+    )`,
+    `CREATE TABLE IF NOT EXISTS change_log (
+      version INTEGER PRIMARY KEY AUTOINCREMENT,
+      entity_type TEXT NOT NULL,
+      entity_id TEXT NOT NULL,
+      action TEXT NOT NULL,
+      device_id TEXT NOT NULL,
+      occurred_at TEXT NOT NULL,
+      data TEXT NOT NULL
+    )`,
+    `CREATE INDEX IF NOT EXISTS change_log_version_idx ON change_log (version)`,
+    `CREATE INDEX IF NOT EXISTS outbox_status_idx ON outbox_mutations (status, created_at)`,
     {
       sql: `INSERT OR IGNORE INTO sale_counters (id, next_number, updated_at) VALUES (1, 1, ?)`,
       args: [now],
     },
     {
       sql: `INSERT OR IGNORE INTO order_counters (id, next_number, updated_at) VALUES (1, 1, ?)`,
+      args: [now],
+    },
+    {
+      sql: `INSERT OR IGNORE INTO local_counters (id, next_number, updated_at) VALUES ('sales', 1, ?), ('orders', 1, ?)`,
+      args: [now],
+    },
+    {
+      sql: `INSERT OR IGNORE INTO sync_state (id, status, updated_at) VALUES ('default', 'local_only', ?)`,
       args: [now],
     },
   ], 'write')

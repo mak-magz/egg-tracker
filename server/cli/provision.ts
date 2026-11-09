@@ -125,6 +125,16 @@ async function findUserId(adminAuth: Auth, email: string): Promise<string | null
   }
 }
 
+function isPlatformApiToken(token: string): boolean {
+  try {
+    const parts = token.split('.')
+    if (parts.length !== 3 || !parts[1]) return false
+    const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'))
+    if (payload.rid || payload.a) return false
+    return true
+  } catch { return false }
+}
+
 async function createTenantTursoDatabase(tenantId: string): Promise<{ dbUrl: string, dbAuthToken: string }> {
   const tursoApiToken = process.env.TURSO_API_TOKEN?.trim()
   const tursoOrg = process.env.TURSO_ORG?.trim()
@@ -132,6 +142,13 @@ async function createTenantTursoDatabase(tenantId: string): Promise<{ dbUrl: str
 
   if (!tursoApiToken || !tursoOrg) {
     return { dbUrl: `file:local-tenant-${tenantId}.db`, dbAuthToken: '' }
+  }
+
+  if (!isPlatformApiToken(tursoApiToken)) {
+    throw new CliError(
+      'TURSO_API_TOKEN is a database token, not a Turso Platform API token. ' +
+      'Platform API tokens are minted via `turso auth api-tokens mint <name>` or in the Turso Dashboard under Settings > API Tokens.',
+    )
   }
 
   const dbName = `tamago-${tenantId.replace(/[^a-z0-9-]/gi, '').toLowerCase().slice(0, 32)}`

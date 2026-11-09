@@ -10,11 +10,27 @@ export interface ProvisionTenantParams {
   eggsPerTray?: number
   ownerEmail: string
   ownerUid: string
+  tier?: 'free' | 'premium'
 }
 
 export interface ProvisionTenantResult {
   tenantId: string
   dbUrl: string
+}
+
+function isPlatformApiToken(token: string): boolean {
+  try {
+    const parts = token.split('.')
+    if (parts.length !== 3 || !parts[1]) return false
+    const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'))
+    // Turso database tokens contain 'rid' (resource id) and/or 'a' (action permissions like rw).
+    // Platform API tokens do not contain 'rid'.
+    if (payload.rid || payload.a) return false
+    return true
+  }
+  catch {
+    return false
+  }
 }
 
 async function createTenantTursoDatabase(tenantId: string): Promise<{ dbUrl: string, dbAuthToken: string }> {
@@ -24,6 +40,18 @@ async function createTenantTursoDatabase(tenantId: string): Promise<{ dbUrl: str
 
   if (!tursoApiToken || !tursoOrg) {
     return { dbUrl: `file:local-tenant-${tenantId}.db`, dbAuthToken: '' }
+  }
+
+  if (!isPlatformApiToken(tursoApiToken)) {
+    console.warn(
+      `[provision] TURSO_API_TOKEN is a database token, not a Turso Platform API token. ` +
+      `Platform API tokens are minted via 'turso auth api-tokens mint <name>' or in the Turso Dashboard under Settings > API Tokens. ` +
+      `Falling back to local SQLite database in development.`,
+    )
+    if (process.env.NODE_ENV !== 'production') {
+      return { dbUrl: `file:local-tenant-${tenantId}.db`, dbAuthToken: '' }
+    }
+    throw new Error('TURSO_API_TOKEN must be a Turso Platform API token, not a database auth token.')
   }
 
   const dbName = `tamago-${tenantId.replace(/[^a-z0-9-]/gi, '').toLowerCase().slice(0, 32)}`
@@ -38,6 +66,10 @@ async function createTenantTursoDatabase(tenantId: string): Promise<{ dbUrl: str
 
   if (!createRes.ok) {
     const body = await createRes.text()
+    if (process.env.NODE_ENV !== 'production') {
+      console.warn(`[provision] Failed to create Turso database ${dbName} (${createRes.status} ${body}). Falling back to local tenant DB.`)
+      return { dbUrl: `file:local-tenant-${tenantId}.db`, dbAuthToken: '' }
+    }
     throw new Error(`Couldn't create Turso database ${dbName}: ${createRes.status} ${body}`)
   }
 
@@ -55,6 +87,10 @@ async function createTenantTursoDatabase(tenantId: string): Promise<{ dbUrl: str
 
   if (!tokenRes.ok) {
     const body = await tokenRes.text()
+    if (process.env.NODE_ENV !== 'production') {
+      console.warn(`[provision] Failed to mint Turso database token for ${dbName} (${tokenRes.status} ${body}). Falling back to local tenant DB.`)
+      return { dbUrl: `file:local-tenant-${tenantId}.db`, dbAuthToken: '' }
+    }
     throw new Error(`Couldn't mint Turso database token for ${dbName}: ${tokenRes.status} ${body}`)
   }
 
@@ -95,11 +131,13 @@ export async function provisionTenantFarm(params: ProvisionTenantParams): Promis
   const farmName = params.farmName.trim()
   const currency = params.currency || 'PHP'
   const eggsPerTray = params.eggsPerTray ?? 30
+  const tier = params.tier || 'premium'
 
   // 3. Register tenant in Control DB
   await controlDb.insert(controlSchema.tenants).values({
     id: tenantId,
     name: farmName,
+    tier,
     eggsPerTray,
     currency,
     dbUrl,
@@ -121,63 +159,11 @@ export async function provisionTenantFarm(params: ProvisionTenantParams): Promis
   const rawTenantClient = createClient({ url: dbUrl, authToken: dbAuthToken || undefined })
   await initTenantDbSchema(rawTenantClient)
 
-  // 6. Bootstrap offline sync & settings tables in tenant database
-  await rawTenantClient.batch([
-    `CREATE TABLE IF NOT EXISTS farm_settings (
-      id TEXT PRIMARY KEY DEFAULT 'default',
-      name TEXT NOT NULL DEFAULT 'My Egg Farm',
-      eggs_per_tray INTEGER NOT NULL DEFAULT 30,
-      currency TEXT NOT NULL DEFAULT 'PHP',
-      device_id TEXT NOT NULL,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL
-    )`,
-    `CREATE TABLE IF NOT EXISTS local_counters (
-      id TEXT PRIMARY KEY,
-      next_number INTEGER NOT NULL DEFAULT 1,
-      updated_at TEXT NOT NULL
-    )`,
-    `CREATE TABLE IF NOT EXISTS outbox_mutations (
-      id TEXT PRIMARY KEY,
-      device_id TEXT NOT NULL,
-      mutation_type TEXT NOT NULL,
-      payload TEXT NOT NULL,
-      occurred_at TEXT NOT NULL,
-      status TEXT NOT NULL DEFAULT 'pending',
-      error TEXT,
-      created_at TEXT NOT NULL
-    )`,
-    `CREATE TABLE IF NOT EXISTS sync_state (
-      id TEXT PRIMARY KEY DEFAULT 'default',
-      tenant_id TEXT,
-      cloud_url TEXT,
-      cloud_token TEXT,
-      last_pulled_version INTEGER NOT NULL DEFAULT 0,
-      last_pulled_at TEXT,
-      last_pushed_at TEXT,
-      status TEXT NOT NULL DEFAULT 'local_only',
-      last_error TEXT,
-      updated_at TEXT NOT NULL
-    )`,
-    `CREATE TABLE IF NOT EXISTS change_log (
-      version INTEGER PRIMARY KEY AUTOINCREMENT,
-      entity_type TEXT NOT NULL,
-      entity_id TEXT NOT NULL,
-      action TEXT NOT NULL,
-      device_id TEXT NOT NULL,
-      occurred_at TEXT NOT NULL,
-      data TEXT NOT NULL
-    )`,
-    `CREATE INDEX IF NOT EXISTS change_log_version_idx ON change_log (version)`,
-    {
-      sql: `INSERT OR REPLACE INTO farm_settings (id, name, eggs_per_tray, currency, device_id, created_at, updated_at) VALUES ('default', ?, ?, ?, 'CLOUD', ?, ?)`,
-      args: [farmName, eggsPerTray, currency, now, now],
-    },
-    {
-      sql: `INSERT OR IGNORE INTO local_counters (id, next_number, updated_at) VALUES ('sales', 1, ?), ('orders', 1, ?)`,
-      args: [now, now],
-    },
-  ], 'write')
+  // 6. Bootstrap farm settings in tenant database
+  await rawTenantClient.execute({
+    sql: `INSERT OR REPLACE INTO farm_settings (id, farm_name, eggs_per_tray, currency, device_id, tier, onboarding_completed, created_at, updated_at) VALUES ('default', ?, ?, ?, 'CLOUD', ?, 1, ?, ?)`,
+    args: [farmName, eggsPerTray, currency, tier, now, now],
+  })
 
   return { tenantId, dbUrl }
 }

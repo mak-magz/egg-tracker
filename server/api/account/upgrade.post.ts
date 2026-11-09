@@ -35,6 +35,7 @@ export default defineAuthedHandler(async (event, ctx) => {
     eggsPerTray,
     ownerEmail: ctx.email,
     ownerUid: ctx.userId,
+    tier: 'premium',
   })
 
   const freshMembership = await findMembershipWithFarm(ctx.userId)
