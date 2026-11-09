@@ -92,3 +92,60 @@ describe('Conflict Resolution Logic (AC10, AC11)', () => {
     expect(existingUpdatedAt > newerMutationOccurredAt).toBe(false)
   })
 })
+
+describe('Cloud Snapshot Export & Farm Summary (Cloud Sync on Login)', () => {
+  it('toFarmSummary includes onboardingCompleted = true and premium tier flags', async () => {
+    const { toFarmSummary } = await import('../../core/repositories/tenants')
+    const summary = toFarmSummary({
+      id: 'tenant-1',
+      name: 'Happy Hens',
+      eggs_per_tray: 30,
+      currency: 'PHP',
+      sizes: [
+        { id: 's1', name: 'Large', sort_order: 0, color_slot: 0, archived_at: null },
+      ],
+    })
+
+    expect(summary.onboardingCompleted).toBe(true)
+    expect(summary.tier).toBe('premium')
+    expect(summary.isFree).toBe(false)
+    expect(summary.name).toBe('Happy Hens')
+  })
+
+  it('exportTenantSnapshot dispatches sync_export_snapshot and returns payload', async () => {
+    const { exportTenantSnapshot } = await import('../../server/repositories/sync')
+    const mockDb = {
+      tenantId: 'tenant-1',
+      client: {
+        rpc: async (fn: string) => {
+          if (fn === 'sync_export_snapshot') {
+            return {
+              data: {
+                snapshot: {
+                  deviceId: 'D1',
+                  farmSettings: { name: 'Happy Hens', eggsPerTray: 30, currency: 'PHP' },
+                  sizes: [{ id: 's1', name: 'Large', sortOrder: 0, colorSlot: 0, archivedAt: null }],
+                  clients: [],
+                  production: [],
+                  orders: [],
+                  orderLines: [],
+                  sales: [],
+                  saleLines: [],
+                  localCounters: [{ id: 'sale', nextNumber: 1 }],
+                },
+                latestVersion: 5,
+              },
+              error: null,
+            }
+          }
+          return { data: null, error: { code: 'unknown' } }
+        },
+      },
+    }
+
+    const result = await exportTenantSnapshot(mockDb as any)
+    expect(result.latestVersion).toBe(5)
+    expect(result.snapshot.farmSettings?.name).toBe('Happy Hens')
+    expect(result.snapshot.sizes?.length).toBe(1)
+  })
+})

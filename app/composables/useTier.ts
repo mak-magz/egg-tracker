@@ -24,13 +24,18 @@ export function useTier() {
    * with zero network or SDK overhead.
    */
   async function getAuthToken(): Promise<string | null> {
-    if (isFree.value) return null
     if (!import.meta.client) return null
 
     try {
       const auth = useFirebaseAuth()
-      if (!auth?.currentUser) return null
-      return await auth.currentUser.getIdToken()
+      if (auth?.currentUser) {
+        if (isFree.value) {
+          upgradeToPremium()
+        }
+        return await auth.currentUser.getIdToken()
+      }
+      if (isFree.value) return null
+      return null
     }
     catch {
       return null

@@ -37,5 +37,14 @@ export function toFarmSizes(rows: readonly SizeRowForFarm[] | null): FarmSize[] 
 }
 
 export function toFarmSummary(row: FarmSummaryRow): FarmSummary {
-  return { id: row.id, name: row.name, eggsPerTray: row.eggs_per_tray, currency: row.currency, sizes: toFarmSizes(row.sizes) }
+  return {
+    id: row.id,
+    name: row.name,
+    eggsPerTray: row.eggs_per_tray,
+    currency: row.currency,
+    sizes: toFarmSizes(row.sizes),
+    onboardingCompleted: true,
+    tier: 'premium',
+    isFree: false,
+  }
 }

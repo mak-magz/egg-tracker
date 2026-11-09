@@ -104,3 +104,10 @@ export async function pullSyncChanges(db: TenantDb, params: SyncPullParams) {
   if (!parsed.success) throw internalError('invalid pull response')
   return parsed.data
 }
+
+export async function exportTenantSnapshot(db: TenantDb): Promise<{ snapshot: FarmSnapshotPayload, latestVersion: number }> {
+  const { data, error } = await db.client.rpc('sync_export_snapshot' as any, {} as any)
+  if (error) throw internalError('export snapshot failed', error)
+  if (!data) throw internalError('invalid export snapshot response')
+  return data as { snapshot: FarmSnapshotPayload, latestVersion: number }
+}
