@@ -184,6 +184,54 @@ export class LocalWorkerClient {
   async getSyncStatus(): Promise<{ syncState: any, pendingOutboxCount: number }> {
     return this.callWorker('GET_SYNC_STATUS')
   }
+
+  async getPendingMutations(limit?: number): Promise<{
+    mutations: Array<{
+      id: string
+      deviceId: string
+      type: string
+      payload: Record<string, any>
+      occurredAt: string
+    }>
+  }> {
+    return this.callWorker('GET_PENDING_MUTATIONS', { limit })
+  }
+
+  async markMutationsProcessed(results: Array<{
+    id: string
+    status: 'applied' | 'conflict_lww' | 'rejected'
+    error?: string
+  }>): Promise<{ success: boolean }> {
+    return this.callWorker('MARK_MUTATIONS_PROCESSED', { results })
+  }
+
+  async resetInFlightMutations(): Promise<{ success: boolean }> {
+    return this.callWorker('RESET_IN_FLIGHT_MUTATIONS')
+  }
+
+  async getLastPulledVersion(): Promise<{
+    lastPulledVersion: number
+    lastPulledAt: string | null
+  }> {
+    return this.callWorker('GET_LAST_PULLED_VERSION')
+  }
+
+  async applyRemoteChanges(changes: any[], latestVersion: number): Promise<{
+    appliedCount: number
+    latestVersion: number
+  }> {
+    return this.callWorker('APPLY_REMOTE_CHANGES', { changes, latestVersion })
+  }
+
+  async updateSyncState(patch: {
+    status?: string
+    lastError?: string | null
+    tenantId?: string
+    cloudUrl?: string
+    cloudToken?: string
+  }): Promise<{ success: boolean }> {
+    return this.callWorker('UPDATE_SYNC_STATE', patch)
+  }
 }
 
 declare global {

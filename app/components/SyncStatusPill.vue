@@ -1,53 +1,14 @@
 <script setup lang="ts">
-import { useOnline } from '@vueuse/core'
-import { localWorker } from '../local/client'
+import { computed } from 'vue'
+import { useSync } from '../composables/useSync'
 
-const isOnline = useOnline()
-const { isFree } = useTier()
+const { syncStatus, pendingOutboxCount, triggerSync } = useSync()
 
-const pendingOutboxCount = ref(0)
-const syncStatus = ref<'local_only' | 'syncing' | 'synced' | 'offline_changes' | 'offline'>('local_only')
+const isSpinning = computed(() => syncStatus.value === 'syncing')
 
-async function refreshSyncState() {
-  if (typeof window === 'undefined') return
-  try {
-    const res = await localWorker.getSyncStatus()
-    pendingOutboxCount.value = res.pendingOutboxCount
-
-    if (!isOnline.value) {
-      syncStatus.value = pendingOutboxCount.value > 0 ? 'offline_changes' : 'offline'
-      return
-    }
-
-    if (isFree.value) {
-      syncStatus.value = 'local_only'
-      return
-    }
-
-    if (pendingOutboxCount.value > 0) {
-      syncStatus.value = 'syncing'
-      return
-    }
-
-    syncStatus.value = 'synced'
-  }
-  catch {
-    syncStatus.value = isOnline.value ? 'local_only' : 'offline'
-  }
+function handleTap() {
+  void triggerSync()
 }
-
-let timer: ReturnType<typeof setInterval> | null = null
-
-onMounted(() => {
-  refreshSyncState()
-  timer = setInterval(refreshSyncState, 5000)
-})
-
-onUnmounted(() => {
-  if (timer) clearInterval(timer)
-})
-
-watch(isOnline, refreshSyncState)
 
 const pillConfig = computed(() => {
   switch (syncStatus.value) {
@@ -79,6 +40,13 @@ const pillConfig = computed(() => {
         color: 'success' as const,
         variant: 'subtle' as const,
       }
+    case 'error':
+      return {
+        label: pendingOutboxCount.value > 0 ? `${pendingOutboxCount.value} unsynced (error)` : 'Sync error',
+        icon: 'i-lucide-alert-triangle',
+        color: 'error' as const,
+        variant: 'subtle' as const,
+      }
     case 'local_only':
     default:
       return {
@@ -96,12 +64,13 @@ const pillConfig = computed(() => {
     size="sm"
     :color="pillConfig.color"
     :variant="pillConfig.variant"
-    class="flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium cursor-default"
+    class="flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium cursor-pointer select-none transition-opacity active:opacity-75"
+    @click="handleTap"
   >
     <UIcon
       :name="pillConfig.icon"
       class="size-3.5"
-      :class="{ 'animate-spin': syncStatus === 'syncing' }"
+      :class="{ 'animate-spin': isSpinning }"
     />
     <span class="hidden sm:inline">{{ pillConfig.label }}</span>
   </UBadge>
