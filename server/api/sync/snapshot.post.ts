@@ -1,10 +1,11 @@
 import { readBody } from 'h3'
 import { z } from 'zod'
+import { normalizeFarmSnapshot } from '../../../core/utils/sync-payload'
 import { applyFarmSnapshot } from '../../repositories/sync'
 import { apiError, zodFields } from '../../utils/errors'
 import { defineTenantHandler } from '../../utils/handlers'
 
-const farmSnapshotSchema = z.object({
+export const farmSnapshotSchema = z.object({
   deviceId: z.string().default('D1'),
   farmSettings: z.object({
     name: z.string().optional(),
@@ -79,7 +80,8 @@ const farmSnapshotSchema = z.object({
 
 export default defineTenantHandler(async (event, ctx) => {
   const rawBody = await readBody(event)
-  const parsed = farmSnapshotSchema.safeParse(rawBody)
+  const normalized = normalizeFarmSnapshot(rawBody)
+  const parsed = farmSnapshotSchema.safeParse(normalized)
   if (!parsed.success) {
     throw apiError(400, 'validation_failed', zodFields(parsed.error, rawBody))
   }

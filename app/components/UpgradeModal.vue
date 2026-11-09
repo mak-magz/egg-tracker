@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { createUserWithEmailAndPassword, signInWithEmailAndPassword } from 'firebase/auth'
+import { normalizeFarmSnapshot } from '../../core/utils/sync-payload'
 import { localWorker } from '../local/client'
 
 const props = defineProps<{
@@ -68,7 +69,8 @@ async function submit() {
 
     // 4. Export local snapshot and push to cloud
     try {
-      const snapshot = await localWorker.exportData()
+      const rawSnapshot = await localWorker.exportData()
+      const snapshot = normalizeFarmSnapshot(rawSnapshot)
       await $fetch('/api/sync/snapshot', {
         method: 'POST',
         headers: authHeaders,
