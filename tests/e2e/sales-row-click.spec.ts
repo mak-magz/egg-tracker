@@ -3,7 +3,7 @@ import { test, expect, seed } from './fixtures'
 test('clicking a sales row opens the detail; the menu does not', async ({ page }, info) => {
   test.skip(info.project.name !== 'desktop', 'the table is the desktop layout')
   const s = await seed(page)
-  await page.goto('/sales')
+  await page.goto('/farm/sales')
   const row = page.locator(`[data-sale-row="${s.saleId}"]`)
   await expect(row).toBeVisible()
 

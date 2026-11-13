@@ -83,6 +83,13 @@ describe('toSale', () => {
   it('maps a jsonb row to the API Sale shape (already camelCase, no transformation needed)', () => {
     expect(repo.toSale(saleRow)).toEqual(sale)
   })
+
+  it('maps a row with device-prefixed string saleNumber (offline sync)', () => {
+    expect(repo.toSale({ ...saleRow, saleNumber: 'D1-0042' })).toEqual({
+      ...sale,
+      saleNumber: 'D1-0042',
+    })
+  })
 })
 
 describe('sales repository: create / update', () => {

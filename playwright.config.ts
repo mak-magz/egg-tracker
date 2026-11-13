@@ -19,7 +19,7 @@ export default defineConfig({
   reporter: [['list']],
   use: {
     baseURL: 'http://localhost:3000',
-    channel: 'msedge',
+    ...(process.env.BROWSER_CHANNEL ? { channel: process.env.BROWSER_CHANNEL } : process.platform === 'win32' ? { channel: 'msedge' } : {}),
     storageState: 'tests/e2e/.auth/state.json',
     trace: 'on-first-retry',
   },

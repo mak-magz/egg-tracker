@@ -59,5 +59,15 @@ export async function seed(page: Page): Promise<Seeded> {
   const order = await api<{ order: { id: string, orderNumber: number | string } }>(r, 'POST', '/api/orders', {
     submissionId: randomUUID(), clientId, orderDate: today(), lines: [{ sizeId, eggs: 90, pricePerTray: 250 }],
   })
+
+  // Hydrate local worker database with snapshot if browser page is already open
+  const snapshotRes = await api<{ snapshot: unknown, latestVersion: number }>(r, 'GET', '/api/sync/snapshot').catch(() => null)
+  if (snapshotRes?.snapshot) {
+    await page.evaluate(async ({ snap, ver }) => {
+      const w = (window as unknown as { __tamagoLocalWorker?: { importSnapshot: (s: unknown, v: number) => Promise<unknown> } }).__tamagoLocalWorker
+      if (w) await w.importSnapshot(snap, ver)
+    }, { snap: snapshotRes.snapshot, ver: snapshotRes.latestVersion }).catch(() => {})
+  }
+
   return { clientName, saleId: sale.sale.id, saleNumber: sale.sale.saleNumber, orderId: order.order.id, orderNumber: order.order.orderNumber }
 }
