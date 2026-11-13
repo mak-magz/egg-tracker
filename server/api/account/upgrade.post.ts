@@ -13,14 +13,6 @@ const upgradeAccountSchema = z.object({
 })
 
 export default defineAuthedHandler(async (event, ctx) => {
-  // If user already has an active farm membership, return it idempotently
-  const existing = await findMembershipWithFarm(ctx.userId)
-  if (existing) {
-    return {
-      farm: existing.farm,
-    }
-  }
-
   const rawBody = await readBody(event)
   const parsed = upgradeAccountSchema.safeParse(rawBody)
   if (!parsed.success) {
@@ -29,21 +21,37 @@ export default defineAuthedHandler(async (event, ctx) => {
 
   const { farmName, currency, eggsPerTray } = parsed.data
 
-  await provisionTenantFarm({
-    farmName,
-    currency,
-    eggsPerTray,
-    ownerEmail: ctx.email,
-    ownerUid: ctx.userId,
-    tier: 'premium',
-  })
+  try {
+    // If user already has an active farm membership, return it idempotently
+    const existing = await findMembershipWithFarm(ctx.userId)
+    if (existing) {
+      return {
+        farm: existing.farm,
+      }
+    }
 
-  const freshMembership = await findMembershipWithFarm(ctx.userId)
-  if (!freshMembership) {
-    throw apiError(500, 'internal')
+    await provisionTenantFarm({
+      farmName,
+      currency,
+      eggsPerTray,
+      ownerEmail: ctx.email,
+      ownerUid: ctx.userId,
+      tier: 'premium',
+    })
+
+    const freshMembership = await findMembershipWithFarm(ctx.userId)
+    if (!freshMembership) {
+      throw apiError(500, 'internal')
+    }
+
+    return {
+      farm: freshMembership.farm,
+    }
   }
-
-  return {
-    farm: freshMembership.farm,
+  catch (err) {
+    const code = (err as { code?: string })?.code ?? 'unknown'
+    const name = (err as { name?: string })?.name ?? 'Error'
+    console.error(`[upgrade] provisioning failed (${name} ${code})`)
+    throw err
   }
 })
