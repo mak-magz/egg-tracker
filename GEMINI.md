@@ -76,8 +76,16 @@ A multi-tenant SaaS for egg farms that tracks production, computed inventory, sa
 ## Antigravity / Gemini Setup (`.agents/`)
 
 ### Subagents workflow
-Subagents reside in `.agents/agents/` (and `.gemini/agents/`). Features are developed by specialized subagents coordinated by the main session:
-Each feature has one shared doc at `docs/features/NN-<name>.md` (copied from `_TEMPLATE.md`), and each role fills in its own section:
+Subagents reside in `.agents/agents/` (and `.gemini/agents/`).
+- **Frontmatter constraint (`model:` field)**: Antigravity's `.agents/agents/*.md` loader strictly validates `model:` against the 4 tier keywords (`inherit`, `flash`, `pro`, `flash_lite`) — setting `model: hydrogen` or `model: gemini-4-hydrogen-*` in frontmatter causes Antigravity to reject and unload the agent.
+- **Role routing & thinking effort (`low` → `xhigh`)**:
+  - `architect` & `security-auditor`: `model: inherit`, `effort: high` (inherits the active session model, e.g. **Gemini 4 Argon**).
+  - `qa-reviewer`: `model: flash` (**Gemini 4 Hydrogen** tier / `gemini-4-hydrogen-xhigh` in swarm), `effort: xhigh`.
+  - `backend-dev` & `frontend-dev`: `model: flash` (**Gemini 4 Hydrogen** tier / `gemini-4-hydrogen-high` in swarm), `effort: high`.
+  - `ux-designer`: `model: flash` (**Gemini 4 Hydrogen** tier / `gemini-4-hydrogen-medium` in swarm), `effort: medium`.
+  - `product-manager` & `devops`: `model: flash` (**Gemini 4 Hydrogen** tier / `gemini-4-hydrogen-low` in swarm), `effort: low`.
+
+Features are developed by specialized subagents coordinated by the main session. Each feature has one shared doc at `docs/features/NN-<name>.md` (copied from `_TEMPLATE.md`), and each role fills in its own section:
 
 1. `product-manager`: writes the story, acceptance criteria, and scope (§1–2). Status becomes `draft`.
 2. `ux-designer`: writes flows, mobile and desktop wireframes, states, and copy (§2.5). Skip for features with no UI.
