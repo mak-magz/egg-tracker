@@ -132,7 +132,10 @@ function isPlatformApiToken(token: string): boolean {
     const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'))
     if (payload.rid || payload.a) return false
     return true
-  } catch { return false }
+  }
+  catch {
+    return false
+  }
 }
 
 async function createTenantTursoDatabase(tenantId: string): Promise<{ dbUrl: string, dbAuthToken: string }> {
@@ -146,8 +149,8 @@ async function createTenantTursoDatabase(tenantId: string): Promise<{ dbUrl: str
 
   if (!isPlatformApiToken(tursoApiToken)) {
     throw new CliError(
-      'TURSO_API_TOKEN is a database token, not a Turso Platform API token. ' +
-      'Platform API tokens are minted via `turso auth api-tokens mint <name>` or in the Turso Dashboard under Settings > API Tokens.',
+      'TURSO_API_TOKEN is a database token, not a Turso Platform API token. '
+      + 'Platform API tokens are minted via `turso auth api-tokens mint <name>` or in the Turso Dashboard under Settings > API Tokens.',
     )
   }
 

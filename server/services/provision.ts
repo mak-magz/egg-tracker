@@ -44,9 +44,9 @@ async function createTenantTursoDatabase(tenantId: string): Promise<{ dbUrl: str
 
   if (!isPlatformApiToken(tursoApiToken)) {
     console.warn(
-      `[provision] TURSO_API_TOKEN is a database token, not a Turso Platform API token. ` +
-      `Platform API tokens are minted via 'turso auth api-tokens mint <name>' or in the Turso Dashboard under Settings > API Tokens. ` +
-      `Falling back to local SQLite database in development.`,
+      `[provision] TURSO_API_TOKEN is a database token, not a Turso Platform API token. `
+      + `Platform API tokens are minted via 'turso auth api-tokens mint <name>' or in the Turso Dashboard under Settings > API Tokens. `
+      + `Falling back to local SQLite database in development.`,
     )
     if (process.env.NODE_ENV !== 'production') {
       return { dbUrl: `file:local-tenant-${tenantId}.db`, dbAuthToken: '' }
