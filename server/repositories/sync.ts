@@ -9,6 +9,7 @@ export interface FarmSnapshotPayload {
   sizes?: Array<{ id: string, name: string, sortOrder: number, colorSlot: number, archivedAt?: string | null }>
   clients?: Array<{ id: string, name: string, phone?: string | null, defaultPrice?: number | null, archivedAt?: string | null, version?: number }>
   production?: Array<{ id: string, producedOn: string, sizeId?: string | null, quality: 'good' | 'reject', eggs: number }>
+  productionSubmissions?: Array<{ id: string, producedOn: string, hadBefore?: boolean | number }>
   orders?: Array<{ id: string, orderNumber: string | number, clientId: string, orderDate: string, wantedBy?: string | null, status: string, cancelledAt?: string | null, closedShortAt?: string | null, convertedFromSaleNumber?: string | number | null, version?: number }>
   orderLines?: Array<{ orderId: string, sizeId: string, eggs: number, pricePerTray: number, lineTotal: number, droppedEggs?: number }>
   sales?: Array<{ id: string, saleNumber: string | number, clientId?: string | null, type: 'delivery' | 'on_site', saleDate: string, orderId?: string | null, orderNumber?: string | number | null, version?: number, voidedAt?: string | null }>

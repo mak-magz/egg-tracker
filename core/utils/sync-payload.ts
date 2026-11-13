@@ -6,6 +6,7 @@ export interface FarmSnapshotPayload {
   sizes?: Array<{ id: string, name: string, sortOrder: number, colorSlot: number, archivedAt?: string | null }>
   clients?: Array<{ id: string, name: string, phone?: string | null, defaultPrice?: number | null, archivedAt?: string | null, version?: number }>
   production?: Array<{ id: string, producedOn: string, sizeId?: string | null, quality: 'good' | 'reject', eggs: number }>
+  productionSubmissions?: Array<{ id: string, producedOn: string, hadBefore?: boolean | number }>
   orders?: Array<{ id: string, orderNumber: string | number, clientId: string, orderDate: string, wantedBy?: string | null, status: string, cancelledAt?: string | null, closedShortAt?: string | null, convertedFromSaleNumber?: string | number | null, version?: number }>
   orderLines?: Array<{ orderId: string, sizeId: string, eggs: number, pricePerTray: number, lineTotal: number, droppedEggs?: number }>
   sales?: Array<{ id: string, saleNumber: string | number, clientId?: string | null, type: 'delivery' | 'on_site', saleDate: string, orderId?: string | null, orderNumber?: string | number | null, version?: number, voidedAt?: string | null }>
@@ -105,6 +106,16 @@ export function normalizeFarmSnapshot(raw: any): FarmSnapshotPayload {
         : (p.sizeId !== undefined ? p.sizeId : (p.size_id !== undefined ? p.size_id : null)),
       quality: p.quality as 'good' | 'reject',
       eggs: Number(p.eggs ?? 0),
+    }))
+  }
+
+  // 6b. productionSubmissions: maps produced_on -> producedOn, had_before -> hadBefore
+  const rawProdSubs = r.productionSubmissions ?? r.production_submissions
+  if (Array.isArray(rawProdSubs)) {
+    payload.productionSubmissions = rawProdSubs.map((ps: any) => ({
+      id: String(ps.id),
+      producedOn: String(ps.producedOn ?? ps.produced_on),
+      hadBefore: Boolean(ps.hadBefore ?? ps.had_before ?? false),
     }))
   }
 

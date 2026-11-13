@@ -2,6 +2,7 @@
 import { createUserWithEmailAndPassword, signInWithEmailAndPassword } from 'firebase/auth'
 import { normalizeFarmSnapshot } from '../../core/utils/sync-payload'
 import { localWorker } from '../local/client'
+import { syncEngine } from '../local/sync'
 
 const props = defineProps<{
   open: boolean
@@ -41,6 +42,9 @@ async function submit() {
   errorMessage.value = null
 
   try {
+    // Pause background sync so watch(isPremium) cannot race against snapshot upload/import
+    syncEngine.stop()
+
     // 1. Authenticate with Firebase
     let cred
     if (mode.value === 'register') {
@@ -53,33 +57,74 @@ async function submit() {
     const token = await cred.user.getIdToken()
     const authHeaders = { Authorization: `Bearer ${token}` }
 
-    // 2. Call upgrade API to provision cloud tenant
-    await $fetch('/api/account/upgrade', {
-      method: 'POST',
-      headers: authHeaders,
-      body: {
-        farmName: farmName.value.trim(),
-        currency: me.value?.farm?.currency || 'PHP',
-        eggsPerTray: me.value?.farm?.eggsPerTray || 30,
-      },
-    })
-
-    // 3. Mark tier as premium
-    upgradeToPremium()
-
-    // 4. Export local snapshot and push to cloud
-    try {
-      const rawSnapshot = await localWorker.exportData()
-      const snapshot = normalizeFarmSnapshot(rawSnapshot)
-      await $fetch('/api/sync/snapshot', {
+    if (mode.value === 'register') {
+      // 2. Call upgrade API to provision cloud tenant
+      await $fetch('/api/account/upgrade', {
         method: 'POST',
         headers: authHeaders,
-        body: snapshot,
+        body: {
+          farmName: farmName.value.trim(),
+          currency: me.value?.farm?.currency || 'PHP',
+          eggsPerTray: me.value?.farm?.eggsPerTray || 30,
+        },
       })
+
+      // 3. Export local snapshot, push to cloud, and purge outbox BEFORE enabling background sync
+      try {
+        const rawSnapshot = await localWorker.exportData()
+        const snapshot = normalizeFarmSnapshot(rawSnapshot)
+        const res = await $fetch<{ success?: boolean, baseVersion?: number }>('/api/sync/snapshot', {
+          method: 'POST',
+          headers: authHeaders,
+          body: snapshot,
+        })
+        await localWorker.markSnapshotExported(res?.baseVersion ?? 1)
+      }
+      catch (syncErr) {
+        console.warn('[upgrade] Initial snapshot upload failed:', syncErr)
+      }
     }
-    catch (syncErr) {
-      console.warn('[upgrade] Initial snapshot upload failed:', syncErr)
+    else {
+      // Login mode: pull existing cloud snapshot into local DB (or provision if none exists yet)
+      try {
+        const res = await $fetch<{ snapshot: Record<string, unknown>, latestVersion?: number }>('/api/sync/snapshot', {
+          method: 'GET',
+          headers: authHeaders,
+        })
+        if (res?.snapshot) {
+          const latestVersion = res.latestVersion ?? 0
+          await localWorker.importSnapshot(res.snapshot, latestVersion)
+          await localWorker.updateSyncState({
+            status: 'synced',
+            lastError: null,
+            lastPulledVersion: latestVersion,
+          })
+        }
+      }
+      catch {
+        // Fallback if account had no cloud tenant yet: provision and upload local snapshot
+        await $fetch('/api/account/upgrade', {
+          method: 'POST',
+          headers: authHeaders,
+          body: {
+            farmName: farmName.value.trim(),
+            currency: me.value?.farm?.currency || 'PHP',
+            eggsPerTray: me.value?.farm?.eggsPerTray || 30,
+          },
+        })
+        const rawSnapshot = await localWorker.exportData()
+        const snapshot = normalizeFarmSnapshot(rawSnapshot)
+        const res = await $fetch<{ success?: boolean, baseVersion?: number }>('/api/sync/snapshot', {
+          method: 'POST',
+          headers: authHeaders,
+          body: snapshot,
+        })
+        await localWorker.markSnapshotExported(res?.baseVersion ?? 1)
+      }
     }
+
+    // 4. Mark tier as premium ONLY AFTER snapshot sync & outbox cleanup have completed
+    upgradeToPremium()
 
     // 5. Refresh auth state & context
     await ensure({ force: true })

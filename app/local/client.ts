@@ -177,8 +177,12 @@ export class LocalWorkerClient {
     return this.callWorker('EXPORT_DATA')
   }
 
-  async importSnapshot(snapshot: any): Promise<{ success: boolean }> {
-    return this.callWorker('IMPORT_SNAPSHOT', snapshot)
+  async importSnapshot(snapshot: any, latestVersion?: number): Promise<{ success: boolean }> {
+    return this.callWorker('IMPORT_SNAPSHOT', { snapshot, latestVersion })
+  }
+
+  async markSnapshotExported(baseVersion: number): Promise<{ success: boolean }> {
+    return this.callWorker('MARK_SNAPSHOT_EXPORTED', { baseVersion })
   }
 
   async getSyncStatus(): Promise<{ syncState: any, pendingOutboxCount: number }> {
@@ -229,8 +233,15 @@ export class LocalWorkerClient {
     tenantId?: string
     cloudUrl?: string
     cloudToken?: string
+    lastPulledVersion?: number
+    lastPulledAt?: string | null
+    lastPushedAt?: string | null
   }): Promise<{ success: boolean }> {
     return this.callWorker('UPDATE_SYNC_STATE', patch)
+  }
+
+  async setDeviceId(deviceId: string): Promise<{ deviceId: string }> {
+    return this.callWorker('SET_DEVICE_ID', { deviceId })
   }
 }
 

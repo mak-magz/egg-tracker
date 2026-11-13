@@ -34,6 +34,11 @@ export const farmSnapshotSchema = z.object({
     quality: z.enum(['good', 'reject']),
     eggs: z.number(),
   })).optional().default([]),
+  productionSubmissions: z.array(z.object({
+    id: z.string(),
+    producedOn: z.string(),
+    hadBefore: z.union([z.boolean(), z.number()]).optional().default(false),
+  })).optional().default([]),
   orders: z.array(z.object({
     id: z.string(),
     orderNumber: z.union([z.number(), z.string()]),

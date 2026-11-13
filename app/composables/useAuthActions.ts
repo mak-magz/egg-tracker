@@ -1,8 +1,6 @@
 // Every Firebase Auth / VueFire call the UI makes (§3.5, §3.8). Browser → Firebase Auth;
 // nuxt-vuefire's `/api/__session` keeps the session in an HttpOnly cookie so SSR sees it.
 // Errors come back as UI "kinds", never raw.
-import { localWorker } from '../local/client'
-import { useTier } from './useTier'
 import {
   confirmPasswordReset,
   sendPasswordResetEmail,
@@ -11,6 +9,8 @@ import {
   updatePassword as firebaseUpdatePassword,
   verifyPasswordResetCode,
 } from 'firebase/auth'
+import { localWorker } from '../local/client'
+import { syncEngine } from '../local/sync'
 import {
   mapAuthError,
   mapResetRequestError,
@@ -49,6 +49,14 @@ export function useAuthActions() {
   const hint = useSessionHint()
   const { ensure, clear } = useMe()
   const router = useRouter()
+  const { upgradeToPremium, revertToFree } = useTier()
+  const onboardedCookie = useCookie('tamago_onboarded', {
+    default: () => 'true',
+    maxAge: 60 * 60 * 24 * 400,
+    sameSite: 'lax',
+    path: '/',
+  })
+
   /** True while the user's own sign-out runs, so the session plugin doesn't treat it as "expired". */
   const signingOut = useState('auth:signingOut', () => false)
   const expiring = useState('auth:expiring', () => false)
@@ -68,6 +76,8 @@ export function useAuthActions() {
 
   async function doSignIn(email: string, password: string): Promise<Result<SignInErrorKind>> {
     if (!auth) return { ok: false, kind: 'unknown' }
+    // Pause background sync before authenticating so watch(isPremium) cannot race against snapshot import
+    syncEngine.stop()
     try {
       await signInWithEmailAndPassword(auth, email, password)
     }
@@ -75,40 +85,40 @@ export function useAuthActions() {
       return { ok: false, kind: mapAuthError(e) }
     }
     hint.value = '1'
-
-    const { upgradeToPremium } = useTier()
-    upgradeToPremium()
-
-    const onboardedCookie = useCookie('tamago_onboarded', {
-      default: () => 'true',
-      maxAge: 60 * 60 * 24 * 400,
-      sameSite: 'lax',
-      path: '/',
-    })
     onboardedCookie.value = 'true'
 
     await syncSessionCookie()
-    // A failure here isn't a sign-in failure: the middleware/layout show the farm-load state.
-    await ensure({ force: true })
 
+    // Hydrate cloud snapshot & set lastPulledVersion BEFORE flipping isPremium (which starts syncEngine)
     try {
       const token = await auth.currentUser?.getIdToken()
       if (token) {
-        const res = await $fetch<{ snapshot: any, latestVersion?: number }>('/api/sync/snapshot', {
+        const res = await $fetch<{ snapshot: Record<string, unknown>, latestVersion?: number }>('/api/sync/snapshot', {
           method: 'GET',
           headers: {
             Authorization: `Bearer ${token}`,
           },
         })
         if (res?.snapshot) {
-          await localWorker.importSnapshot(res.snapshot)
-          await localWorker.updateSyncState({ status: 'synced', lastError: null })
+          const latestVersion = res.latestVersion ?? 0
+          await localWorker.importSnapshot(res.snapshot, latestVersion)
+          await localWorker.updateSyncState({
+            status: 'synced',
+            lastError: null,
+            lastPulledVersion: latestVersion,
+          })
         }
       }
     }
     catch (snapshotErr) {
       console.warn('[doSignIn] Failed to hydrate cloud snapshot locally:', snapshotErr)
     }
+
+    // Flip tier to premium ONLY AFTER snapshot import & lastPulledVersion are committed
+    upgradeToPremium()
+
+    // A failure here isn't a sign-in failure: the middleware/layout show the farm-load state.
+    await ensure({ force: true })
 
     return { ok: true }
   }
@@ -134,7 +144,6 @@ export function useAuthActions() {
     }
     await clearSessionCookie()
     recoveryState.value = null
-    const { revertToFree } = useTier()
     revertToFree()
     clear()
   }

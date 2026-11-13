@@ -1381,6 +1381,13 @@ export function createDrizzleBackedClient(
           eggs: p.eggs,
         }))
 
+        const prodSubRows = await drizzleDb.select().from(schema.productionSubmissions)
+        const productionSubmissions = prodSubRows.map(ps => ({
+          id: ps.id,
+          producedOn: ps.producedOn,
+          hadBefore: Boolean(ps.hadBefore),
+        }))
+
         const orderRows = await drizzleDb.select().from(schema.orders).orderBy(desc(schema.orders.orderDate))
         const orders = orderRows.map(o => ({
           id: o.id,
@@ -1442,6 +1449,7 @@ export function createDrizzleBackedClient(
           sizes,
           clients,
           production,
+          productionSubmissions,
           orders,
           orderLines,
           sales,
@@ -1529,21 +1537,56 @@ export function createDrizzleBackedClient(
           }
         }
 
-        // 3. Bulk insert production
-        if (Array.isArray(snap.production) && snap.production.length > 0) {
+        // 3. Bulk insert production & productionSubmissions (replace existing baseline cleanly)
+        if (Array.isArray(snap.production)) {
+          await drizzleDb.delete(schema.productionSubmissions)
+          await drizzleDb.delete(schema.production)
+
+          // Deduplicate/aggregate by (producedOn, sizeId, quality) to prevent duplicate rows
+          const prodMap = new Map<string, { id: string, producedOn: string, sizeId: string | null, quality: 'good' | 'reject', eggs: number }>()
           for (const p of snap.production) {
+            const sizeId = p.quality === 'reject' ? null : (p.sizeId ?? null)
+            const key = `${p.producedOn}|${sizeId ?? 'REJECT'}|${p.quality}`
+            const existing = prodMap.get(key)
+            if (existing) {
+              existing.eggs = p.eggs
+            }
+            else {
+              prodMap.set(key, {
+                id: p.id,
+                producedOn: p.producedOn,
+                sizeId,
+                quality: p.quality,
+                eggs: p.eggs,
+              })
+            }
+          }
+
+          for (const p of prodMap.values()) {
             await drizzleDb.insert(schema.production).values({
               id: p.id,
               producedOn: p.producedOn,
-              sizeId: p.sizeId ?? null,
+              sizeId: p.sizeId,
               quality: p.quality,
               eggs: p.eggs,
               createdAt: now,
               updatedAt: now,
             }).onConflictDoUpdate({
               target: schema.production.id,
-              set: { producedOn: p.producedOn, sizeId: p.sizeId ?? null, quality: p.quality, eggs: p.eggs, updatedAt: now },
+              set: { producedOn: p.producedOn, sizeId: p.sizeId, quality: p.quality, eggs: p.eggs, updatedAt: now },
             })
+          }
+        }
+
+        if (Array.isArray(snap.productionSubmissions) && snap.productionSubmissions.length > 0) {
+          for (const ps of snap.productionSubmissions) {
+            await drizzleDb.insert(schema.productionSubmissions).values({
+              id: ps.id,
+              producedOn: ps.producedOn,
+              hadBefore: Boolean(ps.hadBefore),
+              createdAt: now,
+              updatedAt: now,
+            }).onConflictDoNothing()
           }
         }
 
@@ -1639,7 +1682,8 @@ export function createDrizzleBackedClient(
           }
         }
 
-        // 7. Record snapshot baseline in change_log
+        // 7. Record snapshot baseline in change_log (clear any stale pre-snapshot mutations first)
+        await drizzleDb.delete(schema.changeLog)
         await drizzleDb.insert(schema.changeLog).values({
           entityType: 'snapshot',
           entityId: tenantMeta.tenantId,

@@ -10,7 +10,7 @@ import * as tenantSchema from '../../server/db/schema/tenant'
 import { createDrizzleBackedClient } from '../../server/db/adapter'
 import { createTenantDbFromClient } from '../../server/utils/db'
 import type { TenantClient, TenantDb } from '../../server/utils/db'
-import { applyFarmSnapshot, applySyncPush, pullSyncChanges } from '../../server/repositories/sync'
+import { applyFarmSnapshot, applySyncPush, exportTenantSnapshot, pullSyncChanges } from '../../server/repositories/sync'
 
 const DB_FILE = 'local-tenant-test-sync.db'
 const DB_URL = `file:${DB_FILE}`
@@ -298,5 +298,73 @@ describe('Tier 2: Real Local LibSQL Sync Integration', () => {
     const [clientAfterFresh] = await drizzleDb.select().from(tenantSchema.clients).where(eq(tenantSchema.clients.id, 'cli-d1-1'))
     expect(clientAfterFresh.name).toBe('Updated Fresh Client Name')
     expect(clientAfterFresh.defaultPrice).toBe(250)
+  })
+
+  it('7. prevents production duplication when snapshot includes productionSubmissions and a racing push replays the same submissionId', async () => {
+    // Simulate Browser 1 logging 1 tray (30 eggs) with submissionId 'sub-race-tray1' and uploading snapshot
+    const snapshotWithSubmission = {
+      deviceId: 'D1',
+      farmSettings: {
+        name: 'Test Farm',
+        eggsPerTray: 30,
+        currency: 'PHP',
+      },
+      sizes: [
+        { id: 'size-small', name: 'Small', sortOrder: 0, colorSlot: 0, archivedAt: null },
+        { id: 'size-medium', name: 'Medium', sortOrder: 1, colorSlot: 1, archivedAt: null },
+        { id: 'size-large', name: 'Large', sortOrder: 2, colorSlot: 2, archivedAt: null },
+      ],
+      production: [
+        { id: 'prod-row-1', producedOn: '2026-11-12', sizeId: 'size-large', quality: 'good' as const, eggs: 30 },
+      ],
+      productionSubmissions: [
+        { id: 'sub-race-tray1', producedOn: '2026-11-12', hadBefore: false },
+      ],
+    }
+
+    const snapRes = await applyFarmSnapshot(tenantDb, snapshotWithSubmission)
+    expect(snapRes.success).toBe(true)
+
+    // Verify production has exactly 30 eggs (1 tray)
+    const prodBefore = await drizzleDb.select().from(tenantSchema.production).where(eq(tenantSchema.production.producedOn, '2026-11-12'))
+    expect(prodBefore).toHaveLength(1)
+    expect(prodBefore[0].eggs).toBe(30)
+
+    // Verify change_log was reset to only the snapshot baseline entry
+    const logsAfterSnap = await drizzleDb.select().from(tenantSchema.changeLog)
+    expect(logsAfterSnap).toHaveLength(1)
+    expect(logsAfterSnap[0].entityType).toBe('snapshot')
+
+    // Now simulate a racing sync_push replaying the exact same log_production mutation ('sub-race-tray1')
+    const pushRes = await applySyncPush(tenantDb, {
+      deviceId: 'D1',
+      mutations: [
+        {
+          id: 'mut-race-1',
+          type: 'log_production',
+          occurredAt: '2026-11-12T08:00:00.000Z',
+          payload: {
+            submissionId: 'sub-race-tray1',
+            date: '2026-11-12',
+            good: [{ sizeId: 'size-large', eggs: 30 }],
+            rejects: 0,
+          },
+        },
+      ],
+    })
+
+    expect(pushRes.results).toHaveLength(1)
+    expect(pushRes.results[0].status).toBe('applied')
+
+    // CRITICAL INVARIANT: Production must still be 30 eggs (1 tray), NEVER 60 eggs (2 trays)!
+    const prodAfter = await drizzleDb.select().from(tenantSchema.production).where(eq(tenantSchema.production.producedOn, '2026-11-12'))
+    expect(prodAfter).toHaveLength(1)
+    expect(prodAfter[0].eggs).toBe(30)
+
+    // Verify exportTenantSnapshot includes productionSubmissions for Browser 2 login hydration
+    const exported = await exportTenantSnapshot(tenantDb)
+    expect(exported.snapshot.productionSubmissions).toEqual([
+      { id: 'sub-race-tray1', producedOn: '2026-11-12', hadBefore: false },
+    ])
   })
 })
