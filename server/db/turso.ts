@@ -1,4 +1,6 @@
 // Turso + Drizzle connection manager for Control DB and Database-per-Tenant DBs.
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { createClient } from '@libsql/client'
 import type { Client as LibSqlClient } from '@libsql/client'
 import { drizzle } from 'drizzle-orm/libsql'
@@ -10,39 +12,90 @@ export type ControlDrizzleDb = LibSQLDatabase<typeof controlSchema>
 export type TenantDrizzleDb = LibSQLDatabase<typeof tenantSchema>
 
 let controlDbInstance: ControlDrizzleDb | null = null
+let controlDbUrlCached: string | null = null
 const tenantDbPool = new Map<string, TenantDrizzleDb>()
+const tenantBootstrapPool = new Map<string, Promise<void>>()
 
 let controlBootstrapPromise: Promise<void> | null = null
 
+/**
+ * Resolves a libSQL URL so relative `file:` paths on read-only serverless filesystems
+ * (e.g. Vercel `/var/task`) are redirected to `os.tmpdir()` (`/tmp`).
+ */
+export function resolveLibsqlUrl(rawUrl: string): string {
+  const trimmed = rawUrl.trim()
+  const isServerless = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME || process.env.NETLIFY)
+  if (isServerless && trimmed.startsWith('file:')) {
+    const filePath = trimmed.slice('file:'.length)
+    // If relative path (not starting with / or drive letter)
+    if (filePath && !filePath.startsWith('/') && !/^[a-zA-Z]:[\\/]/.test(filePath)) {
+      const tmpPath = join(tmpdir(), filePath).replace(/\\/g, '/')
+      return `file:${tmpPath}`
+    }
+  }
+  return trimmed
+}
+
+export function getControlDbConfig(): { url: string, authToken: string | undefined } {
+  const rawUrl = process.env.NUXT_TURSO_CONTROL_URL?.trim() || 'file:local-control.db'
+  const url = resolveLibsqlUrl(rawUrl)
+  const authToken = process.env.NUXT_TURSO_CONTROL_AUTH_TOKEN?.trim() || undefined
+  return { url, authToken }
+}
+
 export function ensureControlDbBootstrapped(): Promise<void> {
+  const { url, authToken } = getControlDbConfig()
+  if (controlDbUrlCached !== url) {
+    controlBootstrapPromise = null
+    controlDbInstance = null
+    controlDbUrlCached = url
+  }
   if (!controlBootstrapPromise) {
-    const url = process.env.NUXT_TURSO_CONTROL_URL || 'file:local-control.db'
-    const authToken = process.env.NUXT_TURSO_CONTROL_AUTH_TOKEN || undefined
     const client = createClient({ url, authToken })
-    controlBootstrapPromise = initControlDbSchema(client)
+    controlBootstrapPromise = initControlDbSchema(client).catch((err) => {
+      controlBootstrapPromise = null
+      throw err
+    })
   }
   return controlBootstrapPromise
 }
 
 export function getControlDb(): ControlDrizzleDb {
-  if (!controlDbInstance) {
-    const url = process.env.NUXT_TURSO_CONTROL_URL || 'file:local-control.db'
-    const authToken = process.env.NUXT_TURSO_CONTROL_AUTH_TOKEN || undefined
+  const { url, authToken } = getControlDbConfig()
+  if (!controlDbInstance || controlDbUrlCached !== url) {
     const client = createClient({ url, authToken })
     controlDbInstance = drizzle(client, { schema: controlSchema })
-    if (url.startsWith('file:')) {
-      ensureControlDbBootstrapped().catch(() => {})
-    }
+    controlDbUrlCached = url
+    ensureControlDbBootstrapped().catch(() => {})
   }
   return controlDbInstance
 }
 
+export function ensureTenantDbBootstrapped(dbUrl: string, dbAuthToken?: string): Promise<void> {
+  const resolvedUrl = resolveLibsqlUrl(dbUrl)
+  const key = `${resolvedUrl}::${dbAuthToken ?? ''}`
+  let promise = tenantBootstrapPool.get(key)
+  if (!promise) {
+    const client = createClient({
+      url: resolvedUrl,
+      authToken: dbAuthToken || undefined,
+    })
+    promise = initTenantDbSchema(client).catch((err) => {
+      tenantBootstrapPool.delete(key)
+      throw err
+    })
+    tenantBootstrapPool.set(key, promise)
+  }
+  return promise
+}
+
 export function getTenantDrizzleDb(dbUrl: string, dbAuthToken?: string): TenantDrizzleDb {
-  const key = `${dbUrl}::${dbAuthToken ?? ''}`
+  const resolvedUrl = resolveLibsqlUrl(dbUrl)
+  const key = `${resolvedUrl}::${dbAuthToken ?? ''}`
   let db = tenantDbPool.get(key)
   if (!db) {
     const client = createClient({
-      url: dbUrl,
+      url: resolvedUrl,
       authToken: dbAuthToken || undefined,
     })
     db = drizzle(client, { schema: tenantSchema })
@@ -51,9 +104,25 @@ export function getTenantDrizzleDb(dbUrl: string, dbAuthToken?: string): TenantD
   return db
 }
 
+async function withBatchRetry<T>(fn: () => Promise<T>, maxAttempts = 3): Promise<T> {
+  let lastErr: unknown
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      return await fn()
+    }
+    catch (err) {
+      lastErr = err
+      if (attempt < maxAttempts) {
+        await new Promise(resolve => setTimeout(resolve, 300 * attempt))
+      }
+    }
+  }
+  throw lastErr
+}
+
 /** Bootstraps the Control DB tables if they do not exist yet (ideal for local dev & initial provisioning). */
 export async function initControlDbSchema(client: LibSqlClient): Promise<void> {
-  await client.batch([
+  await withBatchRetry(() => client.batch([
     `CREATE TABLE IF NOT EXISTS tenants (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
@@ -94,7 +163,7 @@ export async function initControlDbSchema(client: LibSqlClient): Promise<void> {
     `CREATE INDEX IF NOT EXISTS admins_email_idx ON admins (email)`,
     `CREATE INDEX IF NOT EXISTS admin_audit_logs_created_at_idx ON admin_audit_logs (created_at)`,
     `CREATE INDEX IF NOT EXISTS admin_audit_logs_operator_idx ON admin_audit_logs (operator_email)`,
-  ], 'write')
+  ], 'write'))
 
   // Backwards compatibility migration check: add tier column if table previously existed without it
   try {
@@ -108,7 +177,7 @@ export async function initControlDbSchema(client: LibSqlClient): Promise<void> {
 /** Bootstraps a newly created Tenant DB with the business tables and seeds default sizes & counters. */
 export async function initTenantDbSchema(client: LibSqlClient): Promise<void> {
   const now = new Date().toISOString()
-  await client.batch([
+  await withBatchRetry(() => client.batch([
     `CREATE TABLE IF NOT EXISTS farm_settings (
       id TEXT PRIMARY KEY DEFAULT 'default',
       farm_name TEXT NOT NULL DEFAULT 'My Farm',
@@ -281,6 +350,10 @@ export async function initTenantDbSchema(client: LibSqlClient): Promise<void> {
     `CREATE INDEX IF NOT EXISTS change_log_version_idx ON change_log (version)`,
     `CREATE INDEX IF NOT EXISTS outbox_status_idx ON outbox_mutations (status, created_at)`,
     {
+      sql: `INSERT OR IGNORE INTO farm_settings (id, farm_name, eggs_per_tray, currency, device_id, tier, onboarding_completed, created_at, updated_at) VALUES ('default', 'My Farm', 30, 'PHP', 'CLOUD', 'premium', 1, ?, ?)`,
+      args: [now, now],
+    },
+    {
       sql: `INSERT OR IGNORE INTO sale_counters (id, next_number, updated_at) VALUES (1, 1, ?)`,
       args: [now],
     },
@@ -290,13 +363,13 @@ export async function initTenantDbSchema(client: LibSqlClient): Promise<void> {
     },
     {
       sql: `INSERT OR IGNORE INTO local_counters (id, next_number, updated_at) VALUES ('sales', 1, ?), ('orders', 1, ?)`,
-      args: [now],
+      args: [now, now],
     },
     {
       sql: `INSERT OR IGNORE INTO sync_state (id, status, updated_at) VALUES ('default', 'local_only', ?)`,
       args: [now],
     },
-  ], 'write')
+  ], 'write'))
 
   // Seed default sizes if none exist
   const existingSizes = await client.execute('SELECT COUNT(*) as c FROM sizes')
@@ -308,12 +381,12 @@ export async function initTenantDbSchema(client: LibSqlClient): Promise<void> {
       { id: crypto.randomUUID(), name: 'Large', sortOrder: 2, colorSlot: 2 },
       { id: crypto.randomUUID(), name: 'Jumbo', sortOrder: 3, colorSlot: 3 },
     ]
-    await client.batch(
+    await withBatchRetry(() => client.batch(
       defaults.map(d => ({
         sql: `INSERT INTO sizes (id, name, sort_order, color_slot, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`,
         args: [d.id, d.name, d.sortOrder, d.colorSlot, now, now],
       })),
       'write',
-    )
+    ))
   }
 }

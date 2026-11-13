@@ -7,7 +7,7 @@ import { eq } from 'drizzle-orm'
 import type { H3Event } from 'h3'
 import { createDrizzleBackedClient } from '../db/adapter'
 import * as controlSchema from '../db/schema/control'
-import { getControlDb, getTenantDrizzleDb } from '../db/turso'
+import { ensureControlDbBootstrapped, ensureTenantDbBootstrapped, getControlDb, getTenantDrizzleDb, resolveLibsqlUrl } from '../db/turso'
 import { apiError } from './errors'
 import { createTenantDbFromClient } from '../../core/db/tenant-db'
 import type { TenantClient, TenantDb } from '../../core/db/tenant-db'
@@ -16,6 +16,7 @@ export * from '../../core/db/tenant-db'
 
 /** The tenant-scoped DB for this request. `tenantId` must come from requireTenant(), never from input. */
 export async function createTenantDb(_event: H3Event, tenantId: string): Promise<TenantDb> {
+  await ensureControlDbBootstrapped()
   const controlDb = getControlDb()
   const [tenant] = await controlDb
     .select()
@@ -26,7 +27,12 @@ export async function createTenantDb(_event: H3Event, tenantId: string): Promise
     throw apiError(403, 'no_farm')
   }
 
-  const tenantDrizzle = getTenantDrizzleDb(tenant.dbUrl, tenant.dbAuthToken || undefined)
+  const resolvedUrl = resolveLibsqlUrl(tenant.dbUrl)
+  if (resolvedUrl.startsWith('file:')) {
+    await ensureTenantDbBootstrapped(resolvedUrl, tenant.dbAuthToken || undefined)
+  }
+
+  const tenantDrizzle = getTenantDrizzleDb(resolvedUrl, tenant.dbAuthToken || undefined)
   const drizzleClient = createDrizzleBackedClient(tenantDrizzle, {
     tenantId: tenant.id,
     name: tenant.name,
