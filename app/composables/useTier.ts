@@ -1,6 +1,8 @@
 // Operational tier management (Feature 08, Offline-first).
 // Free tier is the default: zero authentication required, 100% local OPFS SQLite execution, zero network API calls.
 // Premium tier is activated when the user explicitly upgrades or logs in to enable cloud sync.
+import { getApps } from 'firebase/app'
+import { getAuth } from 'firebase/auth'
 
 export type UserTier = 'free' | 'premium'
 
@@ -19,27 +21,36 @@ export function useTier() {
   const isPremium = computed(() => tierCookie.value === 'premium')
 
   /**
-   * Retrieves the Firebase ID token IF AND ONLY IF the user is on the Premium tier
-   * and has an active Firebase Auth session. For Free users, returns null immediately
-   * with zero network or SDK overhead.
+   * Retrieves the Firebase ID token IF AND ONLY IF the user has an active Firebase Auth session.
+   * Obtains the Auth instance directly from Firebase App SDK to avoid Vue inject() warnings
+   * when invoked from background timers / SyncEngine outside setup() context.
    */
   async function getAuthToken(): Promise<string | null> {
     if (!import.meta.client) return null
 
+    let auth = null
     try {
-      const auth = useFirebaseAuth()
-      if (auth?.currentUser) {
-        if (isFree.value) {
-          upgradeToPremium()
-        }
-        return await auth.currentUser.getIdToken()
-      }
-      if (isFree.value) return null
-      return null
+      const apps = getApps()
+      if (apps.length > 0) auth = getAuth(apps[0])
     }
     catch {
-      return null
+      // Firebase app not yet initialized
     }
+    if (!auth) {
+      try {
+        auth = useFirebaseAuth()
+      }
+      catch {
+        // Vue setup context unavailable
+      }
+    }
+
+    if (auth?.currentUser) {
+      if (isFree.value) upgradeToPremium()
+      return await auth.currentUser.getIdToken()
+    }
+    if (isFree.value) return null
+    return null
   }
 
   function upgradeToPremium() {

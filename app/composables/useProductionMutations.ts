@@ -10,6 +10,7 @@ import type {
   ProductionDay,
   ReplaceProductionDayResponse,
 } from '#shared/types/api'
+import { useSync } from '~/composables/useSync'
 import { mapProductionError } from '~/utils/production-errors'
 import type { ProductionError } from '~/utils/production-errors'
 
@@ -29,13 +30,16 @@ export type MutationResult<T> = { ok: true, data: T } | { ok: false, error: Prod
 
 export function useProductionMutations() {
   const api = useApi()
+  const { triggerSync } = useSync()
   const pending = ref(false)
 
   async function run<T>(call: () => Promise<T>): Promise<MutationResult<T> | null> {
     if (pending.value) return null
     pending.value = true
     try {
-      return { ok: true, data: await call() }
+      const data = await call()
+      void triggerSync().catch(() => {})
+      return { ok: true, data }
     }
     catch (e) {
       return { ok: false, error: mapProductionError(e) }

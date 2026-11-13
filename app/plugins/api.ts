@@ -74,7 +74,18 @@ export default defineNuxtPlugin((nuxtApp) => {
       if (import.meta.client) {
         const path = extractPathname(request)
         if (isDataRoute(path)) {
-          return await localRouter.dispatch(request, opts)
+          const result = await localRouter.dispatch(request, opts)
+          const method = String(opts?.method || 'GET').toUpperCase()
+          if (method !== 'GET') {
+            try {
+              const { syncEngine } = await import('../local/sync')
+              void syncEngine.triggerSync().catch(() => {})
+            }
+            catch {
+              // ignore
+            }
+          }
+          return result
         }
       }
       return await baseFetch(request, opts)

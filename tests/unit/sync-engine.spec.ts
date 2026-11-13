@@ -315,4 +315,47 @@ describe('SyncEngine', () => {
     )
     expect(engine.getState().status).toBe('synced')
   })
+
+  it('updates excludeDeviceId when setDeviceId is called', async () => {
+    const engine = new SyncEngine({
+      localWorker: mockWorker,
+      getAuthToken,
+      isFree: () => false,
+      fetchFn: mockFetch,
+      deviceId: 'D-ORIG',
+    })
+
+    engine.setDeviceId('D-NEW1')
+    await engine.syncCycle()
+
+    expect(mockFetch).toHaveBeenCalledWith('/api/sync/pull', expect.objectContaining({
+      query: expect.objectContaining({
+        excludeDeviceId: 'D-NEW1',
+      }),
+    }))
+  })
+
+  it('pulls changes starting from lastPulledVersion to prevent re-applying snapshotted data', async () => {
+    mockWorker.getLastPulledVersion.mockResolvedValueOnce({
+      lastPulledVersion: 15,
+      lastPulledAt: '2026-11-06T12:00:00Z',
+    })
+
+    const engine = new SyncEngine({
+      localWorker: mockWorker,
+      getAuthToken,
+      isFree: () => false,
+      fetchFn: mockFetch,
+      deviceId: 'D1',
+    })
+
+    await engine.syncCycle()
+
+    expect(mockFetch).toHaveBeenCalledWith('/api/sync/pull', expect.objectContaining({
+      query: expect.objectContaining({
+        sinceVersion: 15,
+        excludeDeviceId: 'D1',
+      }),
+    }))
+  })
 })

@@ -1,31 +1,22 @@
 import { syncEngine } from '../local/sync'
+import { localWorker } from '../local/client'
 import { useTier } from '../composables/useTier'
-import { useMe } from '../composables/useMe'
+import { getLocalDeviceId } from '../utils/device'
 
 export default defineNuxtPlugin(() => {
   if (typeof window === 'undefined') return
 
   const { isPremium, getAuthToken, isFree } = useTier()
-  const { me } = useMe()
   const router = useRouter()
 
+  const deviceId = getLocalDeviceId()
   syncEngine.configure({
     getAuthToken,
     isFree: () => isFree.value,
+    deviceId,
   })
-
-  if (me.value?.farm?.deviceId) {
-    syncEngine.setDeviceId(me.value.farm.deviceId)
-  }
-
-  watch(
-    () => me.value?.farm?.deviceId,
-    (newDeviceId) => {
-      if (newDeviceId) {
-        syncEngine.setDeviceId(newDeviceId)
-      }
-    },
-  )
+  syncEngine.setDeviceId(deviceId)
+  void localWorker.setDeviceId(deviceId).catch(() => {})
 
   function updateSyncForRoute(path: string) {
     if (path.startsWith('/admin') || path.startsWith('/login/admin')) {

@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest'
+/* eslint-disable @typescript-eslint/no-explicit-any */
+import { describe, expect, it, vi } from 'vitest'
 import { compareSequenceNumbers, formatSequenceNumber, parseSequenceNumber } from '../../core/utils/sequence'
 import { farmBackupSnapshotSchema } from '../../app/local/export'
 
@@ -147,5 +148,34 @@ describe('Cloud Snapshot Export & Farm Summary (Cloud Sync on Login)', () => {
     expect(result.latestVersion).toBe(5)
     expect(result.snapshot.farmSettings?.name).toBe('Happy Hens')
     expect(result.snapshot.sizes?.length).toBe(1)
+  })
+
+  it('verifies LocalWorkerClient formats importSnapshot and markSnapshotExported calls', async () => {
+    const { LocalWorkerClient } = await import('../../app/local/client')
+    const client = new LocalWorkerClient()
+    const callWorkerSpy = vi.spyOn(client, 'callWorker').mockResolvedValue({ success: true } as any)
+
+    const dummySnapshot = { sizes: [], production: [] }
+    await client.importSnapshot(dummySnapshot, 7)
+    expect(callWorkerSpy).toHaveBeenCalledWith('IMPORT_SNAPSHOT', {
+      snapshot: dummySnapshot,
+      latestVersion: 7,
+    })
+
+    await client.markSnapshotExported(12)
+    expect(callWorkerSpy).toHaveBeenCalledWith('MARK_SNAPSHOT_EXPORTED', {
+      baseVersion: 12,
+    })
+
+    await client.updateSyncState({
+      status: 'synced',
+      lastPulledVersion: 12,
+      lastPushedAt: '2026-11-10T00:00:00.000Z',
+    })
+    expect(callWorkerSpy).toHaveBeenCalledWith('UPDATE_SYNC_STATE', {
+      status: 'synced',
+      lastPulledVersion: 12,
+      lastPushedAt: '2026-11-10T00:00:00.000Z',
+    })
   })
 })
