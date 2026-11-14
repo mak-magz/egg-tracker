@@ -14,6 +14,20 @@ import type { TenantClient, TenantDb } from '../../core/db/tenant-db'
 
 export * from '../../core/db/tenant-db'
 
+export async function updateControlTenantRecord(
+  tenantId: string,
+  updates: Partial<{
+    name: string
+    eggsPerTray: number
+    currency: string
+    tier: 'free' | 'premium'
+    updatedAt: string
+  }>,
+): Promise<void> {
+  const controlDb = getControlDb()
+  await controlDb.update(controlSchema.tenants).set(updates).where(eq(controlSchema.tenants.id, tenantId))
+}
+
 /** The tenant-scoped DB for this request. `tenantId` must come from requireTenant(), never from input. */
 export async function createTenantDb(_event: H3Event, tenantId: string): Promise<TenantDb> {
   await ensureControlDbBootstrapped()

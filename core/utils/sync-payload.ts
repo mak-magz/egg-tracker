@@ -3,7 +3,7 @@
 export interface FarmSnapshotPayload {
   deviceId: string
   farmSettings?: { name?: string, eggsPerTray?: number, currency?: string }
-  sizes?: Array<{ id: string, name: string, sortOrder: number, colorSlot: number, archivedAt?: string | null }>
+  sizes?: Array<{ id: string, name: string, sortOrder: number, colorSlot: number, archivedAt?: string | null, defaultPrice?: number | null }>
   clients?: Array<{ id: string, name: string, phone?: string | null, defaultPrice?: number | null, archivedAt?: string | null, version?: number }>
   production?: Array<{ id: string, producedOn: string, sizeId?: string | null, quality: 'good' | 'reject', eggs: number }>
   productionSubmissions?: Array<{ id: string, producedOn: string, hadBefore?: boolean | number }>
@@ -58,18 +58,28 @@ export function normalizeFarmSnapshot(raw: any): FarmSnapshotPayload {
     }
   }
 
-  // 4. sizes: maps sort_order -> sortOrder, color_slot -> colorSlot, archived_at -> archivedAt
+  // 4. sizes: maps sort_order -> sortOrder, color_slot -> colorSlot, archived_at -> archivedAt, default_price -> defaultPrice
   const rawSizes = r.sizes
   if (Array.isArray(rawSizes)) {
-    payload.sizes = rawSizes.map((s: any) => ({
-      id: String(s.id),
-      name: String(s.name),
-      sortOrder: Number(s.sortOrder ?? s.sort_order ?? 0),
-      colorSlot: Number(s.colorSlot ?? s.color_slot ?? 0),
-      archivedAt: s.archivedAt !== undefined
-        ? s.archivedAt
-        : (s.archived_at !== undefined ? s.archived_at : null),
-    }))
+    payload.sizes = rawSizes.map((s: any) => {
+      let defaultPrice: number | null = null
+      const rawPrice = s.defaultPrice !== undefined ? s.defaultPrice : s.default_price
+      if (rawPrice !== undefined && rawPrice !== null && rawPrice !== '') {
+        const num = Number(rawPrice)
+        defaultPrice = Number.isFinite(num) ? num : null
+      }
+
+      return {
+        id: String(s.id),
+        name: String(s.name),
+        sortOrder: Number(s.sortOrder ?? s.sort_order ?? 0),
+        colorSlot: Number(s.colorSlot ?? s.color_slot ?? 0),
+        archivedAt: s.archivedAt !== undefined
+          ? s.archivedAt
+          : (s.archived_at !== undefined ? s.archived_at : null),
+        defaultPrice,
+      }
+    })
   }
 
   // 5. clients: maps default_price -> defaultPrice, archived_at -> archivedAt, version

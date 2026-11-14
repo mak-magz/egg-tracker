@@ -380,3 +380,62 @@ export interface DeliverOrderRequest {
   confirmShortfall?: boolean
 }
 export interface DeliverOrderResponse { order: OrderDetail, sale: Sale, replayed: boolean }
+
+// ---- Offline Sync Guard & Conflict Management (docs/features/12-sync-conflict-and-multi-device-guard.md §3.1) ----
+
+export interface LocalDataSummary {
+  hasData: boolean
+  productionDays: number
+  clients: number
+  orders: number
+  sales: number
+  customSizesCount: number
+  pendingOutboxCount: number
+  failedOutboxCount: number
+  farmName: string | null
+  ownerUid?: string | null
+}
+
+export interface FailedOutboxMutation {
+  id: string
+  seq: number
+  type: string
+  entityLabel: string
+  detailLabel: string
+  errorCode: string
+  errorMessage: string
+  createdAt: string
+}
+
+export interface DiscardMutationResult {
+  discarded: boolean
+  remainingPendingCount: number
+  remainingFailedCount: number
+  needsReconcile: boolean
+}
+
+export interface AdminSyncTelemetryItem {
+  tenantId: string
+  farmName: string
+  changeLogVersion: number
+  activeDevices30d: number
+  lastPush: { timestamp: string, deviceId: string } | null
+  lastPull: { timestamp: string, deviceId: string } | null
+  health: 'synced' | 'idle' | 'conflict' | 'error'
+  unresolvedRejectionCount: number
+}
+
+export interface AdminSyncIssueItem {
+  id: string
+  mutationId: string
+  deviceId: string
+  mutationType: string
+  entityRef: string
+  errorCode: string
+  reason: string | null
+  error: string
+  occurredAt: string
+  rejectedAt: string
+  resolvedAt: string | null
+  payload: Record<string, unknown>
+}

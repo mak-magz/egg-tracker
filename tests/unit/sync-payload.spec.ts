@@ -330,8 +330,8 @@ describe('normalizeFarmSnapshot', () => {
       currency: 'PHP',
     })
     expect(normalized.sizes).toEqual([
-      { id: 'sz-sm', name: 'Small', sortOrder: 0, colorSlot: 0, archivedAt: null },
-      { id: 'sz-md', name: 'Medium', sortOrder: 1, colorSlot: 1, archivedAt: null },
+      { id: 'sz-sm', name: 'Small', sortOrder: 0, colorSlot: 0, archivedAt: null, defaultPrice: null },
+      { id: 'sz-md', name: 'Medium', sortOrder: 1, colorSlot: 1, archivedAt: null, defaultPrice: null },
     ])
     expect(normalized.clients).toEqual([
       { id: 'c1', name: 'Aling Nena Bakery', phone: '09181234567', defaultPrice: 215, archivedAt: null, version: 2 },

@@ -260,8 +260,31 @@ export const syncState = sqliteTable('sync_state', {
   lastPushedAt: text('last_pushed_at'),
   status: text('status', { enum: ['local_only', 'synced', 'syncing', 'error'] }).notNull().default('local_only'),
   lastError: text('last_error'),
+  needsReconcile: integer('needs_reconcile', { mode: 'boolean' }).notNull().default(false),
   updatedAt: text('updated_at').notNull().$defaultFn(() => new Date().toISOString()),
 })
+
+// --- Sync Rejections (Non-PII cloud rejection telemetry per tenant) ---
+export const syncRejections = sqliteTable(
+  'sync_rejections',
+  {
+    id: text('id').primaryKey(),
+    mutationId: text('mutation_id').notNull(),
+    deviceId: text('device_id').notNull(),
+    mutationType: text('mutation_type').notNull(),
+    entityRef: text('entity_ref').notNull(),
+    errorCode: text('error_code').notNull(),
+    reason: text('reason'),
+    errorMessage: text('error_message').notNull(),
+    occurredAt: text('occurred_at').notNull(),
+    rejectedAt: text('rejected_at').notNull(),
+    resolvedAt: text('resolved_at'),
+  },
+  table => [
+    index('sync_rejections_unresolved_idx').on(table.resolvedAt, table.rejectedAt),
+    index('sync_rejections_mutation_idx').on(table.mutationId),
+  ],
+)
 
 // --- Cloud Change Log (Authoritative Turso CDC log per tenant) ---
 export const changeLog = sqliteTable(

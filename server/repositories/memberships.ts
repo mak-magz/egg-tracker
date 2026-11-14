@@ -46,6 +46,7 @@ export async function findMembershipWithFarm(
           sort_order: tenantSchema.sizes.sortOrder,
           color_slot: tenantSchema.sizes.colorSlot,
           archived_at: tenantSchema.sizes.archivedAt,
+          default_price: tenantSchema.sizes.defaultPrice,
         })
         .from(tenantSchema.sizes)
     }
@@ -58,6 +59,7 @@ export async function findMembershipWithFarm(
           sort_order: tenantSchema.sizes.sortOrder,
           color_slot: tenantSchema.sizes.colorSlot,
           archived_at: tenantSchema.sizes.archivedAt,
+          default_price: tenantSchema.sizes.defaultPrice,
         })
         .from(tenantSchema.sizes)
     }

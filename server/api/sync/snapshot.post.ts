@@ -18,6 +18,7 @@ export const farmSnapshotSchema = z.object({
     sortOrder: z.number(),
     colorSlot: z.number(),
     archivedAt: z.string().nullable().optional(),
+    defaultPrice: z.number().nullable().optional(),
   })).optional().default([]),
   clients: z.array(z.object({
     id: z.string(),

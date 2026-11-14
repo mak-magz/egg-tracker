@@ -1,0 +1,13 @@
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "6",
+      "when": 1794583419539,
+      "tag": "0000_add_sync_rejections_and_reconcile_flag",
+      "breakpoints": true
+    }
+  ]
+}

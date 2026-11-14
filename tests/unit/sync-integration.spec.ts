@@ -225,16 +225,19 @@ describe('Tier 2: Real Local LibSQL Sync Integration', () => {
     expect(pullD2.latestVersion).toBe(4)
 
     const [saleChange, prodChange, clientChange] = pullD2.changes
-    expect(saleChange.entityType).toBe('create_sale')
+    expect(saleChange.entityType).toBe('sales')
     expect(saleChange.deviceId).toBe('D1')
+    expect(saleChange.data.op).toBe('create_sale')
     expect(saleChange.data.saleNumber).toBe('D1-0002')
 
-    expect(prodChange.entityType).toBe('log_production')
+    expect(prodChange.entityType).toBe('production')
     expect(prodChange.deviceId).toBe('D1')
+    expect(prodChange.data.op).toBe('log_production')
     expect(prodChange.data.rejects).toBe(5)
 
-    expect(clientChange.entityType).toBe('add_client')
+    expect(clientChange.entityType).toBe('clients')
     expect(clientChange.deviceId).toBe('D1')
+    expect(clientChange.data.op).toBe('add_client')
     expect(clientChange.data.name).toBe('New Local Client')
   })
 
