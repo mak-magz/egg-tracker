@@ -1,11 +1,29 @@
-import { createClient } from '@libsql/client'
 import { eq } from 'drizzle-orm'
-import { ensureControlDbBootstrapped, getControlDb, initTenantDbSchema } from '../db/turso'
+import {
+  TENANT_SCHEMA_USER_VERSION,
+  ensureControlDbBootstrapped,
+  getControlDb,
+  getTenantLibsqlClient,
+  initTenantDbSchema,
+} from '../db/turso'
 import * as controlSchema from '../db/schema/control'
 import { recordAdminAuditLog } from './admin-audit'
 import { apiError } from '../utils/errors'
+import { mapWithConcurrency } from '../utils/concurrency'
 
-export const SYSTEM_SCHEMA_VERSION = 'v1.0.0-full-schema'
+export const SYSTEM_SCHEMA_VERSION = `v${TENANT_SCHEMA_USER_VERSION}`
+
+function toSafeMigrationError(err: unknown, fallback: string): string {
+  const raw = err instanceof Error ? err.message : ''
+  const sanitized = raw
+    .replace(/(?:libsql|wss?|https?):\/\/\S+/gi, '[redacted-url]')
+    .replace(/file:\S+/gi, '[redacted-path]')
+    .replace(/bearer\s+\S+/gi, 'Bearer [redacted]')
+    .trim()
+  if (sanitized) return sanitized.slice(0, 200)
+  const code = (err as { code?: string })?.code
+  return code ? `${fallback} (${code})` : fallback
+}
 
 export async function getFleetMigrationStatus() {
   await ensureControlDbBootstrapped()
@@ -16,46 +34,51 @@ export async function getFleetMigrationStatus() {
   let pending = 0
   let errorCount = 0
 
-  const tenantStatuses = await Promise.all(
-    tenants.map(async (t) => {
-      try {
-        const client = createClient({
-          url: t.dbUrl,
-          authToken: t.dbAuthToken || undefined,
-        })
-        const res = await client.execute('SELECT name FROM sqlite_master WHERE type=\'table\' AND name=\'farm_settings\'')
-        const exists = res.rows.length > 0
-        if (exists) {
-          upToDate++
-          return {
-            tenantId: t.id,
-            farmName: t.name,
-            currentVersion: SYSTEM_SCHEMA_VERSION,
-            status: 'up_to_date' as const,
-          }
-        }
-        else {
-          pending++
-          return {
-            tenantId: t.id,
-            farmName: t.name,
-            currentVersion: 'pending_bootstrap',
-            status: 'pending' as const,
-          }
-        }
-      }
-      catch (e) {
-        errorCount++
+  const tenantStatuses = await mapWithConcurrency(tenants, 5, async (t) => {
+    try {
+      const client = getTenantLibsqlClient(t.dbUrl, t.dbAuthToken || undefined)
+      const res = await client.execute('PRAGMA user_version')
+      const currentVersionNum = Number(res.rows[0]?.user_version ?? 0)
+
+      if (currentVersionNum >= TENANT_SCHEMA_USER_VERSION) {
+        upToDate++
         return {
           tenantId: t.id,
           farmName: t.name,
-          currentVersion: 'unknown',
-          status: 'error' as const,
-          lastError: (e as Error).message,
+          currentVersion: SYSTEM_SCHEMA_VERSION,
+          status: 'up_to_date' as const,
         }
       }
-    }),
-  )
+      else if (currentVersionNum === 0) {
+        pending++
+        return {
+          tenantId: t.id,
+          farmName: t.name,
+          currentVersion: 'pending_bootstrap',
+          status: 'pending' as const,
+        }
+      }
+      else {
+        pending++
+        return {
+          tenantId: t.id,
+          farmName: t.name,
+          currentVersion: `v${currentVersionNum}`,
+          status: 'pending' as const,
+        }
+      }
+    }
+    catch (e) {
+      errorCount++
+      return {
+        tenantId: t.id,
+        farmName: t.name,
+        currentVersion: 'unknown',
+        status: 'error' as const,
+        lastError: toSafeMigrationError(e, 'Migration status error'),
+      }
+    }
+  })
 
   return {
     systemVersion: SYSTEM_SCHEMA_VERSION,
@@ -79,17 +102,14 @@ export async function runSingleTenantMigration(tenantId: string, operatorEmail: 
   if (!tenant) throw apiError(404, 'not_found')
 
   try {
-    const client = createClient({
-      url: tenant.dbUrl,
-      authToken: tenant.dbAuthToken || undefined,
-    })
+    const client = getTenantLibsqlClient(tenant.dbUrl, tenant.dbAuthToken || undefined)
     await initTenantDbSchema(client)
 
     await recordAdminAuditLog({
       operatorEmail,
       actionType: 'schema_migration',
       targetId: tenantId,
-      summary: `Migrated schema for ${tenant.name}`,
+      summary: `Migrated schema for ${tenant.name} to ${SYSTEM_SCHEMA_VERSION}`,
     })
 
     return { success: true, tenantId, version: SYSTEM_SCHEMA_VERSION }
@@ -99,7 +119,7 @@ export async function runSingleTenantMigration(tenantId: string, operatorEmail: 
       success: false,
       tenantId,
       version: SYSTEM_SCHEMA_VERSION,
-      error: (e as Error).message,
+      error: toSafeMigrationError(e, 'Migration failed'),
     }
   }
 }
@@ -115,35 +135,30 @@ export async function runBatchMigrations(targetTenantIds: string[] | undefined, 
 
   let successful = 0
   let failed = 0
-  const results = []
 
-  // AC24/AC25: Sequential execution with isolated failure handling
-  for (const t of tenants) {
+  const results = await mapWithConcurrency(tenants, 5, async (t) => {
     try {
-      const client = createClient({
-        url: t.dbUrl,
-        authToken: t.dbAuthToken || undefined,
-      })
+      const client = getTenantLibsqlClient(t.dbUrl, t.dbAuthToken || undefined)
       await initTenantDbSchema(client)
       successful++
-      results.push({
+      return {
         tenantId: t.id,
         farmName: t.name,
         success: true,
         version: SYSTEM_SCHEMA_VERSION,
-      })
+      }
     }
     catch (e) {
       failed++
-      results.push({
+      return {
         tenantId: t.id,
         farmName: t.name,
         success: false,
         version: SYSTEM_SCHEMA_VERSION,
-        error: (e as Error).message,
-      })
+        error: toSafeMigrationError(e, 'Migration failed'),
+      }
     }
-  }
+  })
 
   await recordAdminAuditLog({
     operatorEmail,

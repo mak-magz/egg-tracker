@@ -1,4 +1,7 @@
 import type { FetchOptions } from 'ofetch'
+import type { AdminSyncIssueItem, AdminSyncTelemetryItem } from '#shared/types/api'
+
+export type { AdminSyncIssueItem, AdminSyncTelemetryItem }
 
 export interface AdminMetricsResponse {
   turso: {
@@ -152,16 +155,6 @@ export interface AdminBatchMigrationResponse {
   results: AdminBatchMigrationResult[]
 }
 
-export interface AdminSyncTelemetryItem {
-  tenantId: string
-  farmName: string
-  changeLogVersion: number
-  activeDevices30d: number
-  lastPush: { timestamp: string, deviceId: string } | null
-  lastPull: { timestamp: string, deviceId: string } | null
-  health: 'synced' | 'idle' | 'conflict' | 'error'
-}
-
 export interface AdminSyncTelemetryResponse {
   telemetry: AdminSyncTelemetryItem[]
 }
@@ -181,15 +174,6 @@ export interface AdminChangeLogResponse {
   total: number
   page: number
   limit: number
-}
-
-export interface AdminSyncIssueItem {
-  id: string
-  mutationId: string
-  deviceId: string
-  error: string
-  occurredAt: string
-  payload: Record<string, unknown>
 }
 
 export interface AdminSyncIssuesResponse {

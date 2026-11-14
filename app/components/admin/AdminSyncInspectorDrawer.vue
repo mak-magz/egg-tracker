@@ -182,11 +182,26 @@ const ui = detailUi()
               :key="iss.id"
               class="rounded-xl border border-red-500/20 bg-red-500/5 p-3 space-y-2"
             >
-              <div class="flex items-center justify-between text-red-400 font-sans font-semibold">
-                <span>{{ iss.error }}</span>
-                <span class="text-xs text-muted">{{ iss.deviceId }} · {{ new Date(iss.occurredAt).toLocaleTimeString() }}</span>
+              <div class="flex items-center justify-between gap-2 text-red-400 font-sans font-semibold">
+                <div class="flex items-center gap-2 min-w-0">
+                  <UBadge
+                    color="error"
+                    variant="subtle"
+                    size="xs"
+                  >
+                    {{ iss.errorCode || 'rejected' }}
+                  </UBadge>
+                  <span class="truncate">{{ iss.mutationType }} · {{ iss.entityRef }}</span>
+                </div>
+                <span class="text-xs text-muted shrink-0">{{ iss.deviceId }} · {{ new Date(iss.rejectedAt || iss.occurredAt).toLocaleTimeString() }}</span>
               </div>
-              <pre class="p-2 bg-muted/10 rounded overflow-x-auto text-[11px] text-muted">{{ JSON.stringify(iss.payload, null, 2) }}</pre>
+              <p class="text-xs font-sans text-default">
+                {{ iss.reason || iss.error }}
+              </p>
+              <pre
+                v-if="iss.payload && Object.keys(iss.payload).length > 0"
+                class="p-2 bg-muted/10 rounded overflow-x-auto text-[11px] text-muted"
+              >{{ JSON.stringify(iss.payload, null, 2) }}</pre>
             </div>
           </div>
         </div>

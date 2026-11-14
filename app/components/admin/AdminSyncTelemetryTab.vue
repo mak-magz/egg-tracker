@@ -113,13 +113,23 @@ function healthColor(h: string) {
               >Never</span>
             </td>
             <td class="px-4 py-3">
-              <UBadge
-                :color="healthColor(item.health)"
-                variant="subtle"
-                size="xs"
-              >
-                ● {{ item.health }}
-              </UBadge>
+              <div class="flex items-center gap-1.5">
+                <UBadge
+                  :color="healthColor(item.health)"
+                  variant="subtle"
+                  size="xs"
+                >
+                  ● {{ item.health }}
+                </UBadge>
+                <UBadge
+                  v-if="item.unresolvedRejectionCount > 0"
+                  color="warning"
+                  variant="soft"
+                  size="xs"
+                >
+                  {{ item.unresolvedRejectionCount }} rejected
+                </UBadge>
+              </div>
             </td>
             <td
               class="px-4 py-3 text-right"
