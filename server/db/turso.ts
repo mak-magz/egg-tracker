@@ -184,6 +184,64 @@ export async function initControlDbSchema(client: LibSqlClient): Promise<void> {
   }
 }
 
+async function readSchemaVersions(client: LibSqlClient): Promise<{ metaVersion: number, pragmaVersion: number }> {
+  let metaVersion = 0
+  try {
+    const res = await client.execute('SELECT version FROM _schema_meta WHERE id = 1')
+    const parsed = Number(res.rows[0]?.version ?? 0)
+    if (Number.isFinite(parsed)) metaVersion = parsed
+  }
+  catch {
+    metaVersion = 0
+  }
+
+  let pragmaVersion = 0
+  try {
+    const res = await client.execute('PRAGMA user_version')
+    const parsed = Number(res.rows[0]?.user_version ?? 0)
+    if (Number.isFinite(parsed)) pragmaVersion = parsed
+  }
+  catch {
+    pragmaVersion = 0
+  }
+
+  return { metaVersion, pragmaVersion }
+}
+
+/**
+ * Reads the schema version of a tenant database.
+ * Supports both Turso Cloud (via `_schema_meta` table) and local SQLite (via `PRAGMA user_version`).
+ */
+export async function readTenantSchemaVersion(client: LibSqlClient): Promise<number> {
+  const { metaVersion, pragmaVersion } = await readSchemaVersions(client)
+  return Math.max(metaVersion, pragmaVersion)
+}
+
+/**
+ * Records the schema version in `_schema_meta` and syncs `PRAGMA user_version` best-effort
+ * (Turso Cloud keeps `PRAGMA user_version` read-only and rejects writes).
+ */
+async function writeTenantSchemaVersion(client: LibSqlClient, version: number, now: string): Promise<void> {
+  await client.execute(`
+    CREATE TABLE IF NOT EXISTS _schema_meta (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      version INTEGER NOT NULL,
+      updated_at TEXT NOT NULL
+    )
+  `)
+  await client.execute({
+    sql: `INSERT INTO _schema_meta (id, version, updated_at) VALUES (1, ?, ?)
+          ON CONFLICT(id) DO UPDATE SET version = excluded.version, updated_at = excluded.updated_at`,
+    args: [version, now],
+  })
+  try {
+    await client.execute(`PRAGMA user_version = ${Number(version)}`)
+  }
+  catch {
+    // PRAGMA user_version is read-only on Turso Cloud
+  }
+}
+
 /**
  * Executes idempotent versioned migrations on tenant databases:
  * v0 -> v1 (Baseline Core DDL & seeds)
@@ -191,9 +249,24 @@ export async function initControlDbSchema(client: LibSqlClient): Promise<void> {
  * v2 -> v3 (sync_rejections, sync_state.needs_reconcile, outbox_status_idx)
  */
 export async function migrateTenantDatabase(client: LibSqlClient): Promise<void> {
-  const versionRes = await client.execute('PRAGMA user_version')
-  const currentVersion = Number(versionRes.rows[0]?.user_version ?? 0)
+  const { metaVersion, pragmaVersion } = await readSchemaVersions(client)
+  const currentVersion = Math.max(metaVersion, pragmaVersion)
   const now = new Date().toISOString()
+
+  if (currentVersion >= TENANT_SCHEMA_USER_VERSION) {
+    if (metaVersion < currentVersion) {
+      await writeTenantSchemaVersion(client, currentVersion, now)
+    }
+    else if (pragmaVersion < currentVersion) {
+      try {
+        await client.execute(`PRAGMA user_version = ${currentVersion}`)
+      }
+      catch {
+        // Ignored on Turso Cloud where PRAGMA user_version is read-only
+      }
+    }
+    return
+  }
 
   if (currentVersion < 1) {
     await withBatchRetry(() => client.batch([
@@ -408,7 +481,7 @@ export async function migrateTenantDatabase(client: LibSqlClient): Promise<void>
         'write',
       ))
     }
-    await client.execute('PRAGMA user_version = 1')
+    await writeTenantSchemaVersion(client, 1, now)
   }
 
   if (currentVersion < 2) {
@@ -433,7 +506,7 @@ export async function migrateTenantDatabase(client: LibSqlClient): Promise<void>
         // Column already exists
       }
     }
-    await client.execute('PRAGMA user_version = 2')
+    await writeTenantSchemaVersion(client, 2, now)
   }
 
   if (currentVersion < 3) {
@@ -467,7 +540,7 @@ export async function migrateTenantDatabase(client: LibSqlClient): Promise<void>
       }
     }
 
-    await client.execute(`PRAGMA user_version = ${TENANT_SCHEMA_USER_VERSION}`)
+    await writeTenantSchemaVersion(client, TENANT_SCHEMA_USER_VERSION, now)
   }
 }
 

@@ -3,10 +3,10 @@ import { existsSync, rmSync } from 'node:fs'
 import { createClient, type Client as LibSqlClient } from '@libsql/client'
 import { eq } from 'drizzle-orm'
 import { drizzle } from 'drizzle-orm/libsql'
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { createDrizzleBackedClient } from '../../server/db/adapter'
 import * as tenantSchema from '../../server/db/schema/tenant'
-import { initTenantDbSchema, migrateTenantDatabase, TENANT_SCHEMA_USER_VERSION } from '../../server/db/turso'
+import { initTenantDbSchema, migrateTenantDatabase, readTenantSchemaVersion, TENANT_SCHEMA_USER_VERSION } from '../../server/db/turso'
 import { applyFarmSnapshot, applySyncPush, exportTenantSnapshot, pullSyncChanges } from '../../server/repositories/sync'
 import { createTenantDbFromClient, type TenantClient, type TenantDb } from '../../server/utils/db'
 
@@ -195,5 +195,72 @@ describe('Backend Sync Canonical CDC, Rejections & Migrations', () => {
       .from(tenantSchema.syncRejections)
       .where(eq(tenantSchema.syncRejections.mutationId, 'mut-bad-deliver'))
     expect(afterRetry[0].resolvedAt).not.toBeNull()
+  })
+
+  it('tracks schema version in _schema_meta and succeeds when PRAGMA user_version writes are blocked (Turso Cloud)', async () => {
+    const metaCheck = await client.execute('SELECT version FROM _schema_meta WHERE id = 1')
+    expect(Number(metaCheck.rows[0]?.version)).toBe(TENANT_SCHEMA_USER_VERSION)
+
+    const version = await readTenantSchemaVersion(client)
+    expect(version).toBe(TENANT_SCHEMA_USER_VERSION)
+
+    const restrictedClient: LibSqlClient = {
+      ...client,
+      execute: vi.fn(async (stmt: any) => {
+        const sql = typeof stmt === 'string' ? stmt : stmt.sql
+        if (/PRAGMA\s+user_version\s*=/i.test(sql)) {
+          throw new Error('SQLite error: not authorized')
+        }
+        return client.execute(stmt)
+      }),
+      batch: vi.fn(async (stmts: any[], mode?: any) => client.batch(stmts, mode)),
+    } as unknown as LibSqlClient
+
+    await expect(migrateTenantDatabase(restrictedClient)).resolves.not.toThrow()
+    expect(await readTenantSchemaVersion(restrictedClient)).toBe(TENANT_SCHEMA_USER_VERSION)
+  })
+
+  it('completes initial v0 -> v3 migration when PRAGMA user_version writes throw not authorized', async () => {
+    const cloudTestFile = 'local-tenant-test-turso-cloud-sim.db'
+    for (const f of [cloudTestFile, `${cloudTestFile}-wal`, `${cloudTestFile}-shm`]) {
+      if (existsSync(f)) rmSync(f, { force: true })
+    }
+    const rawCloudClient = createClient({ url: `file:${cloudTestFile}` })
+    const cloudClient: LibSqlClient = {
+      ...rawCloudClient,
+      execute: vi.fn(async (stmt: any) => {
+        const sql = typeof stmt === 'string' ? stmt : stmt.sql
+        if (/PRAGMA\s+user_version\s*=/i.test(sql)) {
+          throw new Error('SQLite error: not authorized')
+        }
+        return rawCloudClient.execute(stmt)
+      }),
+      batch: vi.fn(async (stmts: any[], mode?: any) => rawCloudClient.batch(stmts, mode)),
+      close: () => rawCloudClient.close(),
+    } as unknown as LibSqlClient
+
+    try {
+      await expect(migrateTenantDatabase(cloudClient)).resolves.not.toThrow()
+      expect(await readTenantSchemaVersion(cloudClient)).toBe(TENANT_SCHEMA_USER_VERSION)
+
+      const meta = await cloudClient.execute('SELECT version FROM _schema_meta WHERE id = 1')
+      expect(Number(meta.rows[0]?.version)).toBe(TENANT_SCHEMA_USER_VERSION)
+
+      const tables = await cloudClient.execute(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'sync_rejections'`)
+      expect(tables.rows).toHaveLength(1)
+    }
+    finally {
+      cloudClient.close()
+      for (const f of [cloudTestFile, `${cloudTestFile}-wal`, `${cloudTestFile}-shm`]) {
+        if (existsSync(f)) {
+          try {
+            rmSync(f, { force: true })
+          }
+          catch {
+            // ignore Windows file lock
+          }
+        }
+      }
+    }
   })
 })
