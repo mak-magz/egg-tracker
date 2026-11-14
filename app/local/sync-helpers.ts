@@ -135,50 +135,257 @@ export async function summarizeLocalData(driver: LocalSqlDriver): Promise<LocalD
   }
 }
 
-function classifyOutboxError(rawError: string | null): { errorCode: string, errorMessage: string } {
-  const err = (rawError || '').trim()
-  const lower = err.toLowerCase()
+export function classifyOutboxError(rawError: string | null): { errorCode: string, errorMessage: string } {
+  const raw = (rawError || '').trim()
+  let domainCode: string | null = null
+  let cleanText = raw
 
-  if (lower.includes('insufficient stock') || lower.includes('shortfall') || lower.includes('tm026')) {
-    return {
-      errorCode: 'stock_shortfall',
-      errorMessage: 'Not enough eggs in stock in the cloud for this sale or delivery.',
+  const bracketMatch = /^\[(TM\d{3})\]\s*(.*)$/i.exec(raw)
+  if (bracketMatch) {
+    domainCode = bracketMatch[1]!.toUpperCase()
+    cleanText = bracketMatch[2]!.trim()
+  }
+  else {
+    const leadingMatch = /^(TM\d{3})(?::|\s+|$)(.*)$/i.exec(raw)
+    if (leadingMatch) {
+      domainCode = leadingMatch[1]!.toUpperCase()
+      cleanText = leadingMatch[2]!.trim()
     }
   }
-  if (lower.includes('over delivery') || lower.includes('over_delivered') || lower.includes('tm050')) {
+
+  const cleanLower = cleanText.toLowerCase()
+
+  if (
+    domainCode === 'TM020'
+    || cleanLower.includes('customer with this name already exists')
+    || cleanLower.includes('client with this name already exists')
+  ) {
     return {
-      errorCode: 'over_delivered',
-      errorMessage: 'Delivery quantity exceeds the remaining balance on this order.',
+      errorCode: 'duplicate_client',
+      errorMessage: 'A client with this name already exists in the cloud. Two clients cannot share the same name.',
     }
   }
-  if (lower.includes('stale version') || lower.includes('version') || lower.includes('tm037')) {
+
+  if (
+    domainCode === 'TM009'
+    || cleanLower.includes('egg size with this name already exists')
+  ) {
+    return {
+      errorCode: 'duplicate_size',
+      errorMessage: 'An egg size with this name already exists in the cloud.',
+    }
+  }
+
+  if (
+    domainCode === 'TM037'
+    || cleanLower.includes('insufficient stock')
+    || cleanLower.includes('shortfall')
+  ) {
+    return {
+      errorCode: 'insufficient_stock',
+      errorMessage: 'Not enough eggs in stock in the cloud to record this sale or delivery.',
+    }
+  }
+
+  if (
+    domainCode === 'TM022'
+    || domainCode === 'TM036'
+    || domainCode === 'TM045'
+    || cleanLower.includes('were updated')
+    || cleanLower.includes('was updated')
+    || cleanLower.includes('stale version')
+  ) {
     return {
       errorCode: 'stale_version',
-      errorMessage: 'This record was already modified on another device.',
+      errorMessage: 'This record was updated on another device. Discard your copy or review the latest cloud data.',
     }
   }
-  if (lower.includes('closed') || lower.includes('cancelled') || lower.includes('fulfilled') || lower.includes('tm046')) {
+
+  if (
+    domainCode === 'TM043'
+    || cleanLower.includes('already been voided')
+  ) {
+    return {
+      errorCode: 'already_voided',
+      errorMessage: 'This sale has already been voided in the cloud.',
+    }
+  }
+
+  if (
+    domainCode === 'TM046'
+    || cleanLower.includes('already been closed')
+    || cleanLower.includes('closed')
+    || cleanLower.includes('cancelled')
+    || cleanLower.includes('fulfilled')
+  ) {
     return {
       errorCode: 'order_closed',
-      errorMessage: 'This order is already closed or cancelled in the cloud.',
+      errorMessage: 'Order was already closed, fulfilled, or cancelled on another device.',
     }
   }
-  if (lower.includes('before orderdate') || lower.includes('date_conflict') || lower.includes('tm055')) {
+
+  if (
+    domainCode === 'TM047'
+    || domainCode === 'TM049'
+    || cleanLower.includes('deliveries have been recorded')
+  ) {
+    return {
+      errorCode: 'order_has_deliveries',
+      errorMessage: 'Order cannot be altered because deliveries have already been recorded.',
+    }
+  }
+
+  if (
+    domainCode === 'TM048'
+    || cleanLower.includes('partially fulfilled state')
+  ) {
+    return {
+      errorCode: 'order_close_short_invalid',
+      errorMessage: 'Only partially fulfilled orders can be closed short.',
+    }
+  }
+
+  if (
+    domainCode === 'TM050'
+    || cleanLower.includes('exceed the remaining quantity')
+    || cleanLower.includes('over delivery')
+    || cleanLower.includes('over_delivered')
+  ) {
+    return {
+      errorCode: 'over_delivered',
+      errorMessage: 'Delivery quantity exceeds what remains open on this order.',
+    }
+  }
+
+  if (
+    domainCode === 'TM051'
+    || domainCode === 'TM053'
+    || cleanLower.includes('record is locked')
+  ) {
+    return {
+      errorCode: 'linked_record_locked',
+      errorMessage: 'Linked order or delivery lines are locked after delivery and cannot be modified.',
+    }
+  }
+
+  if (
+    domainCode === 'TM052'
+    || cleanLower.includes('not part of this order')
+  ) {
+    return {
+      errorCode: 'size_not_in_order',
+      errorMessage: 'Selected egg size is not part of this order in the cloud.',
+    }
+  }
+
+  if (
+    domainCode === 'TM055'
+    || cleanLower.includes('earlier than the order date')
+    || cleanLower.includes('before orderdate')
+    || cleanLower.includes('date_conflict')
+  ) {
     return {
       errorCode: 'date_conflict',
       errorMessage: 'Delivery date cannot be earlier than the order date.',
     }
   }
-  if (lower.includes('unknown') || lower.includes('not found') || lower.includes('tm011') || lower.includes('tm023') || lower.includes('tm027') || lower.includes('tm044')) {
+
+  if (
+    domainCode === 'TM010'
+    || cleanLower.includes('at least one active egg size')
+  ) {
     return {
-      errorCode: 'not_found',
-      errorMessage: 'Referenced record could not be found in the cloud.',
+      errorCode: 'last_active_size',
+      errorMessage: 'A farm must keep at least one active egg size.',
     }
   }
-  if (lower.includes('duplicate') || lower.includes('tm016') || lower.includes('tm024')) {
+
+  if (
+    domainCode === 'TM015'
+    || domainCode === 'TM021'
+    || cleanLower.includes('maximum number')
+  ) {
+    return {
+      errorCode: 'limit_reached',
+      errorMessage: cleanText || 'Farm item limit has been reached.',
+    }
+  }
+
+  if (
+    ['TM011', 'TM023', 'TM027', 'TM044', 'TM003'].includes(domainCode || '')
+    || cleanLower.includes('not found')
+    || cleanLower.includes('no production record')
+    || cleanLower.includes('unknown')
+  ) {
+    return {
+      errorCode: 'not_found',
+      errorMessage: 'The referenced record could not be found in the cloud.',
+    }
+  }
+
+  const validationCodes = new Set([
+    'TM001', 'TM002', 'TM004', 'TM005', 'TM006', 'TM007', 'TM008',
+    'TM012', 'TM014', 'TM017', 'TM018', 'TM019',
+    'TM028', 'TM029', 'TM030', 'TM031', 'TM032', 'TM033',
+  ])
+  if (domainCode && validationCodes.has(domainCode)) {
+    const isGenericValidation = (
+      !cleanText
+      || cleanLower === 'input validation failed.'
+      || cleanLower === 'input validation failed'
+      || cleanLower === 'validation failed'
+      || cleanLower === 'rejected'
+      || cleanLower === 'mutation rejected by server validation.'
+    )
+    if (!isGenericValidation) {
+      return {
+        errorCode: 'validation_failed',
+        errorMessage: cleanText,
+      }
+    }
+    const codeMessageMap: Record<string, string> = {
+      TM002: 'Production date cannot be in the future.',
+      TM004: 'Production entry must include at least one egg or reject.',
+      TM007: 'Egg count is out of allowable range.',
+      TM008: 'Egg size name is invalid.',
+      TM017: 'Client name is invalid.',
+      TM018: 'Client phone number is invalid.',
+      TM019: 'Default price per tray is invalid.',
+      TM028: 'Sale or order must have between 1 and 20 size lines.',
+      TM029: 'Each egg size can only appear once per sale or order.',
+      TM030: 'Egg quantity on a line is out of range.',
+      TM031: 'Price per tray is invalid.',
+      TM032: 'Delivery requires an active, available client.',
+      TM033: 'Selected egg size is not available or has been archived.',
+    }
+    return {
+      errorCode: 'validation_failed',
+      errorMessage: codeMessageMap[domainCode] || 'Input validation failed.',
+    }
+  }
+
+  if (
+    domainCode === 'TM016'
+    || domainCode === 'TM024'
+    || cleanLower.includes('duplicate')
+    || cleanLower.includes('tm016')
+    || cleanLower.includes('tm024')
+  ) {
     return {
       errorCode: 'duplicate_record',
       errorMessage: 'A record with this name or number already exists in the cloud.',
+    }
+  }
+
+  if (
+    cleanText
+    && cleanLower !== 'rejected'
+    && cleanLower !== 'mutation rejected by server validation.'
+    && cleanLower !== 'mutation rejected by server validation'
+  ) {
+    return {
+      errorCode: 'sync_rejected',
+      errorMessage: cleanText,
     }
   }
 
@@ -261,7 +468,7 @@ export function formatFailedMutation(row: OutboxMutationRow, seq: number): Faile
           : row.mutation_type === 'archive_client'
             ? 'Archive Client'
             : 'Restore Client'
-      detailLabel = row.occurred_at.slice(0, 10)
+      detailLabel = payload.name ? `${payload.name} • ${row.occurred_at.slice(0, 10)}` : row.occurred_at.slice(0, 10)
       break
     }
     case 'add_size':

@@ -1412,7 +1412,13 @@ self.onmessage = async (e: MessageEvent<WorkerRequest>) => {
 
     if (type === 'MARK_MUTATIONS_PROCESSED') {
       await dbReadyPromise
-      const results: Array<{ id: string, status: 'applied' | 'conflict_lww' | 'rejected', error?: string }> = payload?.results || []
+      const results: Array<{
+        id: string
+        status: 'applied' | 'conflict_lww' | 'rejected'
+        error?: string
+        code?: string
+        reason?: string | null
+      }> = payload?.results || []
       const now = new Date().toISOString()
       sqliteDb.exec('BEGIN TRANSACTION;')
       try {
@@ -1424,9 +1430,12 @@ self.onmessage = async (e: MessageEvent<WorkerRequest>) => {
             })
           }
           else if (res.status === 'rejected') {
+            const storedError = res.code && /^TM\d{3}$/.test(res.code) && !(res.error || '').startsWith(`[${res.code}]`)
+              ? `[${res.code}] ${res.error || 'rejected'}`
+              : (res.error || 'rejected')
             sqliteDb.exec({
               sql: 'UPDATE outbox_mutations SET status = \'failed\', error = ? WHERE id = ?',
-              bind: [res.error || 'rejected', res.id],
+              bind: [storedError, res.id],
             })
           }
         }

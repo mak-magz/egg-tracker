@@ -243,6 +243,8 @@ export class LocalWorkerClient {
     id: string
     status: 'applied' | 'conflict_lww' | 'rejected'
     error?: string
+    code?: string
+    reason?: string | null
   }>): Promise<{ success: boolean }> {
     return this.callWorker('MARK_MUTATIONS_PROCESSED', { results })
   }

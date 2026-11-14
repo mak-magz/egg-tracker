@@ -4,6 +4,7 @@ import { createClient, type Client as LibSqlClient } from '@libsql/client'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import {
   applyRemoteChangesOps,
+  classifyOutboxError,
   formatFailedMutation,
   LOCAL_SCHEMA_USER_VERSION,
   type LocalSqlDriver,
@@ -375,5 +376,94 @@ describe('Local Worker Sync Helpers & SyncEngine', () => {
     expect(reconcileFromSnapshot).toHaveBeenCalledWith({ sizes: [] }, 8)
     expect(engine.getState().failedCount).toBe(1)
     expect(engine.getState().lastRemoteUpdateAt).not.toBeNull()
+  })
+
+  describe('classifyOutboxError and formatFailedMutation error clarity', () => {
+    it('classifies legacy server message for duplicate client without prefix', () => {
+      const result = classifyOutboxError('A customer with this name already exists.')
+      expect(result.errorCode).toBe('duplicate_client')
+      expect(result.errorMessage).toBe('A client with this name already exists in the cloud. Two clients cannot share the same name.')
+    })
+
+    it('classifies prefixed TM020 duplicate client message', () => {
+      const result = classifyOutboxError('[TM020] A client with this name already exists.')
+      expect(result.errorCode).toBe('duplicate_client')
+      expect(result.errorMessage).toBe('A client with this name already exists in the cloud. Two clients cannot share the same name.')
+    })
+
+    it('renders client name in formatFailedMutation detailLabel for add_client and update_client', () => {
+      const addRes = formatFailedMutation({
+        id: 'out-client-1',
+        device_id: 'D2',
+        mutation_type: 'add_client',
+        payload: JSON.stringify({ name: 'Maria Santos', phone: '09171234567' }),
+        occurred_at: '2026-11-14T10:00:00Z',
+        status: 'failed',
+        error: '[TM020] A client with this name already exists.',
+        created_at: '2026-11-14T10:00:00Z',
+      }, 1)
+
+      expect(addRes.entityLabel).toBe('Add Client')
+      expect(addRes.detailLabel).toBe('Maria Santos • 2026-11-14')
+      expect(addRes.errorCode).toBe('duplicate_client')
+      expect(addRes.errorMessage).toContain('A client with this name already exists')
+
+      const updateRes = formatFailedMutation({
+        id: 'out-client-2',
+        device_id: 'D2',
+        mutation_type: 'update_client',
+        payload: JSON.stringify({ id: 'c1', name: 'Sunrise Bakery' }),
+        occurred_at: '2026-11-14T10:00:00Z',
+        status: 'failed',
+        error: 'A customer with this name already exists.',
+        created_at: '2026-11-14T10:00:00Z',
+      }, 2)
+
+      expect(updateRes.entityLabel).toBe('Update Client')
+      expect(updateRes.detailLabel).toBe('Sunrise Bakery • 2026-11-14')
+      expect(updateRes.errorCode).toBe('duplicate_client')
+    })
+
+    it('classifies TM037 insufficient stock accurately and NOT as stale_version', () => {
+      const resultPrefixed = classifyOutboxError('[TM037] Insufficient stock on hand to fulfill this sale.')
+      expect(resultPrefixed.errorCode).toBe('insufficient_stock')
+      expect(resultPrefixed.errorMessage).toBe('Not enough eggs in stock in the cloud to record this sale or delivery.')
+      expect(resultPrefixed.errorCode).not.toBe('stale_version')
+
+      const resultPlain = classifyOutboxError('Insufficient stock on hand to fulfill this sale.')
+      expect(resultPlain.errorCode).toBe('insufficient_stock')
+    })
+
+    it('classifies stale version codes TM022, TM036, TM045 and text', () => {
+      for (const code of ['TM022', 'TM036', 'TM045']) {
+        const res = classifyOutboxError(`[${code}] Record was updated on another device.`)
+        expect(res.errorCode).toBe('stale_version')
+        expect(res.errorMessage).toBe('This record was updated on another device. Discard your copy or review the latest cloud data.')
+      }
+
+      const resText = classifyOutboxError('Customer details were updated on another device.')
+      expect(resText.errorCode).toBe('stale_version')
+    })
+
+    it('classifies TM009, TM010, TM043, TM047, TM050, TM052, TM055 correctly', () => {
+      expect(classifyOutboxError('[TM009] An egg size with this name already exists.').errorCode).toBe('duplicate_size')
+      expect(classifyOutboxError('[TM010] A farm must keep at least one active egg size.').errorCode).toBe('last_active_size')
+      expect(classifyOutboxError('[TM043] This sale has already been voided.').errorCode).toBe('already_voided')
+      expect(classifyOutboxError('[TM047] Order cannot be altered because deliveries have been recorded.').errorCode).toBe('order_has_deliveries')
+      expect(classifyOutboxError('[TM050] Delivery eggs exceed the remaining quantity on the order.').errorCode).toBe('over_delivered')
+      expect(classifyOutboxError('[TM052] Egg size is not part of this order.').errorCode).toBe('size_not_in_order')
+      expect(classifyOutboxError('[TM055] Delivery date cannot be earlier than the order date.').errorCode).toBe('date_conflict')
+    })
+
+    it('preserves unknown sanitized server error cleanly rather than masking as Cloud rejected this change', () => {
+      const customSanitized = 'Tenant database locked for maintenance. Please retry in 1 minute.'
+      const res = classifyOutboxError(customSanitized)
+      expect(res.errorCode).toBe('sync_rejected')
+      expect(res.errorMessage).toBe(customSanitized)
+
+      const fallbackGeneric = classifyOutboxError('rejected')
+      expect(fallbackGeneric.errorCode).toBe('sync_rejected')
+      expect(fallbackGeneric.errorMessage).toBe('Cloud rejected this change during sync.')
+    })
   })
 })
