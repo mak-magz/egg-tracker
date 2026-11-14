@@ -40,7 +40,7 @@ export default async function globalSetup() {
   const browser = await chromium.launch({
     ...(process.env.BROWSER_CHANNEL ? { channel: process.env.BROWSER_CHANNEL } : process.platform === 'win32' ? { channel: 'msedge' } : {}),
   })
-  const page = await browser.newPage({ baseURL: 'http://localhost:3000' })
+  const page = await browser.newPage({ baseURL: `http://localhost:${process.env.E2E_PORT || '3000'}` })
   const diag: string[] = [`[provision] ${run.stdout.trim()}`]
   page.on('console', m => diag.push(`[console.${m.type()}] ${m.text()}`))
   page.on('pageerror', e => diag.push(`[pageerror] ${e.message}`))

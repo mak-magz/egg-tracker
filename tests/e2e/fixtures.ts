@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { test as base, expect, type APIRequestContext, type Page } from '@playwright/test'
 
-const ORIGIN = 'http://localhost:3000'
+const ORIGIN = `http://localhost:${process.env.E2E_PORT || '3000'}`
 
 /** Fails the test on a page error, console.error or any Vue warning (a warning is logged with console.warn). */
 export const test = base.extend<{
