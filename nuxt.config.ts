@@ -7,12 +7,35 @@
 // `swr`/`isr`/`cache` route rules for authenticated pages: the SSR payload holds the session.
 const isProd = process.env.NODE_ENV === 'production'
 
+const connectSrcDirectives = [
+  `'self'`,
+  'https://identitytoolkit.googleapis.com',
+  'https://securetoken.googleapis.com',
+  'https://www.googleapis.com',
+  'https://firebaseinstallations.googleapis.com',
+  ...(isProd ? [] : ['http://127.0.0.1:9099', 'http://localhost:9099', 'ws://localhost:*', 'ws://127.0.0.1:*']),
+].join(' ')
+
+const contentSecurityPolicy = [
+  `default-src 'self'`,
+  `base-uri 'self'`,
+  `form-action 'self'`,
+  `frame-ancestors 'none'`,
+  `object-src 'none'`,
+  `script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'`,
+  `worker-src 'self' blob:`,
+  `child-src 'self' blob:`,
+  `style-src 'self' 'unsafe-inline' https://fonts.googleapis.com`,
+  `font-src 'self' data: https://fonts.gstatic.com`,
+  `img-src 'self' data: blob:`,
+  `connect-src ${connectSrcDirectives}`,
+].join('; ')
+
 const securityHeaders: Record<string, string> = {
-  // Nobody may frame the app (clickjacking: one tap marks a client inactive). The CSP carries
-  // frame-ancestors ONLY for now; a script-src/default-src policy is a follow-up (feature doc).
+  // Nobody may frame the app (clickjacking: one tap marks a client inactive).
   // `nuxt dev` is fine with this: Nuxt DevTools' iframe is served by Vite, outside Nitro.
   'X-Frame-Options': 'DENY',
-  'Content-Security-Policy': `frame-ancestors 'none'`,
+  'Content-Security-Policy': contentSecurityPolicy,
   'X-Content-Type-Options': 'nosniff',
   'Referrer-Policy': 'strict-origin-when-cross-origin',
   // The app uses none of these features; deny them so an injected script cannot either.
@@ -73,7 +96,7 @@ export default defineNuxtConfig({
 
   ssr: true,
 
-  devtools: { enabled: true },
+  devtools: { enabled: process.env.NUXT_DEVTOOLS !== 'false' },
 
   app: {
     head: {

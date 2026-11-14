@@ -193,16 +193,38 @@ function isClientTokenError(code: string): boolean {
   )
 }
 
-async function verifyBearerTokenWithFallback(adminAuth: ReturnType<typeof getAdminAuth>, token: string) {
+const TRANSIENT_REVOCATION_FALLBACK_CODES = new Set([
+  'auth/internal-error',
+  'app/network-error',
+])
+
+function hasServiceAccountCredentials(): boolean {
+  return Boolean(
+    process.env.FIREBASE_SERVICE_ACCOUNT
+    || process.env.GOOGLE_APPLICATION_CREDENTIALS
+    || (process.env.FIREBASE_PRIVATE_KEY && process.env.FIREBASE_CLIENT_EMAIL),
+  )
+}
+
+export async function verifyBearerTokenWithFallback(adminAuth: ReturnType<typeof getAdminAuth>, token: string) {
+  if (process.env.FIREBASE_AUTH_EMULATOR_HOST) {
+    return await adminAuth.verifyIdToken(token, false)
+  }
+
   try {
     // checkRevoked = true ensures revoked sessions are rejected when service account credentials are available
     return await adminAuth.verifyIdToken(token, true)
   }
   catch (e) {
     const code = (e as { code?: string })?.code ?? ''
-    if (isClientTokenError(code)) throw e
-    // If checkRevoked = true failed due to missing/unconfigured service account credentials on serverless
-    // (e.g. app/invalid-credential), fall back to public JWKS verification (checkRevoked = false).
+    const allowCredentialFallback = code === 'app/invalid-credential'
+      && process.env.NODE_ENV !== 'production'
+      && !hasServiceAccountCredentials()
+    if (!TRANSIENT_REVOCATION_FALLBACK_CODES.has(code) && !allowCredentialFallback) {
+      throw e
+    }
+    console.warn(`[auth] verifyIdToken checkRevoked fallback triggered: ${code}`)
+    // Only fall back to public JWKS verification when revocation check itself is unavailable
     return await adminAuth.verifyIdToken(token, false)
   }
 }
@@ -222,13 +244,8 @@ async function resolveAuth(event: H3Event): Promise<AuthContext | null> {
 
     let decoded = null
     if (bearerToken) {
-      try {
-        decoded = await verifyBearerTokenWithFallback(adminAuth, bearerToken)
-      }
-      catch (bearerErr) {
-        if (!sessionCookie) throw bearerErr
-        decoded = await adminAuth.verifySessionCookie(sessionCookie, true)
-      }
+      // Explicit Authorization: Bearer header is authoritative; do not fall back to stale session cookies on failure.
+      decoded = await verifyBearerTokenWithFallback(adminAuth, bearerToken)
     }
     else if (sessionCookie) {
       decoded = await adminAuth.verifySessionCookie(sessionCookie, true)
