@@ -22,10 +22,18 @@ async function runBatch() {
   try {
     const res = await admin.runBatchMigrations()
     batchResult.value = res
-    toast.add({
-      title: `Successfully migrated ${res.successful} databases`,
-      color: 'success',
-    })
+    if (res.failed === 0) {
+      toast.add({
+        title: `Successfully migrated ${res.successful} databases`,
+        color: 'success',
+      })
+    }
+    else {
+      toast.add({
+        title: `Migrations finished: ${res.successful} succeeded, ${res.failed} failed`,
+        color: res.successful > 0 ? 'warning' : 'error',
+      })
+    }
     admin.fetchMigrations()
   }
   catch {
@@ -41,12 +49,29 @@ async function runBatch() {
 
 async function runSingle(tenantId: string) {
   try {
-    await admin.runSingleMigration(tenantId)
-    toast.add({ title: 'Migration applied to tenant database', color: 'success' })
-    admin.fetchMigrations()
+    const res = await admin.runSingleMigration(tenantId)
+    if (res && !res.success) {
+      toast.add({
+        title: 'Migration failed on tenant database',
+        description: res.error || 'Migration failed',
+        color: 'error',
+      })
+    }
+    else {
+      toast.add({ title: 'Migration applied to tenant database', color: 'success' })
+    }
   }
-  catch {
-    toast.add({ title: 'Migration failed on tenant database', color: 'error' })
+  catch (err: unknown) {
+    const errObj = err as { data?: { message?: string, data?: { message?: string } }, message?: string }
+    const description = errObj?.data?.message || errObj?.data?.data?.message || errObj?.message || 'Migration failed on tenant database'
+    toast.add({
+      title: 'Migration failed on tenant database',
+      description,
+      color: 'error',
+    })
+  }
+  finally {
+    admin.fetchMigrations()
   }
 }
 
@@ -199,7 +224,14 @@ const modalUi = sheetUi(520)
             v-else-if="batchResult"
             class="space-y-4"
           >
-            <div class="p-3.5 rounded-xl bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 text-sm">
+            <div
+              class="p-3.5 rounded-xl border text-sm"
+              :class="batchResult.failed === 0
+                ? 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20'
+                : batchResult.successful > 0
+                  ? 'bg-amber-500/10 text-amber-500 border-amber-500/20'
+                  : 'bg-red-500/10 text-red-500 border-red-500/20'"
+            >
               <span class="font-bold">Execution Finished:</span>
               {{ batchResult.successful }} succeeded, {{ batchResult.failed }} failed out of {{ batchResult.totalMigrated }} total.
             </div>
