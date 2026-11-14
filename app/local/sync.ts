@@ -13,7 +13,10 @@ export type SyncStatus
 export interface SyncEngineState {
   status: SyncStatus
   pendingCount: number
+  failedCount: number
+  needsReconcile: boolean
   lastSyncedAt: string | null
+  lastRemoteUpdateAt: string | null
   lastError: string | null
 }
 
@@ -42,7 +45,10 @@ export class SyncEngine {
   private state: SyncEngineState = {
     status: 'local_only',
     pendingCount: 0,
+    failedCount: 0,
+    needsReconcile: false,
     lastSyncedAt: null,
+    lastRemoteUpdateAt: null,
     lastError: null,
   }
 
@@ -162,8 +168,12 @@ export class SyncEngine {
     try {
       const res = await this.localWorker.getSyncStatus()
       const count = res.pendingOutboxCount
+      const failedCount = Number(res.failedOutboxCount ?? 0)
+      const needsReconcile = Boolean(res.needsReconcile ?? res.syncState?.needs_reconcile)
       this.setState({
         pendingCount: count,
+        failedCount,
+        needsReconcile,
         ...(res.syncState?.last_pushed_at ? { lastSyncedAt: res.syncState.last_pushed_at } : {}),
       })
       return count
@@ -171,6 +181,33 @@ export class SyncEngine {
     catch {
       return this.state.pendingCount
     }
+  }
+
+  public async reconcileFromCloud(): Promise<boolean> {
+    if (this.isFreeFn()) return false
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) return false
+    const token = await this.getAuthToken()
+    if (!token) return false
+
+    const snap = await this.fetchFn('/api/sync/snapshot', {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    })
+    if (!snap || typeof snap !== 'object') {
+      return false
+    }
+
+    const payload = (snap as { snapshot?: unknown }).snapshot ?? snap
+    const latestVersion = Number((snap as { latestVersion?: unknown }).latestVersion ?? 0)
+    await this.localWorker.reconcileFromSnapshot(payload, latestVersion)
+    const now = new Date().toISOString()
+    this.setState({
+      needsReconcile: false,
+      lastRemoteUpdateAt: now,
+    })
+    return true
   }
 
   public async triggerSync(): Promise<void> {
@@ -255,6 +292,7 @@ export class SyncEngine {
 
       // --- Pull Phase ---
       let hasMorePull = true
+      let appliedRemoteChanges = false
       while (hasMorePull) {
         const { lastPulledVersion } = await this.localWorker.getLastPulledVersion()
 
@@ -274,11 +312,26 @@ export class SyncEngine {
           throw new Error('Invalid pull response from cloud')
         }
 
+        const remoteLatest = Number(pullRes.latestVersion ?? 0)
         if (pullRes.changes.length > 0) {
-          await this.localWorker.applyRemoteChanges(pullRes.changes, pullRes.latestVersion)
+          await this.localWorker.applyRemoteChanges(pullRes.changes, remoteLatest)
+          appliedRemoteChanges = true
+        }
+        else if (remoteLatest > lastPulledVersion) {
+          await this.localWorker.updateSyncState({
+            lastPulledVersion: remoteLatest,
+            lastPulledAt: new Date().toISOString(),
+          })
         }
 
         hasMorePull = Boolean(pullRes.hasMore)
+      }
+
+      // --- Reconcile Check (after discarded local mutation) ---
+      const preStatus = await this.localWorker.getSyncStatus()
+      if (preStatus.needsReconcile) {
+        await this.reconcileFromCloud()
+        appliedRemoteChanges = true
       }
 
       const now = new Date().toISOString()
@@ -288,6 +341,7 @@ export class SyncEngine {
       this.setState({
         status: pendingCount > 0 ? 'syncing' : 'synced',
         lastSyncedAt: now,
+        ...(appliedRemoteChanges ? { lastRemoteUpdateAt: now } : {}),
         lastError: null,
         pendingCount,
       })

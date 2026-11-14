@@ -49,7 +49,15 @@ import {
   restoreSize,
   renameSize,
 } from '../../core/repositories/sizes'
-import type { ApiErrorData } from '#shared/types/api'
+import type { ApiErrorData, DiscardMutationResult } from '#shared/types/api'
+import {
+  applyRemoteChangesOps,
+  formatFailedMutation,
+  migrateLocalSchema,
+  summarizeLocalData,
+  type LocalSqlDriver,
+  type OutboxMutationRow,
+} from './sync-helpers'
 
 self.addEventListener('error', (e) => {
   console.error('[worker-uncaught-error]', e.message, e.filename, e.lineno, e.colno, e.error)
@@ -75,6 +83,13 @@ export interface WorkerRequest<T = any> {
     | 'UPDATE_SYNC_STATE'
     | 'SET_DEVICE_ID'
     | 'MARK_SNAPSHOT_EXPORTED'
+    | 'GET_LOCAL_DATA_SUMMARY'
+    | 'GET_FAILED_MUTATIONS'
+    | 'RETRY_FAILED_MUTATION'
+    | 'RETRY_ALL_FAILED_MUTATIONS'
+    | 'DISCARD_FAILED_MUTATION'
+    | 'RECONCILE_FROM_SNAPSHOT'
+    | 'CLEAR_LOCAL_DATA'
   route?: {
     method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
     path: string
@@ -261,7 +276,20 @@ const TABLE_DEFINITIONS: string[] = [
     last_pushed_at TEXT,
     status TEXT NOT NULL DEFAULT 'local_only',
     last_error TEXT,
+    needs_reconcile INTEGER NOT NULL DEFAULT 0,
+    owner_uid TEXT,
     updated_at TEXT NOT NULL
+  );`,
+  `CREATE TABLE IF NOT EXISTS sync_rejections (
+    id TEXT PRIMARY KEY,
+    mutation_id TEXT NOT NULL,
+    device_id TEXT NOT NULL,
+    mutation_type TEXT NOT NULL,
+    entity_ref TEXT,
+    error_code TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    rejected_at TEXT NOT NULL,
+    resolved_at TEXT
   );`,
   `CREATE TABLE IF NOT EXISTS change_log (
     version INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -283,6 +311,7 @@ const TABLE_DEFINITIONS: string[] = [
   `CREATE INDEX IF NOT EXISTS sales_order_idx ON sales (order_id);`,
   `CREATE INDEX IF NOT EXISTS sale_lines_size_idx ON sale_lines (size_id);`,
   `CREATE INDEX IF NOT EXISTS outbox_status_idx ON outbox_mutations (status, created_at);`,
+  `CREATE INDEX IF NOT EXISTS sync_rejections_unresolved_idx ON sync_rejections (resolved_at, rejected_at);`,
   `CREATE INDEX IF NOT EXISTS change_log_version_idx ON change_log (version);`,
 ]
 
@@ -336,19 +365,8 @@ async function initDatabase(): Promise<void> {
     sqliteDb.exec(ddl)
   }
 
-  // Safe incremental migrations for existing OPFS databases
-  try {
-    sqliteDb.exec('ALTER TABLE farm_settings ADD COLUMN tier TEXT NOT NULL DEFAULT \'free\';')
-  }
-  catch {
-    // Column already exists
-  }
-  try {
-    sqliteDb.exec('ALTER TABLE sizes ADD COLUMN default_price REAL;')
-  }
-  catch {
-    // Column already exists
-  }
+  // Versioned incremental migrations for existing OPFS databases
+  await migrateLocalSchema(createSqliteDriver())
 
   const now = new Date().toISOString()
 
@@ -570,6 +588,14 @@ async function handleRoute(
       ],
     })
 
+    const farmRows = sqliteDb.exec({
+      sql: 'SELECT tier FROM farm_settings WHERE id = ?',
+      bind: ['default'],
+      rowMode: 'object',
+      returnValue: 'resultRows',
+    }) as Array<{ tier?: string }>
+    const tier = (farmRows[0]?.tier === 'premium' ? 'premium' : 'free') as 'free' | 'premium'
+
     const sizes = await listSizes(tenantDb)
     return {
       success: true,
@@ -580,7 +606,8 @@ async function handleRoute(
         currency,
         deviceId: tenantMeta.deviceId || 'D1',
         onboardingCompleted: true,
-        isFree: true,
+        isFree: tier === 'free',
+        tier,
         sizes,
       },
     }
@@ -771,7 +798,12 @@ async function handleRoute(
   if (method === 'POST' && match) {
     const id = decodeURIComponent(match[1]!)
     const result = await deliverOrder(tenantDb, id, body)
-    await recordOutboxMutation('deliver_order', { id, ...body })
+    await recordOutboxMutation('deliver_order', {
+      id,
+      ...body,
+      saleId: (result as any)?.sale?.id,
+      saleNumber: (result as any)?.sale?.saleNumber,
+    })
     return result
   }
   match = /^\/api\/orders\/([^/]+)(?:\/update)?$/.exec(normalizedPath)
@@ -814,8 +846,35 @@ async function exportFullSnapshot() {
   }
 }
 
-async function importFullSnapshot(snapshot: any, latestVersion = 0) {
+function createSqliteDriver(): LocalSqlDriver {
+  return {
+    exec: (sql: string, bind?: any[]) => {
+      if (bind && bind.length > 0) {
+        sqliteDb.exec({ sql, bind })
+      }
+      else {
+        sqliteDb.exec(sql)
+      }
+    },
+    query: <T = Record<string, any>>(sql: string, bind?: any[]): T[] => {
+      return sqliteDb.exec({
+        sql,
+        ...(bind && bind.length > 0 ? { bind } : {}),
+        rowMode: 'object',
+        returnValue: 'resultRows',
+      }) as T[]
+    },
+  }
+}
+
+async function importFullSnapshot(
+  snapshot: any,
+  latestVersion = 0,
+  options: { preserveOutbox?: boolean, tier?: 'free' | 'premium', ownerUid?: string | null } = {},
+) {
   await dbReadyPromise
+  const preserveOutbox = Boolean(options.preserveOutbox)
+  const targetTier: 'free' | 'premium' = options.tier ?? 'premium'
   sqliteDb.exec('BEGIN TRANSACTION;')
   try {
     sqliteDb.exec(`
@@ -833,8 +892,10 @@ async function importFullSnapshot(snapshot: any, latestVersion = 0) {
       DELETE FROM size_submissions;
       DELETE FROM farm_settings;
       DELETE FROM local_counters;
-      DELETE FROM outbox_mutations;
     `)
+    if (!preserveOutbox) {
+      sqliteDb.exec('DELETE FROM outbox_mutations;')
+    }
 
     const now = new Date().toISOString()
     const rawFs = snapshot.farmSettings ?? snapshot.farm_settings
@@ -845,12 +906,13 @@ async function importFullSnapshot(snapshot: any, latestVersion = 0) {
     const currency = (fs && fs.currency) || tenantMeta.currency || 'PHP'
     const preservedDeviceId = tenantMeta.deviceId && tenantMeta.deviceId !== 'D1' ? tenantMeta.deviceId : null
     const deviceId = preservedDeviceId || (fs && (fs.device_id ?? fs.deviceId)) || snapshot.deviceId || snapshot.device_id || tenantMeta.deviceId || 'D1'
+    const resolvedTier = (options.tier ?? (fs?.tier === 'premium' || fs?.tier === 'free' ? fs.tier : targetTier)) as 'free' | 'premium'
     const createdAt = (fs && (fs.created_at ?? fs.createdAt)) || now
     const updatedAt = (fs && (fs.updated_at ?? fs.updatedAt)) || now
 
     sqliteDb.exec({
-      sql: `INSERT OR REPLACE INTO farm_settings (id, farm_name, eggs_per_tray, currency, device_id, tier, onboarding_completed, created_at, updated_at) VALUES ('default', ?, ?, ?, ?, 'premium', 1, ?, ?)`,
-      bind: [farmName, eggsPerTray, currency, deviceId, createdAt, updatedAt],
+      sql: `INSERT OR REPLACE INTO farm_settings (id, farm_name, eggs_per_tray, currency, device_id, tier, onboarding_completed, created_at, updated_at) VALUES ('default', ?, ?, ?, ?, ?, 1, ?, ?)`,
+      bind: [farmName, eggsPerTray, currency, deviceId, resolvedTier, createdAt, updatedAt],
     })
 
     tenantMeta = {
@@ -991,7 +1053,7 @@ async function importFullSnapshot(snapshot: any, latestVersion = 0) {
         bind: [
           ol.order_id ?? ol.orderId,
           ol.size_id ?? ol.sizeId,
-          ol.eggs,
+          ol.eggs ?? ol.orderedEggs ?? 0,
           ol.price_per_tray ?? ol.pricePerTray,
           ol.line_total ?? ol.lineTotal,
           ol.dropped_eggs ?? ol.droppedEggs ?? 0,
@@ -1003,8 +1065,14 @@ async function importFullSnapshot(snapshot: any, latestVersion = 0) {
 
     if (latestVersion > 0) {
       sqliteDb.exec({
-        sql: `UPDATE sync_state SET last_pulled_version = ?, last_pulled_at = ?, status = 'synced', last_error = NULL, updated_at = ? WHERE id = 'default'`,
-        bind: [latestVersion, now, now],
+        sql: `UPDATE sync_state SET last_pulled_version = ?, last_pulled_at = ?, needs_reconcile = 0, status = 'synced', last_error = NULL, owner_uid = COALESCE(?, owner_uid), updated_at = ? WHERE id = 'default'`,
+        bind: [latestVersion, now, options.ownerUid ?? null, now],
+      })
+    }
+    else {
+      sqliteDb.exec({
+        sql: `UPDATE sync_state SET needs_reconcile = 0, owner_uid = COALESCE(?, owner_uid), updated_at = ? WHERE id = 'default'`,
+        bind: [options.ownerUid ?? null, now],
       })
     }
 
@@ -1065,8 +1133,202 @@ self.onmessage = async (e: MessageEvent<WorkerRequest>) => {
     if (type === 'IMPORT_SNAPSHOT') {
       const snap = (payload && typeof payload === 'object' && 'snapshot' in payload) ? payload.snapshot : payload
       const latestVersion = Number(payload?.latestVersion ?? payload?.version ?? snap?.latestVersion ?? 0)
-      await importFullSnapshot(snap, latestVersion)
+      await importFullSnapshot(snap, latestVersion, {
+        preserveOutbox: Boolean(payload?.preserveOutbox),
+        tier: payload?.tier === 'free' || payload?.tier === 'premium' ? payload.tier : undefined,
+        ownerUid: payload?.ownerUid !== undefined ? payload.ownerUid : undefined,
+      })
       respond({ id, ok: true, data: { success: true } })
+      return
+    }
+
+    if (type === 'CLEAR_LOCAL_DATA') {
+      await dbReadyPromise
+      const now = new Date().toISOString()
+      const preservedDeviceId = tenantMeta.deviceId && tenantMeta.deviceId !== 'D1'
+        ? tenantMeta.deviceId
+        : `D-${crypto.randomUUID().slice(0, 4).toUpperCase()}`
+      sqliteDb.exec('BEGIN TRANSACTION;')
+      try {
+        sqliteDb.exec(`
+          DELETE FROM sale_lines;
+          DELETE FROM sales;
+          DELETE FROM sale_submissions;
+          DELETE FROM order_lines;
+          DELETE FROM orders;
+          DELETE FROM order_submissions;
+          DELETE FROM production;
+          DELETE FROM production_submissions;
+          DELETE FROM clients;
+          DELETE FROM client_submissions;
+          DELETE FROM sizes;
+          DELETE FROM size_submissions;
+          DELETE FROM farm_settings;
+          DELETE FROM local_counters;
+          DELETE FROM outbox_mutations;
+          DELETE FROM change_log;
+          DELETE FROM sync_rejections;
+        `)
+        sqliteDb.exec({
+          sql: `INSERT INTO farm_settings (id, farm_name, eggs_per_tray, currency, device_id, tier, onboarding_completed, created_at, updated_at) VALUES ('default', 'My Farm', 30, 'PHP', ?, 'free', 0, ?, ?)`,
+          bind: [preservedDeviceId, now, now],
+        })
+        sqliteDb.exec({
+          sql: `INSERT INTO local_counters (id, next_number, updated_at) VALUES ('sales', 1, ?), ('orders', 1, ?)`,
+          bind: [now, now],
+        })
+        const defaultSizes = [
+          { id: crypto.randomUUID(), name: 'Small', sortOrder: 0, colorSlot: 0 },
+          { id: crypto.randomUUID(), name: 'Medium', sortOrder: 1, colorSlot: 1 },
+          { id: crypto.randomUUID(), name: 'Large', sortOrder: 2, colorSlot: 2 },
+          { id: crypto.randomUUID(), name: 'Jumbo', sortOrder: 3, colorSlot: 3 },
+        ]
+        for (const size of defaultSizes) {
+          sqliteDb.exec({
+            sql: `INSERT INTO sizes (id, name, sort_order, color_slot, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`,
+            bind: [size.id, size.name, size.sortOrder, size.colorSlot, now, now],
+          })
+        }
+        sqliteDb.exec({
+          sql: `UPDATE sync_state SET tenant_id = NULL, cloud_url = NULL, cloud_token = NULL, owner_uid = NULL, last_pulled_version = 0, last_pulled_at = NULL, last_pushed_at = NULL, status = 'local_only', last_error = NULL, needs_reconcile = 0, updated_at = ? WHERE id = 'default'`,
+          bind: [now],
+        })
+        sqliteDb.exec('COMMIT;')
+        tenantMeta = {
+          tenantId: 'local-farm',
+          name: 'My Farm',
+          eggsPerTray: 30,
+          currency: 'PHP',
+          deviceId: preservedDeviceId,
+          onboardingCompleted: false,
+        }
+        const tenantClient = createDrizzleBackedClient(drizzleDb, tenantMeta)
+        tenantDb = createTenantDbFromClient(tenantClient as any, 'local-farm')
+        respond({ id, ok: true, data: { success: true } })
+      }
+      catch (err) {
+        sqliteDb.exec('ROLLBACK;')
+        throw err
+      }
+      return
+    }
+
+    if (type === 'RECONCILE_FROM_SNAPSHOT') {
+      const snap = (payload && typeof payload === 'object' && 'snapshot' in payload) ? payload.snapshot : payload
+      const latestVersion = Number(payload?.latestVersion ?? payload?.version ?? snap?.latestVersion ?? 0)
+      await importFullSnapshot(snap, latestVersion, {
+        preserveOutbox: true,
+        tier: 'premium',
+      })
+      respond({ id, ok: true, data: { success: true } })
+      return
+    }
+
+    if (type === 'GET_LOCAL_DATA_SUMMARY') {
+      await dbReadyPromise
+      const summary = await summarizeLocalData(createSqliteDriver())
+      respond({ id, ok: true, data: summary })
+      return
+    }
+
+    if (type === 'GET_FAILED_MUTATIONS') {
+      await dbReadyPromise
+      const rows = sqliteDb.exec({
+        sql: `SELECT id, device_id, mutation_type, payload, occurred_at, status, error, created_at
+              FROM outbox_mutations
+              WHERE status = 'failed'
+              ORDER BY created_at ASC`,
+        rowMode: 'object',
+        returnValue: 'resultRows',
+      }) as OutboxMutationRow[]
+      const mutations = rows.map((row, idx) => formatFailedMutation(row, idx + 1))
+      respond({ id, ok: true, data: { mutations } })
+      return
+    }
+
+    if (type === 'RETRY_FAILED_MUTATION') {
+      await dbReadyPromise
+      const mutationId = String(payload?.id || '')
+      if (!mutationId) {
+        throw new CoreApiError(400, 'validation_failed', { code: 'TM005', reason: 'missing_mutation_id' })
+      }
+      sqliteDb.exec({
+        sql: `UPDATE outbox_mutations SET status = 'pending', error = NULL WHERE id = ? AND status = 'failed'`,
+        bind: [mutationId],
+      })
+      const remRows = sqliteDb.exec({
+        sql: `SELECT COUNT(*) as count FROM outbox_mutations WHERE status = 'failed'`,
+        rowMode: 'object',
+        returnValue: 'resultRows',
+      }) as Array<{ count: number }>
+      respond({ id, ok: true, data: { retried: true, remainingFailedCount: Number(remRows[0]?.count ?? 0) } })
+      return
+    }
+
+    if (type === 'RETRY_ALL_FAILED_MUTATIONS') {
+      await dbReadyPromise
+      sqliteDb.exec(`UPDATE outbox_mutations SET status = 'pending', error = NULL WHERE status = 'failed'`)
+      respond({ id, ok: true, data: { success: true } })
+      return
+    }
+
+    if (type === 'DISCARD_FAILED_MUTATION') {
+      await dbReadyPromise
+      const mutationId = String(payload?.id || '')
+      if (!mutationId) {
+        throw new CoreApiError(400, 'validation_failed', { code: 'TM005', reason: 'missing_mutation_id' })
+      }
+      const now = new Date().toISOString()
+      let discarded = false
+      sqliteDb.exec('BEGIN TRANSACTION;')
+      try {
+        const existing = sqliteDb.exec({
+          sql: `SELECT id FROM outbox_mutations WHERE id = ? AND status = 'failed'`,
+          bind: [mutationId],
+          rowMode: 'object',
+          returnValue: 'resultRows',
+        }) as Array<{ id: string }>
+        if (existing.length > 0) {
+          sqliteDb.exec({
+            sql: `DELETE FROM outbox_mutations WHERE id = ? AND status = 'failed'`,
+            bind: [mutationId],
+          })
+          discarded = true
+          sqliteDb.exec({
+            sql: `UPDATE sync_state SET needs_reconcile = 1, updated_at = ? WHERE id = 'default'`,
+            bind: [now],
+          })
+        }
+        sqliteDb.exec('COMMIT;')
+      }
+      catch (err) {
+        sqliteDb.exec('ROLLBACK;')
+        throw err
+      }
+
+      const pendingRows = sqliteDb.exec({
+        sql: `SELECT COUNT(*) as count FROM outbox_mutations WHERE status IN ('pending', 'in_flight')`,
+        rowMode: 'object',
+        returnValue: 'resultRows',
+      }) as Array<{ count: number }>
+      const failedRows = sqliteDb.exec({
+        sql: `SELECT COUNT(*) as count FROM outbox_mutations WHERE status = 'failed'`,
+        rowMode: 'object',
+        returnValue: 'resultRows',
+      }) as Array<{ count: number }>
+      const syncRows = sqliteDb.exec({
+        sql: `SELECT needs_reconcile FROM sync_state WHERE id = 'default'`,
+        rowMode: 'object',
+        returnValue: 'resultRows',
+      }) as Array<{ needs_reconcile?: number }>
+
+      const result: DiscardMutationResult = {
+        discarded,
+        remainingPendingCount: Number(pendingRows[0]?.count ?? 0),
+        remainingFailedCount: Number(failedRows[0]?.count ?? 0),
+        needsReconcile: Boolean(syncRows[0]?.needs_reconcile),
+      }
+      respond({ id, ok: true, data: result })
       return
     }
 
@@ -1083,12 +1345,20 @@ self.onmessage = async (e: MessageEvent<WorkerRequest>) => {
         rowMode: 'object',
         returnValue: 'resultRows',
       })
+      const failedCountRows = sqliteDb.exec({
+        sql: 'SELECT COUNT(*) as count FROM outbox_mutations WHERE status = \'failed\'',
+        rowMode: 'object',
+        returnValue: 'resultRows',
+      })
+      const syncRow = syncRows[0] || null
       respond({
         id,
         ok: true,
         data: {
-          syncState: syncRows[0] || null,
+          syncState: syncRow,
           pendingOutboxCount: Number(outboxCountRows[0]?.count ?? 0),
+          failedOutboxCount: Number(failedCountRows[0]?.count ?? 0),
+          needsReconcile: Boolean((syncRow as any)?.needs_reconcile),
         },
       })
       return
@@ -1202,475 +1472,21 @@ self.onmessage = async (e: MessageEvent<WorkerRequest>) => {
 
     if (type === 'APPLY_REMOTE_CHANGES') {
       await dbReadyPromise
-      const changes: Array<{
-        version: number
-        entityType: string
-        entityId: string
-        action: 'insert' | 'update' | 'delete'
-        deviceId: string
-        occurredAt: string
-        data: Record<string, any>
-      }> = payload?.changes || []
+      const changes = payload?.changes || []
       const latestVersion = Number(payload?.latestVersion ?? 0)
-      const now = new Date().toISOString()
 
       sqliteDb.exec('BEGIN TRANSACTION;')
       try {
-        for (const change of changes) {
-          const { entityType, entityId, action, occurredAt, data: d } = change
-          const recordTime = occurredAt || now
-
-          // 1. Sizes
-          if (entityType === 'sizes' || entityType === 'add_size' || entityType === 'rename_size') {
-            if (action === 'delete') {
-              sqliteDb.exec({ sql: 'DELETE FROM sizes WHERE id = ?', bind: [entityId] })
-            }
-            else {
-              sqliteDb.exec({
-                sql: `INSERT INTO sizes (id, name, sort_order, color_slot, archived_at, default_price, created_at, updated_at)
-                      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                      ON CONFLICT(id) DO UPDATE SET
-                        name = excluded.name,
-                        sort_order = COALESCE(excluded.sort_order, sizes.sort_order),
-                        color_slot = COALESCE(excluded.color_slot, sizes.color_slot),
-                        archived_at = excluded.archived_at,
-                        default_price = excluded.default_price,
-                        updated_at = excluded.updated_at`,
-                bind: [
-                  d.id ?? d.sizeId ?? entityId,
-                  d.name ?? '',
-                  Number(d.sort_order ?? d.sortOrder ?? 0),
-                  Number(d.color_slot ?? d.colorSlot ?? 0),
-                  d.archived_at ?? d.archivedAt ?? null,
-                  (d.default_price !== undefined ? d.default_price : d.defaultPrice) ?? null,
-                  d.created_at ?? d.createdAt ?? recordTime,
-                  d.updated_at ?? d.updatedAt ?? recordTime,
-                ],
-              })
-            }
-          }
-          else if (entityType === 'archive_size') {
-            const sizeId = d.id ?? d.sizeId ?? entityId
-            sqliteDb.exec({
-              sql: 'UPDATE sizes SET archived_at = ?, updated_at = ? WHERE id = ?',
-              bind: [recordTime, recordTime, sizeId],
-            })
-          }
-          else if (entityType === 'restore_size') {
-            const sizeId = d.id ?? d.sizeId ?? entityId
-            sqliteDb.exec({
-              sql: 'UPDATE sizes SET archived_at = NULL, updated_at = ? WHERE id = ?',
-              bind: [recordTime, sizeId],
-            })
-          }
-
-          // 2. Clients
-          else if (entityType === 'clients' || entityType === 'add_client' || entityType === 'update_client') {
-            if (action === 'delete') {
-              sqliteDb.exec({ sql: 'DELETE FROM clients WHERE id = ?', bind: [entityId] })
-            }
-            else {
-              sqliteDb.exec({
-                sql: `INSERT INTO clients (id, name, phone, default_price, archived_at, version, created_at, updated_at)
-                      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                      ON CONFLICT(id) DO UPDATE SET
-                        name = excluded.name,
-                        phone = excluded.phone,
-                        default_price = excluded.default_price,
-                        archived_at = excluded.archived_at,
-                        version = excluded.version,
-                        updated_at = excluded.updated_at`,
-                bind: [
-                  d.id ?? d.clientId ?? entityId,
-                  d.name ?? '',
-                  d.phone ?? null,
-                  (d.default_price !== undefined ? d.default_price : d.defaultPrice) ?? null,
-                  d.archived_at ?? d.archivedAt ?? null,
-                  Number(d.version ?? 1),
-                  d.created_at ?? d.createdAt ?? recordTime,
-                  d.updated_at ?? d.updatedAt ?? recordTime,
-                ],
-              })
-            }
-          }
-          else if (entityType === 'archive_client') {
-            const clientId = d.id ?? d.clientId ?? entityId
-            sqliteDb.exec({
-              sql: 'UPDATE clients SET archived_at = ?, updated_at = ? WHERE id = ?',
-              bind: [recordTime, recordTime, clientId],
-            })
-          }
-          else if (entityType === 'restore_client') {
-            const clientId = d.id ?? d.clientId ?? entityId
-            sqliteDb.exec({
-              sql: 'UPDATE clients SET archived_at = NULL, updated_at = ? WHERE id = ?',
-              bind: [recordTime, clientId],
-            })
-          }
-
-          // 3. Production
-          else if (entityType === 'production' || entityType === 'log_production' || entityType === 'replace_production_day') {
-            if (action === 'delete') {
-              sqliteDb.exec({ sql: 'DELETE FROM production WHERE id = ?', bind: [entityId] })
-            }
-            else if (entityType === 'replace_production_day') {
-              const day = d.date || d.day || d.produced_on || d.producedOn
-              if (day) {
-                sqliteDb.exec({ sql: 'DELETE FROM production WHERE produced_on = ?', bind: [day] })
-                for (const g of d.good || []) {
-                  const count = Number(g.eggs ?? 0)
-                  if (count > 0 && g.sizeId) {
-                    const prodId = g.id || crypto.randomUUID()
-                    sqliteDb.exec({
-                      sql: `INSERT INTO production (id, produced_on, size_id, quality, eggs, created_at, updated_at)
-                            VALUES (?, ?, ?, 'good', ?, ?, ?)`,
-                      bind: [prodId, day, g.sizeId, count, recordTime, recordTime],
-                    })
-                  }
-                }
-                const rej = Number(d.rejects ?? 0)
-                if (rej > 0) {
-                  const rejId = crypto.randomUUID()
-                  sqliteDb.exec({
-                    sql: `INSERT INTO production (id, produced_on, size_id, quality, eggs, created_at, updated_at)
-                          VALUES (?, ?, NULL, 'reject', ?, ?, ?)`,
-                    bind: [rejId, day, rej, recordTime, recordTime],
-                  })
-                }
-              }
-            }
-            else if (entityType === 'log_production' || (Array.isArray(d.good) || d.rejects !== undefined)) {
-              const day = d.date || d.day || d.produced_on || d.producedOn
-              if (day) {
-                const subId = d.submissionId || d.p_submission_id || d.id || entityId
-                if (subId) {
-                  const existingSub = sqliteDb.exec({
-                    sql: 'SELECT id FROM production_submissions WHERE id = ?',
-                    bind: [subId],
-                    rowMode: 'object',
-                    returnValue: 'resultRows',
-                  }) as Array<{ id: string }>
-                  if (existingSub.length > 0) {
-                    continue // Skip duplicate / already applied submission
-                  }
-                }
-
-                for (const g of d.good || []) {
-                  const addedEggs = Number(g.eggs ?? 0)
-                  if (addedEggs <= 0 || !g.sizeId) continue
-
-                  const existing = sqliteDb.exec({
-                    sql: 'SELECT id, eggs FROM production WHERE produced_on = ? AND size_id = ? AND quality = \'good\'',
-                    bind: [day, g.sizeId],
-                    rowMode: 'object',
-                    returnValue: 'resultRows',
-                  }) as Array<{ id: string, eggs: number }>
-
-                  if (existing.length > 0) {
-                    const row = existing[0]!
-                    sqliteDb.exec({
-                      sql: 'UPDATE production SET eggs = eggs + ?, updated_at = ? WHERE id = ?',
-                      bind: [addedEggs, recordTime, row.id],
-                    })
-                  }
-                  else {
-                    const prodId = g.id || crypto.randomUUID()
-                    sqliteDb.exec({
-                      sql: `INSERT INTO production (id, produced_on, size_id, quality, eggs, created_at, updated_at)
-                            VALUES (?, ?, ?, 'good', ?, ?, ?)`,
-                      bind: [prodId, day, g.sizeId, addedEggs, recordTime, recordTime],
-                    })
-                  }
-                }
-
-                const addedRejects = Number(d.rejects ?? 0)
-                if (addedRejects > 0) {
-                  const existingRej = sqliteDb.exec({
-                    sql: 'SELECT id, eggs FROM production WHERE produced_on = ? AND quality = \'reject\'',
-                    bind: [day],
-                    rowMode: 'object',
-                    returnValue: 'resultRows',
-                  }) as Array<{ id: string, eggs: number }>
-
-                  if (existingRej.length > 0) {
-                    const row = existingRej[0]!
-                    sqliteDb.exec({
-                      sql: 'UPDATE production SET eggs = eggs + ?, updated_at = ? WHERE id = ?',
-                      bind: [addedRejects, recordTime, row.id],
-                    })
-                  }
-                  else {
-                    const rejId = crypto.randomUUID()
-                    sqliteDb.exec({
-                      sql: `INSERT INTO production (id, produced_on, size_id, quality, eggs, created_at, updated_at)
-                            VALUES (?, ?, NULL, 'reject', ?, ?, ?)`,
-                      bind: [rejId, day, addedRejects, recordTime, recordTime],
-                    })
-                  }
-                }
-
-                if (subId) {
-                  sqliteDb.exec({
-                    sql: `INSERT OR REPLACE INTO production_submissions (id, produced_on, had_before, created_at, updated_at) VALUES (?, ?, 1, ?, ?)`,
-                    bind: [subId, day, recordTime, recordTime],
-                  })
-                }
-              }
-            }
-            else {
-              sqliteDb.exec({
-                sql: `INSERT INTO production (id, produced_on, size_id, quality, eggs, created_at, updated_at)
-                      VALUES (?, ?, ?, ?, ?, ?, ?)
-                      ON CONFLICT(id) DO UPDATE SET
-                        produced_on = excluded.produced_on,
-                        size_id = excluded.size_id,
-                        quality = excluded.quality,
-                        eggs = excluded.eggs,
-                        updated_at = excluded.updated_at`,
-                bind: [
-                  d.id ?? entityId,
-                  d.produced_on ?? d.producedOn,
-                  d.size_id ?? d.sizeId ?? null,
-                  d.quality ?? 'good',
-                  Number(d.eggs ?? 0),
-                  d.created_at ?? d.createdAt ?? recordTime,
-                  d.updated_at ?? d.updatedAt ?? recordTime,
-                ],
-              })
-            }
-          }
-          else if (entityType === 'delete_production_day') {
-            const day = d.date || d.day || entityId
-            sqliteDb.exec({ sql: 'DELETE FROM production WHERE produced_on = ?', bind: [day] })
-          }
-
-          // 4. Orders
-          else if (entityType === 'orders' || entityType === 'create_order' || entityType === 'update_order') {
-            const orderId = d.id ?? d.orderId ?? entityId
-            if (action === 'delete') {
-              sqliteDb.exec({ sql: 'DELETE FROM order_lines WHERE order_id = ?', bind: [orderId] })
-              sqliteDb.exec({ sql: 'DELETE FROM orders WHERE id = ?', bind: [orderId] })
-            }
-            else {
-              sqliteDb.exec({
-                sql: `INSERT INTO orders (id, order_number, client_id, order_date, wanted_by, status, cancelled_at, closed_short_at, converted_from_sale_number, version, created_at, updated_at)
-                      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                      ON CONFLICT(id) DO UPDATE SET
-                        order_number = excluded.order_number,
-                        client_id = excluded.client_id,
-                        order_date = excluded.order_date,
-                        wanted_by = excluded.wanted_by,
-                        status = excluded.status,
-                        cancelled_at = excluded.cancelled_at,
-                        closed_short_at = excluded.closed_short_at,
-                        converted_from_sale_number = excluded.converted_from_sale_number,
-                        version = excluded.version,
-                        updated_at = excluded.updated_at`,
-                bind: [
-                  orderId,
-                  String(d.order_number ?? d.orderNumber ?? '0'),
-                  d.client_id ?? d.clientId,
-                  d.order_date ?? d.orderDate,
-                  d.wanted_by ?? d.wantedBy ?? null,
-                  d.status ?? 'requested',
-                  d.cancelled_at ?? d.cancelledAt ?? null,
-                  d.closed_short_at ?? d.closedShortAt ?? null,
-                  d.converted_from_sale_number ?? d.convertedFromSaleNumber ?? null,
-                  Number(d.version ?? 1),
-                  d.created_at ?? d.createdAt ?? recordTime,
-                  d.updated_at ?? d.updatedAt ?? recordTime,
-                ],
-              })
-
-              if (Array.isArray(d.lines)) {
-                sqliteDb.exec({ sql: 'DELETE FROM order_lines WHERE order_id = ?', bind: [orderId] })
-                for (const l of d.lines) {
-                  sqliteDb.exec({
-                    sql: `INSERT INTO order_lines (order_id, size_id, eggs, price_per_tray, line_total, dropped_eggs, created_at, updated_at)
-                          VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-                    bind: [
-                      orderId,
-                      l.sizeId,
-                      Number(l.eggs ?? 0),
-                      Number(l.pricePerTray ?? 0),
-                      Number(l.lineTotal ?? 0),
-                      Number(l.droppedEggs ?? 0),
-                      recordTime,
-                      recordTime,
-                    ],
-                  })
-                }
-              }
-            }
-          }
-          else if (entityType === 'order_lines') {
-            const orderId = d.order_id ?? d.orderId ?? entityId.split(':')[0]
-            const sizeId = d.size_id ?? d.sizeId ?? entityId.split(':')[1]
-            if (action === 'delete') {
-              if (sizeId) {
-                sqliteDb.exec({ sql: 'DELETE FROM order_lines WHERE order_id = ? AND size_id = ?', bind: [orderId, sizeId] })
-              }
-              else {
-                sqliteDb.exec({ sql: 'DELETE FROM order_lines WHERE order_id = ?', bind: [orderId] })
-              }
-            }
-            else {
-              sqliteDb.exec({
-                sql: `INSERT INTO order_lines (order_id, size_id, eggs, price_per_tray, line_total, dropped_eggs, created_at, updated_at)
-                      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                      ON CONFLICT(order_id, size_id) DO UPDATE SET
-                        eggs = excluded.eggs,
-                        price_per_tray = excluded.price_per_tray,
-                        line_total = excluded.line_total,
-                        dropped_eggs = excluded.dropped_eggs,
-                        updated_at = excluded.updated_at`,
-                bind: [
-                  orderId,
-                  sizeId,
-                  Number(d.eggs ?? 0),
-                  Number(d.price_per_tray ?? d.pricePerTray ?? 0),
-                  Number(d.line_total ?? d.lineTotal ?? 0),
-                  Number(d.dropped_eggs ?? d.droppedEggs ?? 0),
-                  d.created_at ?? d.createdAt ?? recordTime,
-                  d.updated_at ?? d.updatedAt ?? recordTime,
-                ],
-              })
-            }
-          }
-          else if (entityType === 'cancel_order') {
-            const orderId = d.id ?? d.orderId ?? entityId
-            sqliteDb.exec({
-              sql: 'UPDATE orders SET status = \'cancelled\', cancelled_at = ?, updated_at = ? WHERE id = ?',
-              bind: [recordTime, recordTime, orderId],
-            })
-          }
-          else if (entityType === 'close_order') {
-            const orderId = d.id ?? d.orderId ?? entityId
-            sqliteDb.exec({
-              sql: 'UPDATE orders SET closed_short_at = ?, updated_at = ? WHERE id = ?',
-              bind: [recordTime, recordTime, orderId],
-            })
-          }
-
-          // 5. Sales
-          else if (entityType === 'sales' || entityType === 'create_sale' || entityType === 'update_sale') {
-            const saleId = d.id ?? d.saleId ?? entityId
-            if (action === 'delete') {
-              sqliteDb.exec({ sql: 'DELETE FROM sale_lines WHERE sale_id = ?', bind: [saleId] })
-              sqliteDb.exec({ sql: 'DELETE FROM sales WHERE id = ?', bind: [saleId] })
-            }
-            else {
-              sqliteDb.exec({
-                sql: `INSERT INTO sales (id, sale_number, client_id, type, sale_date, order_id, order_number, version, voided_at, created_at, updated_at)
-                      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                      ON CONFLICT(id) DO UPDATE SET
-                        sale_number = excluded.sale_number,
-                        client_id = excluded.client_id,
-                        type = excluded.type,
-                        sale_date = excluded.sale_date,
-                        order_id = excluded.order_id,
-                        order_number = excluded.order_number,
-                        version = excluded.version,
-                        voided_at = excluded.voided_at,
-                        updated_at = excluded.updated_at`,
-                bind: [
-                  saleId,
-                  String(d.sale_number ?? d.saleNumber ?? '0'),
-                  d.client_id ?? d.clientId ?? null,
-                  d.type ?? 'on_site',
-                  d.sale_date ?? d.saleDate,
-                  d.order_id ?? d.orderId ?? null,
-                  d.order_number ?? d.orderNumber ?? null,
-                  Number(d.version ?? 1),
-                  d.voided_at ?? d.voidedAt ?? null,
-                  d.created_at ?? d.createdAt ?? recordTime,
-                  d.updated_at ?? d.updatedAt ?? recordTime,
-                ],
-              })
-
-              if (Array.isArray(d.lines)) {
-                sqliteDb.exec({ sql: 'DELETE FROM sale_lines WHERE sale_id = ?', bind: [saleId] })
-                for (const l of d.lines) {
-                  sqliteDb.exec({
-                    sql: `INSERT INTO sale_lines (sale_id, size_id, eggs, price_per_tray, line_total, created_at, updated_at)
-                          VALUES (?, ?, ?, ?, ?, ?, ?)`,
-                    bind: [
-                      saleId,
-                      l.sizeId,
-                      Number(l.eggs ?? 0),
-                      Number(l.pricePerTray ?? 0),
-                      Number(l.lineTotal ?? 0),
-                      recordTime,
-                      recordTime,
-                    ],
-                  })
-                }
-              }
-            }
-          }
-          else if (entityType === 'sale_lines') {
-            const saleId = d.sale_id ?? d.saleId ?? entityId.split(':')[0]
-            const sizeId = d.size_id ?? d.sizeId ?? entityId.split(':')[1]
-            if (action === 'delete') {
-              if (sizeId) {
-                sqliteDb.exec({ sql: 'DELETE FROM sale_lines WHERE sale_id = ? AND size_id = ?', bind: [saleId, sizeId] })
-              }
-              else {
-                sqliteDb.exec({ sql: 'DELETE FROM sale_lines WHERE sale_id = ?', bind: [saleId] })
-              }
-            }
-            else {
-              sqliteDb.exec({
-                sql: `INSERT INTO sale_lines (sale_id, size_id, eggs, price_per_tray, line_total, created_at, updated_at)
-                      VALUES (?, ?, ?, ?, ?, ?, ?)
-                      ON CONFLICT(sale_id, size_id) DO UPDATE SET
-                        eggs = excluded.eggs,
-                        price_per_tray = excluded.price_per_tray,
-                        line_total = excluded.line_total,
-                        updated_at = excluded.updated_at`,
-                bind: [
-                  saleId,
-                  sizeId,
-                  Number(d.eggs ?? 0),
-                  Number(d.price_per_tray ?? d.pricePerTray ?? 0),
-                  Number(d.line_total ?? d.lineTotal ?? 0),
-                  d.created_at ?? d.createdAt ?? recordTime,
-                  d.updated_at ?? d.updatedAt ?? recordTime,
-                ],
-              })
-            }
-          }
-          else if (entityType === 'void_sale') {
-            const saleId = d.id ?? d.saleId ?? entityId
-            sqliteDb.exec({
-              sql: 'UPDATE sales SET voided_at = ?, updated_at = ? WHERE id = ?',
-              bind: [recordTime, recordTime, saleId],
-            })
-          }
-
-          // 6. Farm Settings
-          else if (entityType === 'farm_settings' || entityType === 'update_farm_settings') {
-            const farmName = d.farm_name ?? d.farmName ?? d.name
-            const eggsPerTray = d.eggs_per_tray ?? d.eggsPerTray
-            const currency = d.currency
-            if (farmName !== undefined || eggsPerTray !== undefined || currency !== undefined) {
-              sqliteDb.exec({
-                sql: 'UPDATE farm_settings SET farm_name = COALESCE(?, farm_name), eggs_per_tray = COALESCE(?, eggs_per_tray), currency = COALESCE(?, currency), updated_at = ? WHERE id = \'default\'',
-                bind: [farmName ?? null, eggsPerTray !== undefined ? Number(eggsPerTray) : null, currency ?? null, now],
-              })
-              if (farmName) tenantMeta.name = farmName
-              if (eggsPerTray !== undefined) tenantMeta.eggsPerTray = Number(eggsPerTray)
-              if (currency) tenantMeta.currency = currency
-            }
-          }
-        }
-
-        sqliteDb.exec({
-          sql: 'UPDATE sync_state SET last_pulled_version = ?, last_pulled_at = ?, updated_at = ? WHERE id = \'default\'',
-          bind: [latestVersion, now, now],
-        })
+        const result = await applyRemoteChangesOps(
+          createSqliteDriver(),
+          changes,
+          latestVersion,
+          (patch) => {
+            tenantMeta = { ...tenantMeta, ...patch }
+          },
+        )
         sqliteDb.exec('COMMIT;')
-        respond({ id, ok: true, data: { appliedCount: changes.length, latestVersion } })
+        respond({ id, ok: true, data: result })
       }
       catch (err) {
         sqliteDb.exec('ROLLBACK;')
@@ -1715,6 +1531,14 @@ self.onmessage = async (e: MessageEvent<WorkerRequest>) => {
       if (payload?.lastPushedAt !== undefined) {
         sets.push('last_pushed_at = ?')
         binds.push(payload.lastPushedAt)
+      }
+      if (payload?.needsReconcile !== undefined) {
+        sets.push('needs_reconcile = ?')
+        binds.push(payload.needsReconcile ? 1 : 0)
+      }
+      if (payload?.ownerUid !== undefined) {
+        sets.push('owner_uid = ?')
+        binds.push(payload.ownerUid)
       }
       binds.push('default')
       sqliteDb.exec({
