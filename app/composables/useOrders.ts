@@ -24,10 +24,12 @@ interface OrdersState {
 }
 
 let loadSeq = 0
+let lastOrdersSyncAt: string | null = null
 
 export function useOrders() {
   const api = useApi()
   const { farm } = useFarm()
+  const { lastRemoteUpdateAt } = useSync()
   const farmId = computed(() => farm.value?.id ?? null)
   const state = useState<OrdersState | null>('orders:state', () => null)
 
@@ -84,6 +86,15 @@ export function useOrders() {
   /** A quiet reload with the CURRENT filters (after a stale or refused change). */
   function reload(): Promise<'ok' | 'error' | 'stale'> {
     return load(filters.value, { silent: true })
+  }
+
+  if (import.meta.client) {
+    watch(lastRemoteUpdateAt, (val) => {
+      if (val && val !== lastOrdersSyncAt) {
+        lastOrdersSyncAt = val
+        if (hasList.value) void reload()
+      }
+    })
   }
 
   /** "Show more" (AC49): the next page of a non-Open view, appended. */

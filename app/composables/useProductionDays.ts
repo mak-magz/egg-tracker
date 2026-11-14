@@ -13,6 +13,7 @@ export type ProductionDaysStatus = 'loading' | 'ready' | 'refreshing' | 'error'
 
 export function useProductionDays() {
   const api = useApi()
+  const { lastRemoteUpdateAt } = useSync()
 
   // "Today" is re-read on load, when the page becomes visible again and when the form opens
   // (syncToday), so a screen left open overnight never offers yesterday as today (QA S1).
@@ -84,6 +85,9 @@ export function useProductionDays() {
   onMounted(() => {
     void load()
     watch([chip, from, to], () => void load())
+    watch(lastRemoteUpdateAt, (val) => {
+      if (val && loadedOnce) void load({ silent: true })
+    })
   })
 
   if (import.meta.client) {

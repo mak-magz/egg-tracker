@@ -26,12 +26,14 @@ interface ClientsState {
 
 // Client-only module state (load() never runs during SSR). A read that is superseded by a newer one is dropped.
 let loadSeq = 0
+let lastClientsSyncAt: string | null = null
 /** Clients this screen saved while a read was in flight: a read that started before an add can come back without it. */
 let recent: Client[] | null = null
 
 export function useClients() {
   const api = useApi()
   const { farm } = useFarm()
+  const { lastRemoteUpdateAt } = useSync()
   const farmId = computed(() => farm.value?.id ?? null)
   const state = useState<ClientsState | null>('clients:state', () => null)
 
@@ -83,6 +85,15 @@ export function useClients() {
     finally {
       if (seq === loadSeq) recent = null
     }
+  }
+
+  if (import.meta.client) {
+    watch(lastRemoteUpdateAt, (val) => {
+      if (val && val !== lastClientsSyncAt) {
+        lastClientsSyncAt = val
+        if (hasList.value) void load({ silent: true })
+      }
+    })
   }
 
   /** Puts a client a write just returned into the list (add, edit, mark inactive / active). Older replies are ignored. */

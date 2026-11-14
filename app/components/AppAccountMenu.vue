@@ -36,11 +36,11 @@ const items = computed<DropdownMenuItem[][]>(() => {
 
   const navGroup: DropdownMenuItem[] = [{
     // Feature 02 (owner decision Q3): Settings lives here, not in a sixth tab. A link item: selecting it
-    // navigates and closes the menu; on /settings it shows as the current item.
+    // navigates and closes the menu; on /farm/settings it shows as the current item.
     label: SIZE_COPY.menuItem,
     icon: 'i-lucide-settings',
-    to: '/settings',
-    active: route.path === '/settings',
+    to: '/farm/settings',
+    active: route.path === '/farm/settings',
   }, {
     label: isDark.value ? 'Light mode' : 'Dark mode',
     icon: isDark.value ? 'i-lucide-sun' : 'i-lucide-moon',
@@ -63,7 +63,7 @@ const items = computed<DropdownMenuItem[][]>(() => {
     : [{
         label: 'Sign in / Sync',
         icon: 'i-lucide-cloud',
-        to: '/settings',
+        to: '/farm/settings',
       }]
 
   return [accountGroup, navGroup, authGroup]

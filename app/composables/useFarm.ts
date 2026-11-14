@@ -33,14 +33,27 @@ const DEFAULT_FARM: FarmSummary = {
   sizes: DEFAULT_FARM_SIZES,
 }
 
+let lastFarmSyncAt: string | null = null
+
 export function useFarm() {
   const { me, ensure, setSizes } = useMe()
   const api = useApi()
+  const { lastRemoteUpdateAt } = useSync()
   // Counts every applied list, so a slow quiet refresh can't undo a change made meanwhile (see refreshSizes).
   const sizesVersion = useState('farm:sizes-version', () => 0)
 
   if (import.meta.client && !me.value) {
     void ensure().catch(() => {})
+  }
+
+  if (import.meta.client) {
+    watch(lastRemoteUpdateAt, (val) => {
+      if (val && val !== lastFarmSyncAt) {
+        lastFarmSyncAt = val
+        void refreshSizes()
+        void ensure({ force: true })
+      }
+    })
   }
 
   const farm = computed(() => me.value?.farm ?? DEFAULT_FARM)

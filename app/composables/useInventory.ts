@@ -8,9 +8,16 @@ export type InventoryLoadStatus = 'loading' | 'ready' | 'error'
 export function useInventory() {
   const api = useApi()
   const { farm } = useFarm()
+  const { lastRemoteUpdateAt } = useSync()
   const status = ref<InventoryLoadStatus>('loading')
   const data = ref<InventoryResponse | null>(null)
   let seq = 0
+
+  watch(lastRemoteUpdateAt, (val) => {
+    if (val && status.value === 'ready') {
+      void load()
+    }
+  })
 
   async function load(): Promise<void> {
     const fid = farm.value?.id ?? null

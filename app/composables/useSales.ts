@@ -43,6 +43,7 @@ interface SalesState {
 }
 
 let loadSeq = 0
+let lastSalesSyncAt: string | null = null
 
 /** True when `sale` would be included under `filters` (used for optimistic insert/remove after a write). */
 export function saleMatchesFilters(sale: Sale, filters: SalesFilters): boolean {
@@ -73,6 +74,7 @@ function query(filters: SalesFilters, limit: number, offset: number): Record<str
 export function useSales() {
   const api = useApi()
   const { farm } = useFarm()
+  const { lastRemoteUpdateAt } = useSync()
   const farmId = computed(() => farm.value?.id ?? null)
   const state = useState<SalesState | null>('sales:state', () => null)
 
@@ -129,6 +131,15 @@ export function useSales() {
   /** A quiet reload with the CURRENT filters (after a mark/void/delete conflict, feature 03's afterFailure pattern). */
   function reload(): Promise<'ok' | 'error' | 'stale'> {
     return load(filters.value, { silent: true })
+  }
+
+  if (import.meta.client) {
+    watch(lastRemoteUpdateAt, (val) => {
+      if (val && val !== lastSalesSyncAt) {
+        lastSalesSyncAt = val
+        if (hasList.value) void reload()
+      }
+    })
   }
 
   /** "Show more" (AC7): fetches the next SALES_PAGE_SIZE rows and appends. */
