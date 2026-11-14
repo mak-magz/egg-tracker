@@ -31,7 +31,7 @@ If the code and the specs disagree once code exists, the code wins. Update the s
 
 ## What it is
 
-A multi-tenant SaaS for egg farms that tracks production, computed inventory, sales (deliveries are one kind of sale), and clients. v1 has a single owner-operator who logs data quickly on a phone. It is an online-only web app with no offline support.
+A multi-tenant SaaS for egg farms that tracks production, computed inventory, sales (deliveries are one kind of sale), and clients. v1 has a single owner-operator who logs data quickly on a phone. It is an offline-first SPA backed by local SQLite WASM in browser OPFS with background cloud sync to Turso.
 
 **Package manager:** **Bun** (`bun install`, `bun run <script>`, `bunx`). Don't use npm, npx, or `package-lock.json`. The app runs on Node at runtime (Nuxt/Nitro, Vercel), and tests use Vitest via `bun run test:unit`.
 
