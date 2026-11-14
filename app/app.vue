@@ -32,5 +32,6 @@ const toaster = computed<AppProps['toaster']>(() => ({
     <NuxtLayout>
       <NuxtPage />
     </NuxtLayout>
+    <ConfirmReplaceLocalDialog />
   </UApp>
 </template>

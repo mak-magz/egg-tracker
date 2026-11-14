@@ -49,7 +49,9 @@ export function useAuthActions() {
   const hint = useSessionHint()
   const { ensure, clear } = useMe()
   const router = useRouter()
+  const toast = useToast()
   const { upgradeToPremium, revertToFree } = useTier()
+  const { requestLocalReplaceConfirmation } = useLocalReplaceGuard()
   const onboardedCookie = useCookie('tamago_onboarded', {
     default: () => 'true',
     maxAge: 60 * 60 * 24 * 400,
@@ -84,41 +86,79 @@ export function useAuthActions() {
     catch (e) {
       return { ok: false, kind: mapAuthError(e) }
     }
-    hint.value = '1'
-    onboardedCookie.value = 'true'
 
-    await syncSessionCookie()
+    const signedInUid = auth.currentUser?.uid ?? null
+    const token = await auth.currentUser?.getIdToken()
+    if (!token) {
+      await endSessionLocally()
+      return { ok: false, kind: 'unknown' }
+    }
 
-    // Hydrate cloud snapshot & set lastPulledVersion BEFORE flipping isPremium (which starts syncEngine)
+    let replacedLocalData = false
+
+    const hydrateCloud = async () => {
+      const res = await $fetch<{ snapshot: Record<string, unknown>, latestVersion?: number }>('/api/sync/snapshot', {
+        method: 'GET',
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      })
+      if (!res?.snapshot) {
+        throw new Error('Cloud farm snapshot unavailable')
+      }
+      const latestVersion = Number(res.latestVersion ?? 0)
+      await localWorker.importSnapshot(res.snapshot, latestVersion, { tier: 'premium', ownerUid: signedInUid })
+      await localWorker.updateSyncState({
+        status: 'synced',
+        lastError: null,
+        lastPulledVersion: latestVersion,
+        needsReconcile: false,
+        ownerUid: signedInUid,
+      })
+    }
+
     try {
-      const token = await auth.currentUser?.getIdToken()
-      if (token) {
-        const res = await $fetch<{ snapshot: Record<string, unknown>, latestVersion?: number }>('/api/sync/snapshot', {
-          method: 'GET',
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        })
-        if (res?.snapshot) {
-          const latestVersion = res.latestVersion ?? 0
-          await localWorker.importSnapshot(res.snapshot, latestVersion)
-          await localWorker.updateSyncState({
-            status: 'synced',
-            lastError: null,
-            lastPulledVersion: latestVersion,
-          })
-        }
+      const outcome = await confirmOrHydrateCloudFarm({
+        getSummary: async () => {
+          const summary = await localWorker.getLocalDataSummary()
+          if (summary.hasData && (!summary.ownerUid || summary.ownerUid === signedInUid)) {
+            replacedLocalData = true
+          }
+          return summary
+        },
+        hydrateCloud,
+        requestConfirmation: requestLocalReplaceConfirmation,
+        onCancel: endSessionLocally,
+        targetUid: signedInUid,
+      })
+
+      if (outcome.status === 'cancelled') {
+        return { ok: false, kind: 'cancelled' }
       }
     }
     catch (snapshotErr) {
       console.warn('[doSignIn] Failed to hydrate cloud snapshot locally:', snapshotErr)
+      await endSessionLocally()
+      return { ok: false, kind: 'network' }
     }
+
+    hint.value = '1'
+    onboardedCookie.value = 'true'
+    await syncSessionCookie()
 
     // Flip tier to premium ONLY AFTER snapshot import & lastPulledVersion are committed
     upgradeToPremium()
 
     // A failure here isn't a sign-in failure: the middleware/layout show the farm-load state.
     await ensure({ force: true })
+
+    if (replacedLocalData) {
+      toast.add({
+        title: 'Cloud farm loaded successfully',
+        description: 'This device is now synced to your cloud farm.',
+        color: 'success',
+      })
+    }
 
     return { ok: true }
   }
@@ -148,10 +188,16 @@ export function useAuthActions() {
     clear()
   }
 
-  /** One tap, no confirmation (AC14). A full reload drops in-memory farm data, so Back can't show it. */
+  /** One tap, no confirmation (AC14). Clears local OPFS business data so shared devices never expose prior-user data. */
   async function signOut() {
     signingOut.value = true
     await endSessionLocally()
+    try {
+      await localWorker.clearLocalData()
+    }
+    catch {
+      // Proceed with reload even if OPFS worker reset fails
+    }
     hint.value = null
     // `force`: reloadNuxtApp otherwise skips a reload to the same path within 10 s (loop guard),
     // which silently broke a second sign-out shortly after a first one.

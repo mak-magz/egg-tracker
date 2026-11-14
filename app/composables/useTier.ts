@@ -26,7 +26,7 @@ export function useTier() {
    * when invoked from background timers / SyncEngine outside setup() context.
    */
   async function getAuthToken(): Promise<string | null> {
-    if (!import.meta.client) return null
+    if (!import.meta.client || isFree.value) return null
 
     let auth = null
     try {
@@ -45,11 +45,18 @@ export function useTier() {
       }
     }
 
+    if (auth && !auth.currentUser && typeof (auth as { authStateReady?: () => Promise<void> }).authStateReady === 'function') {
+      try {
+        await (auth as { authStateReady: () => Promise<void> }).authStateReady()
+      }
+      catch {
+        // Proceed with null token if auth initialization fails
+      }
+    }
+
     if (auth?.currentUser) {
-      if (isFree.value) upgradeToPremium()
       return await auth.currentUser.getIdToken()
     }
-    if (isFree.value) return null
     return null
   }
 
