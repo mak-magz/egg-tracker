@@ -4,7 +4,7 @@ import type { H3Event } from 'h3'
 import { requireAdmin } from '../../server/utils/auth'
 import * as authUtils from '../../server/utils/auth'
 import { listAdminTenants, getAdminTenantDetails } from '../../server/repositories/admin-tenants'
-import { runBatchMigrations } from '../../server/repositories/admin-migrations'
+import { getFleetMigrationStatus, runBatchMigrations, runSingleTenantMigration } from '../../server/repositories/admin-migrations'
 import { assignUserToFarm, reassignUserFarm, listFirebaseUsers } from '../../server/repositories/admin-users'
 import * as tursoDb from '../../server/db/turso'
 import * as controlSchema from '../../server/db/schema/control'
@@ -279,6 +279,7 @@ describe('Admin Batch Migrations Failure Isolation', () => {
   ]
 
   beforeEach(() => {
+    vi.spyOn(tursoDb, 'ensureControlDbBootstrapped').mockResolvedValue(undefined)
     vi.spyOn(tursoDb, 'getControlDb').mockReturnValue({
       select: () => ({
         from: () => Promise.resolve(tenants),
@@ -312,5 +313,95 @@ describe('Admin Batch Migrations Failure Isolation', () => {
     expect(goodResult?.success).toBe(true)
     expect(badResult?.success).toBe(false)
     expect(badResult?.error).toBe('Connection timeout to edge database')
+  })
+})
+
+describe('Admin Migrations Turso Cloud Compatibility and Schema Meta', () => {
+  const tenants = [
+    {
+      id: 'tenant-cloud-1',
+      name: 'Cloud Pastures',
+      dbUrl: 'libsql://cloud-pastures.turso.io',
+      dbAuthToken: 'token_secret_never_leak',
+    },
+  ]
+
+  beforeEach(() => {
+    vi.spyOn(tursoDb, 'ensureControlDbBootstrapped').mockResolvedValue(undefined)
+    vi.spyOn(tursoDb, 'getControlDb').mockReturnValue({
+      select: () => ({
+        from: () => ({
+          where: () => Promise.resolve(tenants),
+        }),
+      }),
+    } as any)
+    vi.spyOn(adminAudit, 'recordAdminAuditLog').mockResolvedValue({} as any)
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('reports up_to_date for Turso Cloud tenants via readTenantSchemaVersion even if PRAGMA user_version is 0', async () => {
+    vi.spyOn(tursoDb, 'getControlDb').mockReturnValue({
+      select: () => ({
+        from: () => Promise.resolve(tenants),
+      }),
+    } as any)
+    vi.spyOn(tursoDb, 'getTenantLibsqlClient').mockReturnValue({} as any)
+    vi.spyOn(tursoDb, 'readTenantSchemaVersion').mockResolvedValue(3)
+
+    const status = await getFleetMigrationStatus()
+    expect(status.fleetSummary.total).toBe(1)
+    expect(status.fleetSummary.upToDate).toBe(1)
+    expect(status.fleetSummary.pending).toBe(0)
+    expect(status.tenants[0]?.status).toBe('up_to_date')
+    expect(status.tenants[0]?.currentVersion).toBe('v3')
+  })
+
+  it('runSingleTenantMigration bootstraps control DB and sanitizes errors without leaking credentials', async () => {
+    const bootstrapSpy = vi.spyOn(tursoDb, 'ensureControlDbBootstrapped').mockResolvedValue(undefined)
+    vi.spyOn(tursoDb, 'getTenantLibsqlClient').mockReturnValue({} as any)
+    vi.spyOn(tursoDb, 'initTenantDbSchema').mockRejectedValue(
+      new Error('Failed connecting to https://secret_token@turso.io/db: connection refused'),
+    )
+
+    const res = await runSingleTenantMigration('tenant-cloud-1', 'admin@tamago.farm')
+    expect(bootstrapSpy).toHaveBeenCalled()
+    expect(res.success).toBe(false)
+    expect(res.error).toBeDefined()
+    expect(res.error).toContain('[redacted-url]')
+    expect(res.error).not.toContain('secret_token')
+  })
+
+  it('runSingleTenantMigration returns success and records audit log on completion', async () => {
+    const bootstrapSpy = vi.spyOn(tursoDb, 'ensureControlDbBootstrapped').mockResolvedValue(undefined)
+    const auditSpy = vi.spyOn(adminAudit, 'recordAdminAuditLog').mockResolvedValue({} as any)
+    vi.spyOn(tursoDb, 'getTenantLibsqlClient').mockReturnValue({} as any)
+    vi.spyOn(tursoDb, 'initTenantDbSchema').mockResolvedValue(undefined)
+
+    const res = await runSingleTenantMigration('tenant-cloud-1', 'admin@tamago.farm')
+    expect(bootstrapSpy).toHaveBeenCalled()
+    expect(res.success).toBe(true)
+    expect(res.version).toBe('v3')
+    expect(auditSpy).toHaveBeenCalledWith(expect.objectContaining({
+      actionType: 'schema_migration',
+      targetId: 'tenant-cloud-1',
+    }))
+  })
+
+  it('runBatchMigrations bootstraps control DB before querying tenants', async () => {
+    const bootstrapSpy = vi.spyOn(tursoDb, 'ensureControlDbBootstrapped').mockResolvedValue(undefined)
+    vi.spyOn(tursoDb, 'getControlDb').mockReturnValue({
+      select: () => ({
+        from: () => Promise.resolve(tenants),
+      }),
+    } as any)
+    vi.spyOn(tursoDb, 'getTenantLibsqlClient').mockReturnValue({} as any)
+    vi.spyOn(tursoDb, 'initTenantDbSchema').mockResolvedValue(undefined)
+
+    const res = await runBatchMigrations(['tenant-cloud-1'], 'admin@tamago.farm')
+    expect(bootstrapSpy).toHaveBeenCalled()
+    expect(res.successful).toBe(1)
   })
 })

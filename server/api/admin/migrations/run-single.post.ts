@@ -17,7 +17,8 @@ export default defineAdminHandler(async (event, ctx) => {
 
   const res = await runSingleTenantMigration(parsed.data.tenantId, ctx.email)
   if (!res.success) {
-    throw apiError(500, 'internal', undefined, undefined)
+    console.error('[admin:migrations] run-single failed:', res.error || 'unknown')
+    throw apiError(500, 'internal', res.error || 'Migration failed')
   }
   return res
 })

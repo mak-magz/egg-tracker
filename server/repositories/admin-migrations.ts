@@ -5,6 +5,7 @@ import {
   getControlDb,
   getTenantLibsqlClient,
   initTenantDbSchema,
+  readTenantSchemaVersion,
 } from '../db/turso'
 import * as controlSchema from '../db/schema/control'
 import { recordAdminAuditLog } from './admin-audit'
@@ -37,8 +38,7 @@ export async function getFleetMigrationStatus() {
   const tenantStatuses = await mapWithConcurrency(tenants, 5, async (t) => {
     try {
       const client = getTenantLibsqlClient(t.dbUrl, t.dbAuthToken || undefined)
-      const res = await client.execute('PRAGMA user_version')
-      const currentVersionNum = Number(res.rows[0]?.user_version ?? 0)
+      const currentVersionNum = await readTenantSchemaVersion(client)
 
       if (currentVersionNum >= TENANT_SCHEMA_USER_VERSION) {
         upToDate++
@@ -93,6 +93,7 @@ export async function getFleetMigrationStatus() {
 }
 
 export async function runSingleTenantMigration(tenantId: string, operatorEmail: string) {
+  await ensureControlDbBootstrapped()
   const controlDb = getControlDb()
   const [tenant] = await controlDb
     .select()
@@ -125,6 +126,7 @@ export async function runSingleTenantMigration(tenantId: string, operatorEmail: 
 }
 
 export async function runBatchMigrations(targetTenantIds: string[] | undefined, operatorEmail: string) {
+  await ensureControlDbBootstrapped()
   const controlDb = getControlDb()
   let tenants = await controlDb.select().from(controlSchema.tenants)
 
