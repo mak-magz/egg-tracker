@@ -3,7 +3,7 @@
 
 const MAX_LENGTH = 2048
 const BASE = 'http://x'
-const AUTH_EXACT = new Set(['/login', '/forgot-password', '/no-farm', '/auth'])
+const AUTH_EXACT = new Set(['/login', '/forgot-password', '/no-farm', '/auth', '/admin/login'])
 
 /** True for the auth screens, which must never be a post-sign-in destination. Case-insensitive, trailing slash ignored. */
 export function isAuthRoutePath(pathname: string): boolean {

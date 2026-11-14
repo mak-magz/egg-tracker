@@ -3,8 +3,8 @@
 // from the session (never from input), and map anything thrown to an ApiErrorData error.
 import { defineEventHandler, getRequestHeaders, setResponseHeader } from 'h3'
 import type { EventHandlerRequest, H3Event } from 'h3'
-import { requireAuth, requireTenant } from './auth'
-import type { AuthContext, TenantContext } from './auth'
+import { requireAdmin, requireAuth, requireTenant } from './auth'
+import type { AdminContext, AuthContext, TenantContext } from './auth'
 import { createTenantDb } from './db'
 import type { TenantDb } from './db'
 import { apiError, toApiError } from './errors'
@@ -70,6 +70,45 @@ export function defineTenantHandler<T>(
       const tenant = await requireTenant(event)
       const db = await createTenantDb(event, tenant.tenantId)
       return await fn(event, { ...tenant, db })
+    }
+    catch (e) {
+      throw toApiError(e)
+    }
+  })
+}
+
+/**
+ * Signed in AND verified operator email in ADMIN_EMAILS (all /api/admin/** routes).
+ * 401 `unauthenticated` / 403 `forbidden`.
+ */
+export function defineAdminHandler<T>(
+  fn: (event: H3Event<EventHandlerRequest>, ctx: AdminContext) => T | Promise<T>,
+) {
+  return defineEventHandler(async (event) => {
+    noStore(event)
+    try {
+      assertRequestAllowed(event)
+      const ctx = await requireAdmin(event)
+      return await fn(event, ctx)
+    }
+    catch (e) {
+      throw toApiError(e)
+    }
+  })
+}
+
+/**
+ * Unauthenticated entrypoint for operator login (POST /api/admin/login).
+ * Enforces CSRF assertRequestAllowed and noStore.
+ */
+export function defineAdminLoginHandler<T>(
+  fn: (event: H3Event<EventHandlerRequest>) => T | Promise<T>,
+) {
+  return defineEventHandler(async (event) => {
+    noStore(event)
+    try {
+      assertRequestAllowed(event)
+      return await fn(event)
     }
     catch (e) {
       throw toApiError(e)

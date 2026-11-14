@@ -49,7 +49,15 @@ import {
   restoreSize,
   renameSize,
 } from '../../core/repositories/sizes'
-import type { ApiErrorData } from '#shared/types/api'
+import type { ApiErrorData, DiscardMutationResult } from '#shared/types/api'
+import {
+  applyRemoteChangesOps,
+  formatFailedMutation,
+  migrateLocalSchema,
+  summarizeLocalData,
+  type LocalSqlDriver,
+  type OutboxMutationRow,
+} from './sync-helpers'
 
 self.addEventListener('error', (e) => {
   console.error('[worker-uncaught-error]', e.message, e.filename, e.lineno, e.colno, e.error)
@@ -60,7 +68,28 @@ self.addEventListener('unhandledrejection', (e) => {
 
 export interface WorkerRequest<T = any> {
   id: string
-  type: 'EXECUTE' | 'PING' | 'EXPORT_DATA' | 'IMPORT_SNAPSHOT' | 'GET_SYNC_STATUS' | 'RAW_QUERY'
+  type:
+    | 'EXECUTE'
+    | 'PING'
+    | 'EXPORT_DATA'
+    | 'IMPORT_SNAPSHOT'
+    | 'GET_SYNC_STATUS'
+    | 'RAW_QUERY'
+    | 'GET_PENDING_MUTATIONS'
+    | 'MARK_MUTATIONS_PROCESSED'
+    | 'RESET_IN_FLIGHT_MUTATIONS'
+    | 'GET_LAST_PULLED_VERSION'
+    | 'APPLY_REMOTE_CHANGES'
+    | 'UPDATE_SYNC_STATE'
+    | 'SET_DEVICE_ID'
+    | 'MARK_SNAPSHOT_EXPORTED'
+    | 'GET_LOCAL_DATA_SUMMARY'
+    | 'GET_FAILED_MUTATIONS'
+    | 'RETRY_FAILED_MUTATION'
+    | 'RETRY_ALL_FAILED_MUTATIONS'
+    | 'DISCARD_FAILED_MUTATION'
+    | 'RECONCILE_FROM_SNAPSHOT'
+    | 'CLEAR_LOCAL_DATA'
   route?: {
     method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
     path: string
@@ -247,7 +276,20 @@ const TABLE_DEFINITIONS: string[] = [
     last_pushed_at TEXT,
     status TEXT NOT NULL DEFAULT 'local_only',
     last_error TEXT,
+    needs_reconcile INTEGER NOT NULL DEFAULT 0,
+    owner_uid TEXT,
     updated_at TEXT NOT NULL
+  );`,
+  `CREATE TABLE IF NOT EXISTS sync_rejections (
+    id TEXT PRIMARY KEY,
+    mutation_id TEXT NOT NULL,
+    device_id TEXT NOT NULL,
+    mutation_type TEXT NOT NULL,
+    entity_ref TEXT,
+    error_code TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    rejected_at TEXT NOT NULL,
+    resolved_at TEXT
   );`,
   `CREATE TABLE IF NOT EXISTS change_log (
     version INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -269,6 +311,7 @@ const TABLE_DEFINITIONS: string[] = [
   `CREATE INDEX IF NOT EXISTS sales_order_idx ON sales (order_id);`,
   `CREATE INDEX IF NOT EXISTS sale_lines_size_idx ON sale_lines (size_id);`,
   `CREATE INDEX IF NOT EXISTS outbox_status_idx ON outbox_mutations (status, created_at);`,
+  `CREATE INDEX IF NOT EXISTS sync_rejections_unresolved_idx ON sync_rejections (resolved_at, rejected_at);`,
   `CREATE INDEX IF NOT EXISTS change_log_version_idx ON change_log (version);`,
 ]
 
@@ -322,19 +365,8 @@ async function initDatabase(): Promise<void> {
     sqliteDb.exec(ddl)
   }
 
-  // Safe incremental migrations for existing OPFS databases
-  try {
-    sqliteDb.exec('ALTER TABLE farm_settings ADD COLUMN tier TEXT NOT NULL DEFAULT \'free\';')
-  }
-  catch {
-    // Column already exists
-  }
-  try {
-    sqliteDb.exec('ALTER TABLE sizes ADD COLUMN default_price REAL;')
-  }
-  catch {
-    // Column already exists
-  }
+  // Versioned incremental migrations for existing OPFS databases
+  await migrateLocalSchema(createSqliteDriver())
 
   const now = new Date().toISOString()
 
@@ -354,16 +386,17 @@ async function initDatabase(): Promise<void> {
   }>
 
   if (farmSettingsRows.length === 0) {
+    const generatedDeviceId = `D-${crypto.randomUUID().slice(0, 4).toUpperCase()}`
     sqliteDb.exec({
-      sql: `INSERT INTO farm_settings (id, farm_name, eggs_per_tray, currency, device_id, onboarding_completed, created_at, updated_at) VALUES ('default', 'My Farm', 30, 'PHP', 'D1', 0, ?, ?)`,
-      bind: [now, now],
+      sql: `INSERT INTO farm_settings (id, farm_name, eggs_per_tray, currency, device_id, onboarding_completed, created_at, updated_at) VALUES ('default', 'My Farm', 30, 'PHP', ?, 0, ?, ?)`,
+      bind: [generatedDeviceId, now, now],
     })
     tenantMeta = {
       tenantId: 'local-farm',
       name: 'My Farm',
       eggsPerTray: 30,
       currency: 'PHP',
-      deviceId: 'D1',
+      deviceId: generatedDeviceId,
       onboardingCompleted: false,
     }
   }
@@ -555,6 +588,14 @@ async function handleRoute(
       ],
     })
 
+    const farmRows = sqliteDb.exec({
+      sql: 'SELECT tier FROM farm_settings WHERE id = ?',
+      bind: ['default'],
+      rowMode: 'object',
+      returnValue: 'resultRows',
+    }) as Array<{ tier?: string }>
+    const tier = (farmRows[0]?.tier === 'premium' ? 'premium' : 'free') as 'free' | 'premium'
+
     const sizes = await listSizes(tenantDb)
     return {
       success: true,
@@ -565,7 +606,8 @@ async function handleRoute(
         currency,
         deviceId: tenantMeta.deviceId || 'D1',
         onboardingCompleted: true,
-        isFree: true,
+        isFree: tier === 'free',
+        tier,
         sizes,
       },
     }
@@ -577,7 +619,7 @@ async function handleRoute(
   }
   if (method === 'POST' && normalizedPath === '/api/sizes') {
     const result = await addSize(tenantDb, body)
-    await recordOutboxMutation('add_size', body)
+    await recordOutboxMutation('add_size', { ...body, id: (result as any)?.size?.id || (result as any)?.id })
     return result
   }
   let match = /^\/api\/sizes\/([^/]+)\/archive$/.exec(normalizedPath)
@@ -615,7 +657,7 @@ async function handleRoute(
   }
   if (method === 'POST' && normalizedPath === '/api/clients') {
     const result = await addClient(tenantDb, body)
-    await recordOutboxMutation('add_client', body)
+    await recordOutboxMutation('add_client', { ...body, id: (result as any)?.client?.id || (result as any)?.id })
     return result
   }
   match = /^\/api\/clients\/([^/]+)\/archive$/.exec(normalizedPath)
@@ -691,7 +733,7 @@ async function handleRoute(
   }
   if (method === 'POST' && normalizedPath === '/api/sales') {
     const result = await createSale(tenantDb, body)
-    await recordOutboxMutation('create_sale', body)
+    await recordOutboxMutation('create_sale', { ...body, id: (result as any)?.sale?.id || (result as any)?.id, saleNumber: (result as any)?.sale?.saleNumber || (result as any)?.saleNumber })
     return result
   }
   match = /^\/api\/sales\/([^/]+)\/void$/.exec(normalizedPath)
@@ -728,7 +770,7 @@ async function handleRoute(
   }
   if (method === 'POST' && normalizedPath === '/api/orders') {
     const result = await createOrder(tenantDb, body)
-    await recordOutboxMutation('create_order', body)
+    await recordOutboxMutation('create_order', { ...body, id: (result as any)?.order?.id || (result as any)?.id, orderNumber: (result as any)?.order?.orderNumber || (result as any)?.orderNumber })
     return result
   }
   match = /^\/api\/orders\/([^/]+)\/cancel$/.exec(normalizedPath)
@@ -756,7 +798,12 @@ async function handleRoute(
   if (method === 'POST' && match) {
     const id = decodeURIComponent(match[1]!)
     const result = await deliverOrder(tenantDb, id, body)
-    await recordOutboxMutation('deliver_order', { id, ...body })
+    await recordOutboxMutation('deliver_order', {
+      id,
+      ...body,
+      saleId: (result as any)?.sale?.id,
+      saleNumber: (result as any)?.sale?.saleNumber,
+    })
     return result
   }
   match = /^\/api\/orders\/([^/]+)(?:\/update)?$/.exec(normalizedPath)
@@ -791,6 +838,7 @@ async function exportFullSnapshot() {
     sizes: sqliteDb.exec({ sql: 'SELECT * FROM sizes', rowMode: 'object', returnValue: 'resultRows' }),
     clients: sqliteDb.exec({ sql: 'SELECT * FROM clients', rowMode: 'object', returnValue: 'resultRows' }),
     production: sqliteDb.exec({ sql: 'SELECT * FROM production', rowMode: 'object', returnValue: 'resultRows' }),
+    productionSubmissions: sqliteDb.exec({ sql: 'SELECT * FROM production_submissions', rowMode: 'object', returnValue: 'resultRows' }),
     sales: sqliteDb.exec({ sql: 'SELECT * FROM sales', rowMode: 'object', returnValue: 'resultRows' }),
     saleLines: sqliteDb.exec({ sql: 'SELECT * FROM sale_lines', rowMode: 'object', returnValue: 'resultRows' }),
     orders: sqliteDb.exec({ sql: 'SELECT * FROM orders', rowMode: 'object', returnValue: 'resultRows' }),
@@ -798,8 +846,35 @@ async function exportFullSnapshot() {
   }
 }
 
-async function importFullSnapshot(snapshot: any) {
+function createSqliteDriver(): LocalSqlDriver {
+  return {
+    exec: (sql: string, bind?: any[]) => {
+      if (bind && bind.length > 0) {
+        sqliteDb.exec({ sql, bind })
+      }
+      else {
+        sqliteDb.exec(sql)
+      }
+    },
+    query: <T = Record<string, any>>(sql: string, bind?: any[]): T[] => {
+      return sqliteDb.exec({
+        sql,
+        ...(bind && bind.length > 0 ? { bind } : {}),
+        rowMode: 'object',
+        returnValue: 'resultRows',
+      }) as T[]
+    },
+  }
+}
+
+async function importFullSnapshot(
+  snapshot: any,
+  latestVersion = 0,
+  options: { preserveOutbox?: boolean, tier?: 'free' | 'premium', ownerUid?: string | null } = {},
+) {
   await dbReadyPromise
+  const preserveOutbox = Boolean(options.preserveOutbox)
+  const targetTier: 'free' | 'premium' = options.tier ?? 'premium'
   sqliteDb.exec('BEGIN TRANSACTION;')
   try {
     sqliteDb.exec(`
@@ -818,67 +893,186 @@ async function importFullSnapshot(snapshot: any) {
       DELETE FROM farm_settings;
       DELETE FROM local_counters;
     `)
-
-    for (const fs of snapshot.farmSettings || []) {
-      sqliteDb.exec({
-        sql: `INSERT INTO farm_settings (id, farm_name, eggs_per_tray, currency, device_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        bind: [fs.id, fs.farm_name ?? fs.farmName, fs.eggs_per_tray ?? fs.eggsPerTray, fs.currency, fs.device_id ?? fs.deviceId, fs.created_at ?? fs.createdAt, fs.updated_at ?? fs.updatedAt],
-      })
+    if (!preserveOutbox) {
+      sqliteDb.exec('DELETE FROM outbox_mutations;')
     }
 
-    for (const lc of snapshot.localCounters || []) {
+    const now = new Date().toISOString()
+    const rawFs = snapshot.farmSettings ?? snapshot.farm_settings
+    const fs = Array.isArray(rawFs) ? rawFs[0] : rawFs
+
+    const farmName = (fs && (fs.farm_name ?? fs.farmName ?? fs.name)) || tenantMeta.name || 'My Farm'
+    const eggsPerTray = Number(fs && (fs.eggs_per_tray ?? fs.eggsPerTray) !== undefined ? (fs.eggs_per_tray ?? fs.eggsPerTray) : (tenantMeta.eggsPerTray || 30))
+    const currency = (fs && fs.currency) || tenantMeta.currency || 'PHP'
+    const preservedDeviceId = tenantMeta.deviceId && tenantMeta.deviceId !== 'D1' ? tenantMeta.deviceId : null
+    const deviceId = preservedDeviceId || (fs && (fs.device_id ?? fs.deviceId)) || snapshot.deviceId || snapshot.device_id || tenantMeta.deviceId || 'D1'
+    const resolvedTier = (options.tier ?? (fs?.tier === 'premium' || fs?.tier === 'free' ? fs.tier : targetTier)) as 'free' | 'premium'
+    const createdAt = (fs && (fs.created_at ?? fs.createdAt)) || now
+    const updatedAt = (fs && (fs.updated_at ?? fs.updatedAt)) || now
+
+    sqliteDb.exec({
+      sql: `INSERT OR REPLACE INTO farm_settings (id, farm_name, eggs_per_tray, currency, device_id, tier, onboarding_completed, created_at, updated_at) VALUES ('default', ?, ?, ?, ?, ?, 1, ?, ?)`,
+      bind: [farmName, eggsPerTray, currency, deviceId, resolvedTier, createdAt, updatedAt],
+    })
+
+    tenantMeta = {
+      ...tenantMeta,
+      name: farmName,
+      eggsPerTray,
+      currency,
+      deviceId,
+      onboardingCompleted: true,
+    }
+    const tenantClient = createDrizzleBackedClient(drizzleDb, tenantMeta)
+    tenantDb = createTenantDbFromClient(tenantClient as any, 'local-farm')
+
+    for (const lc of snapshot.localCounters || snapshot.local_counters || []) {
       sqliteDb.exec({
         sql: `INSERT INTO local_counters (id, next_number, updated_at) VALUES (?, ?, ?)`,
-        bind: [lc.id, lc.next_number ?? lc.nextNumber, lc.updated_at ?? lc.updatedAt],
+        bind: [lc.id, lc.next_number ?? lc.nextNumber, lc.updated_at ?? lc.updatedAt ?? now],
       })
     }
 
     for (const s of snapshot.sizes || []) {
       sqliteDb.exec({
-        sql: `INSERT INTO sizes (id, name, sort_order, color_slot, archived_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        bind: [s.id, s.name, s.sort_order ?? s.sortOrder, s.color_slot ?? s.colorSlot, s.archived_at ?? s.archivedAt ?? null, s.created_at ?? s.createdAt, s.updated_at ?? s.updatedAt],
+        sql: `INSERT INTO sizes (id, name, sort_order, color_slot, archived_at, default_price, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        bind: [
+          s.id,
+          s.name,
+          s.sort_order ?? s.sortOrder,
+          s.color_slot ?? s.colorSlot,
+          s.archived_at ?? s.archivedAt ?? null,
+          (s.default_price !== undefined ? s.default_price : s.defaultPrice) ?? null,
+          s.created_at ?? s.createdAt ?? now,
+          s.updated_at ?? s.updatedAt ?? now,
+        ],
       })
     }
 
     for (const c of snapshot.clients || []) {
       sqliteDb.exec({
         sql: `INSERT INTO clients (id, name, phone, default_price, archived_at, version, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-        bind: [c.id, c.name, c.phone ?? null, c.default_price ?? c.defaultPrice ?? null, c.archived_at ?? c.archivedAt ?? null, c.version ?? 1, c.created_at ?? c.createdAt, c.updated_at ?? c.updatedAt],
+        bind: [
+          c.id,
+          c.name,
+          c.phone ?? null,
+          c.default_price ?? c.defaultPrice ?? null,
+          c.archived_at ?? c.archivedAt ?? null,
+          c.version ?? 1,
+          c.created_at ?? c.createdAt ?? now,
+          c.updated_at ?? c.updatedAt ?? now,
+        ],
       })
     }
 
     for (const p of snapshot.production || []) {
       sqliteDb.exec({
-        sql: `INSERT INTO production (id, produced_on, size_id, quality, eggs, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        bind: [p.id, p.produced_on ?? p.producedOn, p.size_id ?? p.sizeId ?? null, p.quality, p.eggs, p.created_at ?? p.createdAt, p.updated_at ?? p.updatedAt],
+        sql: `INSERT OR REPLACE INTO production (id, produced_on, size_id, quality, eggs, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        bind: [
+          p.id,
+          p.produced_on ?? p.producedOn,
+          p.size_id ?? p.sizeId ?? null,
+          p.quality,
+          p.eggs,
+          p.created_at ?? p.createdAt ?? now,
+          p.updated_at ?? p.updatedAt ?? now,
+        ],
+      })
+    }
+
+    for (const ps of snapshot.productionSubmissions || snapshot.production_submissions || []) {
+      sqliteDb.exec({
+        sql: `INSERT OR REPLACE INTO production_submissions (id, produced_on, had_before, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`,
+        bind: [
+          ps.id,
+          ps.produced_on ?? ps.producedOn,
+          ps.had_before !== undefined ? (ps.had_before ? 1 : 0) : (ps.hadBefore ? 1 : 0),
+          ps.created_at ?? ps.createdAt ?? now,
+          ps.updated_at ?? ps.updatedAt ?? now,
+        ],
       })
     }
 
     for (const s of snapshot.sales || []) {
       sqliteDb.exec({
         sql: `INSERT INTO sales (id, sale_number, client_id, type, sale_date, order_id, order_number, version, voided_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        bind: [s.id, s.sale_number ?? s.saleNumber, s.client_id ?? s.clientId ?? null, s.type, s.sale_date ?? s.saleDate, s.order_id ?? s.orderId ?? null, s.order_number ?? s.orderNumber ?? null, s.version ?? 1, s.voided_at ?? s.voidedAt ?? null, s.created_at ?? s.createdAt, s.updated_at ?? s.updatedAt],
+        bind: [
+          s.id,
+          s.sale_number ?? s.saleNumber,
+          s.client_id ?? s.clientId ?? null,
+          s.type,
+          s.sale_date ?? s.saleDate,
+          s.order_id ?? s.orderId ?? null,
+          s.order_number ?? s.orderNumber ?? null,
+          s.version ?? 1,
+          s.voided_at ?? s.voidedAt ?? null,
+          s.created_at ?? s.createdAt ?? now,
+          s.updated_at ?? s.updatedAt ?? now,
+        ],
       })
     }
 
-    for (const sl of snapshot.saleLines || []) {
+    for (const sl of snapshot.saleLines || snapshot.sale_lines || []) {
       sqliteDb.exec({
         sql: `INSERT INTO sale_lines (sale_id, size_id, eggs, price_per_tray, line_total, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        bind: [sl.sale_id ?? sl.saleId, sl.size_id ?? sl.sizeId, sl.eggs, sl.price_per_tray ?? sl.pricePerTray, sl.line_total ?? sl.lineTotal, sl.created_at ?? sl.createdAt, sl.updated_at ?? sl.updatedAt],
+        bind: [
+          sl.sale_id ?? sl.saleId,
+          sl.size_id ?? sl.sizeId,
+          sl.eggs,
+          sl.price_per_tray ?? sl.pricePerTray,
+          sl.line_total ?? sl.lineTotal,
+          sl.created_at ?? sl.createdAt ?? now,
+          sl.updated_at ?? sl.updatedAt ?? now,
+        ],
       })
     }
 
     for (const o of snapshot.orders || []) {
       sqliteDb.exec({
         sql: `INSERT INTO orders (id, order_number, client_id, order_date, wanted_by, status, cancelled_at, closed_short_at, converted_from_sale_number, version, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        bind: [o.id, o.order_number ?? o.orderNumber, o.client_id ?? o.clientId, o.order_date ?? o.orderDate, o.wanted_by ?? o.wantedBy ?? null, o.status, o.cancelled_at ?? o.cancelledAt ?? null, o.closed_short_at ?? o.closedShortAt ?? null, o.converted_from_sale_number ?? o.convertedFromSaleNumber ?? null, o.version ?? 1, o.created_at ?? o.createdAt, o.updated_at ?? o.updatedAt],
+        bind: [
+          o.id,
+          o.order_number ?? o.orderNumber,
+          o.client_id ?? o.clientId,
+          o.order_date ?? o.orderDate,
+          o.wanted_by ?? o.wantedBy ?? null,
+          o.status,
+          o.cancelled_at ?? o.cancelledAt ?? null,
+          o.closed_short_at ?? o.closedShortAt ?? null,
+          o.converted_from_sale_number ?? o.convertedFromSaleNumber ?? null,
+          o.version ?? 1,
+          o.created_at ?? o.createdAt ?? now,
+          o.updated_at ?? o.updatedAt ?? now,
+        ],
       })
     }
 
-    for (const ol of snapshot.orderLines || []) {
+    for (const ol of snapshot.orderLines || snapshot.order_lines || []) {
       sqliteDb.exec({
         sql: `INSERT INTO order_lines (order_id, size_id, eggs, price_per_tray, line_total, dropped_eggs, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-        bind: [ol.order_id ?? ol.orderId, ol.size_id ?? ol.sizeId, ol.eggs, ol.price_per_tray ?? ol.pricePerTray, ol.line_total ?? ol.lineTotal, ol.dropped_eggs ?? ol.droppedEggs ?? 0, ol.created_at ?? ol.createdAt, ol.updated_at ?? ol.updatedAt],
+        bind: [
+          ol.order_id ?? ol.orderId,
+          ol.size_id ?? ol.sizeId,
+          ol.eggs ?? ol.orderedEggs ?? 0,
+          ol.price_per_tray ?? ol.pricePerTray,
+          ol.line_total ?? ol.lineTotal,
+          ol.dropped_eggs ?? ol.droppedEggs ?? 0,
+          ol.created_at ?? ol.createdAt ?? now,
+          ol.updated_at ?? ol.updatedAt ?? now,
+        ],
+      })
+    }
+
+    if (latestVersion > 0) {
+      sqliteDb.exec({
+        sql: `UPDATE sync_state SET last_pulled_version = ?, last_pulled_at = ?, needs_reconcile = 0, status = 'synced', last_error = NULL, owner_uid = COALESCE(?, owner_uid), updated_at = ? WHERE id = 'default'`,
+        bind: [latestVersion, now, options.ownerUid ?? null, now],
+      })
+    }
+    else {
+      sqliteDb.exec({
+        sql: `UPDATE sync_state SET needs_reconcile = 0, owner_uid = COALESCE(?, owner_uid), updated_at = ? WHERE id = 'default'`,
+        bind: [options.ownerUid ?? null, now],
       })
     }
 
@@ -937,8 +1131,204 @@ self.onmessage = async (e: MessageEvent<WorkerRequest>) => {
     }
 
     if (type === 'IMPORT_SNAPSHOT') {
-      await importFullSnapshot(payload)
+      const snap = (payload && typeof payload === 'object' && 'snapshot' in payload) ? payload.snapshot : payload
+      const latestVersion = Number(payload?.latestVersion ?? payload?.version ?? snap?.latestVersion ?? 0)
+      await importFullSnapshot(snap, latestVersion, {
+        preserveOutbox: Boolean(payload?.preserveOutbox),
+        tier: payload?.tier === 'free' || payload?.tier === 'premium' ? payload.tier : undefined,
+        ownerUid: payload?.ownerUid !== undefined ? payload.ownerUid : undefined,
+      })
       respond({ id, ok: true, data: { success: true } })
+      return
+    }
+
+    if (type === 'CLEAR_LOCAL_DATA') {
+      await dbReadyPromise
+      const now = new Date().toISOString()
+      const preservedDeviceId = tenantMeta.deviceId && tenantMeta.deviceId !== 'D1'
+        ? tenantMeta.deviceId
+        : `D-${crypto.randomUUID().slice(0, 4).toUpperCase()}`
+      sqliteDb.exec('BEGIN TRANSACTION;')
+      try {
+        sqliteDb.exec(`
+          DELETE FROM sale_lines;
+          DELETE FROM sales;
+          DELETE FROM sale_submissions;
+          DELETE FROM order_lines;
+          DELETE FROM orders;
+          DELETE FROM order_submissions;
+          DELETE FROM production;
+          DELETE FROM production_submissions;
+          DELETE FROM clients;
+          DELETE FROM client_submissions;
+          DELETE FROM sizes;
+          DELETE FROM size_submissions;
+          DELETE FROM farm_settings;
+          DELETE FROM local_counters;
+          DELETE FROM outbox_mutations;
+          DELETE FROM change_log;
+          DELETE FROM sync_rejections;
+        `)
+        sqliteDb.exec({
+          sql: `INSERT INTO farm_settings (id, farm_name, eggs_per_tray, currency, device_id, tier, onboarding_completed, created_at, updated_at) VALUES ('default', 'My Farm', 30, 'PHP', ?, 'free', 0, ?, ?)`,
+          bind: [preservedDeviceId, now, now],
+        })
+        sqliteDb.exec({
+          sql: `INSERT INTO local_counters (id, next_number, updated_at) VALUES ('sales', 1, ?), ('orders', 1, ?)`,
+          bind: [now, now],
+        })
+        const defaultSizes = [
+          { id: crypto.randomUUID(), name: 'Small', sortOrder: 0, colorSlot: 0 },
+          { id: crypto.randomUUID(), name: 'Medium', sortOrder: 1, colorSlot: 1 },
+          { id: crypto.randomUUID(), name: 'Large', sortOrder: 2, colorSlot: 2 },
+          { id: crypto.randomUUID(), name: 'Jumbo', sortOrder: 3, colorSlot: 3 },
+        ]
+        for (const size of defaultSizes) {
+          sqliteDb.exec({
+            sql: `INSERT INTO sizes (id, name, sort_order, color_slot, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`,
+            bind: [size.id, size.name, size.sortOrder, size.colorSlot, now, now],
+          })
+        }
+        sqliteDb.exec({
+          sql: `UPDATE sync_state SET tenant_id = NULL, cloud_url = NULL, cloud_token = NULL, owner_uid = NULL, last_pulled_version = 0, last_pulled_at = NULL, last_pushed_at = NULL, status = 'local_only', last_error = NULL, needs_reconcile = 0, updated_at = ? WHERE id = 'default'`,
+          bind: [now],
+        })
+        sqliteDb.exec('COMMIT;')
+        tenantMeta = {
+          tenantId: 'local-farm',
+          name: 'My Farm',
+          eggsPerTray: 30,
+          currency: 'PHP',
+          deviceId: preservedDeviceId,
+          onboardingCompleted: false,
+        }
+        const tenantClient = createDrizzleBackedClient(drizzleDb, tenantMeta)
+        tenantDb = createTenantDbFromClient(tenantClient as any, 'local-farm')
+        respond({ id, ok: true, data: { success: true } })
+      }
+      catch (err) {
+        sqliteDb.exec('ROLLBACK;')
+        throw err
+      }
+      return
+    }
+
+    if (type === 'RECONCILE_FROM_SNAPSHOT') {
+      const snap = (payload && typeof payload === 'object' && 'snapshot' in payload) ? payload.snapshot : payload
+      const latestVersion = Number(payload?.latestVersion ?? payload?.version ?? snap?.latestVersion ?? 0)
+      await importFullSnapshot(snap, latestVersion, {
+        preserveOutbox: true,
+        tier: 'premium',
+      })
+      respond({ id, ok: true, data: { success: true } })
+      return
+    }
+
+    if (type === 'GET_LOCAL_DATA_SUMMARY') {
+      await dbReadyPromise
+      const summary = await summarizeLocalData(createSqliteDriver())
+      respond({ id, ok: true, data: summary })
+      return
+    }
+
+    if (type === 'GET_FAILED_MUTATIONS') {
+      await dbReadyPromise
+      const rows = sqliteDb.exec({
+        sql: `SELECT id, device_id, mutation_type, payload, occurred_at, status, error, created_at
+              FROM outbox_mutations
+              WHERE status = 'failed'
+              ORDER BY created_at ASC`,
+        rowMode: 'object',
+        returnValue: 'resultRows',
+      }) as OutboxMutationRow[]
+      const mutations = rows.map((row, idx) => formatFailedMutation(row, idx + 1))
+      respond({ id, ok: true, data: { mutations } })
+      return
+    }
+
+    if (type === 'RETRY_FAILED_MUTATION') {
+      await dbReadyPromise
+      const mutationId = String(payload?.id || '')
+      if (!mutationId) {
+        throw new CoreApiError(400, 'validation_failed', { code: 'TM005', reason: 'missing_mutation_id' })
+      }
+      sqliteDb.exec({
+        sql: `UPDATE outbox_mutations SET status = 'pending', error = NULL WHERE id = ? AND status = 'failed'`,
+        bind: [mutationId],
+      })
+      const remRows = sqliteDb.exec({
+        sql: `SELECT COUNT(*) as count FROM outbox_mutations WHERE status = 'failed'`,
+        rowMode: 'object',
+        returnValue: 'resultRows',
+      }) as Array<{ count: number }>
+      respond({ id, ok: true, data: { retried: true, remainingFailedCount: Number(remRows[0]?.count ?? 0) } })
+      return
+    }
+
+    if (type === 'RETRY_ALL_FAILED_MUTATIONS') {
+      await dbReadyPromise
+      sqliteDb.exec(`UPDATE outbox_mutations SET status = 'pending', error = NULL WHERE status = 'failed'`)
+      respond({ id, ok: true, data: { success: true } })
+      return
+    }
+
+    if (type === 'DISCARD_FAILED_MUTATION') {
+      await dbReadyPromise
+      const mutationId = String(payload?.id || '')
+      if (!mutationId) {
+        throw new CoreApiError(400, 'validation_failed', { code: 'TM005', reason: 'missing_mutation_id' })
+      }
+      const now = new Date().toISOString()
+      let discarded = false
+      sqliteDb.exec('BEGIN TRANSACTION;')
+      try {
+        const existing = sqliteDb.exec({
+          sql: `SELECT id FROM outbox_mutations WHERE id = ? AND status = 'failed'`,
+          bind: [mutationId],
+          rowMode: 'object',
+          returnValue: 'resultRows',
+        }) as Array<{ id: string }>
+        if (existing.length > 0) {
+          sqliteDb.exec({
+            sql: `DELETE FROM outbox_mutations WHERE id = ? AND status = 'failed'`,
+            bind: [mutationId],
+          })
+          discarded = true
+          sqliteDb.exec({
+            sql: `UPDATE sync_state SET needs_reconcile = 1, updated_at = ? WHERE id = 'default'`,
+            bind: [now],
+          })
+        }
+        sqliteDb.exec('COMMIT;')
+      }
+      catch (err) {
+        sqliteDb.exec('ROLLBACK;')
+        throw err
+      }
+
+      const pendingRows = sqliteDb.exec({
+        sql: `SELECT COUNT(*) as count FROM outbox_mutations WHERE status IN ('pending', 'in_flight')`,
+        rowMode: 'object',
+        returnValue: 'resultRows',
+      }) as Array<{ count: number }>
+      const failedRows = sqliteDb.exec({
+        sql: `SELECT COUNT(*) as count FROM outbox_mutations WHERE status = 'failed'`,
+        rowMode: 'object',
+        returnValue: 'resultRows',
+      }) as Array<{ count: number }>
+      const syncRows = sqliteDb.exec({
+        sql: `SELECT needs_reconcile FROM sync_state WHERE id = 'default'`,
+        rowMode: 'object',
+        returnValue: 'resultRows',
+      }) as Array<{ needs_reconcile?: number }>
+
+      const result: DiscardMutationResult = {
+        discarded,
+        remainingPendingCount: Number(pendingRows[0]?.count ?? 0),
+        remainingFailedCount: Number(failedRows[0]?.count ?? 0),
+        needsReconcile: Boolean(syncRows[0]?.needs_reconcile),
+      }
+      respond({ id, ok: true, data: result })
       return
     }
 
@@ -951,19 +1341,255 @@ self.onmessage = async (e: MessageEvent<WorkerRequest>) => {
         returnValue: 'resultRows',
       })
       const outboxCountRows = sqliteDb.exec({
-        sql: 'SELECT COUNT(*) as count FROM outbox_mutations WHERE status = ?',
-        bind: ['pending'],
+        sql: 'SELECT COUNT(*) as count FROM outbox_mutations WHERE status IN (\'pending\', \'in_flight\')',
         rowMode: 'object',
         returnValue: 'resultRows',
       })
+      const failedCountRows = sqliteDb.exec({
+        sql: 'SELECT COUNT(*) as count FROM outbox_mutations WHERE status = \'failed\'',
+        rowMode: 'object',
+        returnValue: 'resultRows',
+      })
+      const syncRow = syncRows[0] || null
       respond({
         id,
         ok: true,
         data: {
-          syncState: syncRows[0] || null,
+          syncState: syncRow,
           pendingOutboxCount: Number(outboxCountRows[0]?.count ?? 0),
+          failedOutboxCount: Number(failedCountRows[0]?.count ?? 0),
+          needsReconcile: Boolean((syncRow as any)?.needs_reconcile),
         },
       })
+      return
+    }
+
+    if (type === 'GET_PENDING_MUTATIONS') {
+      await dbReadyPromise
+      const limit = Number(payload?.limit || 50)
+      const rows = sqliteDb.exec({
+        sql: 'SELECT id, device_id, mutation_type, payload, occurred_at FROM outbox_mutations WHERE status = \'pending\' ORDER BY created_at ASC LIMIT ?',
+        bind: [limit],
+        rowMode: 'object',
+        returnValue: 'resultRows',
+      }) as Array<{
+        id: string
+        device_id: string
+        mutation_type: string
+        payload: string
+        occurred_at: string
+      }>
+
+      if (rows.length > 0) {
+        const ids = rows.map(r => r.id)
+        const placeholders = ids.map(() => '?').join(', ')
+        sqliteDb.exec({
+          sql: `UPDATE outbox_mutations SET status = 'in_flight' WHERE id IN (${placeholders})`,
+          bind: ids,
+        })
+      }
+
+      const mutations = rows.map((r) => {
+        let parsedPayload: any
+        try {
+          parsedPayload = JSON.parse(r.payload)
+        }
+        catch {
+          parsedPayload = r.payload
+        }
+        return {
+          id: r.id,
+          deviceId: r.device_id,
+          type: r.mutation_type,
+          payload: parsedPayload,
+          occurredAt: r.occurred_at,
+        }
+      })
+
+      respond({ id, ok: true, data: { mutations } })
+      return
+    }
+
+    if (type === 'MARK_MUTATIONS_PROCESSED') {
+      await dbReadyPromise
+      const results: Array<{
+        id: string
+        status: 'applied' | 'conflict_lww' | 'rejected'
+        error?: string
+        code?: string
+        reason?: string | null
+      }> = payload?.results || []
+      const now = new Date().toISOString()
+      sqliteDb.exec('BEGIN TRANSACTION;')
+      try {
+        for (const res of results) {
+          if (res.status === 'applied' || res.status === 'conflict_lww') {
+            sqliteDb.exec({
+              sql: 'DELETE FROM outbox_mutations WHERE id = ?',
+              bind: [res.id],
+            })
+          }
+          else if (res.status === 'rejected') {
+            const storedError = res.code && /^TM\d{3}$/.test(res.code) && !(res.error || '').startsWith(`[${res.code}]`)
+              ? `[${res.code}] ${res.error || 'rejected'}`
+              : (res.error || 'rejected')
+            sqliteDb.exec({
+              sql: 'UPDATE outbox_mutations SET status = \'failed\', error = ? WHERE id = ?',
+              bind: [storedError, res.id],
+            })
+          }
+        }
+        sqliteDb.exec({
+          sql: 'UPDATE sync_state SET last_pushed_at = ?, updated_at = ? WHERE id = \'default\'',
+          bind: [now, now],
+        })
+        sqliteDb.exec('COMMIT;')
+        respond({ id, ok: true, data: { success: true } })
+      }
+      catch (err) {
+        sqliteDb.exec('ROLLBACK;')
+        throw err
+      }
+      return
+    }
+
+    if (type === 'RESET_IN_FLIGHT_MUTATIONS') {
+      await dbReadyPromise
+      sqliteDb.exec('UPDATE outbox_mutations SET status = \'pending\' WHERE status = \'in_flight\'')
+      respond({ id, ok: true, data: { success: true } })
+      return
+    }
+
+    if (type === 'GET_LAST_PULLED_VERSION') {
+      await dbReadyPromise
+      const rows = sqliteDb.exec({
+        sql: 'SELECT last_pulled_version, last_pulled_at FROM sync_state WHERE id = \'default\'',
+        rowMode: 'object',
+        returnValue: 'resultRows',
+      }) as Array<{ last_pulled_version: number, last_pulled_at: string | null }>
+      const row = rows[0]
+      respond({
+        id,
+        ok: true,
+        data: {
+          lastPulledVersion: Number(row?.last_pulled_version ?? 0),
+          lastPulledAt: row?.last_pulled_at || null,
+        },
+      })
+      return
+    }
+
+    if (type === 'APPLY_REMOTE_CHANGES') {
+      await dbReadyPromise
+      const changes = payload?.changes || []
+      const latestVersion = Number(payload?.latestVersion ?? 0)
+
+      sqliteDb.exec('BEGIN TRANSACTION;')
+      try {
+        const result = await applyRemoteChangesOps(
+          createSqliteDriver(),
+          changes,
+          latestVersion,
+          (patch) => {
+            tenantMeta = { ...tenantMeta, ...patch }
+          },
+        )
+        sqliteDb.exec('COMMIT;')
+        respond({ id, ok: true, data: result })
+      }
+      catch (err) {
+        sqliteDb.exec('ROLLBACK;')
+        throw err
+      }
+      return
+    }
+
+    if (type === 'UPDATE_SYNC_STATE') {
+      await dbReadyPromise
+      const now = new Date().toISOString()
+      const sets: string[] = ['updated_at = ?']
+      const binds: any[] = [now]
+      if (payload?.status !== undefined) {
+        sets.push('status = ?')
+        binds.push(payload.status)
+      }
+      if (payload?.lastError !== undefined) {
+        sets.push('last_error = ?')
+        binds.push(payload.lastError)
+      }
+      if (payload?.tenantId !== undefined) {
+        sets.push('tenant_id = ?')
+        binds.push(payload.tenantId)
+      }
+      if (payload?.cloudUrl !== undefined) {
+        sets.push('cloud_url = ?')
+        binds.push(payload.cloudUrl)
+      }
+      if (payload?.cloudToken !== undefined) {
+        sets.push('cloud_token = ?')
+        binds.push(payload.cloudToken)
+      }
+      if (payload?.lastPulledVersion !== undefined) {
+        sets.push('last_pulled_version = ?')
+        binds.push(Number(payload.lastPulledVersion))
+      }
+      if (payload?.lastPulledAt !== undefined) {
+        sets.push('last_pulled_at = ?')
+        binds.push(payload.lastPulledAt)
+      }
+      if (payload?.lastPushedAt !== undefined) {
+        sets.push('last_pushed_at = ?')
+        binds.push(payload.lastPushedAt)
+      }
+      if (payload?.needsReconcile !== undefined) {
+        sets.push('needs_reconcile = ?')
+        binds.push(payload.needsReconcile ? 1 : 0)
+      }
+      if (payload?.ownerUid !== undefined) {
+        sets.push('owner_uid = ?')
+        binds.push(payload.ownerUid)
+      }
+      binds.push('default')
+      sqliteDb.exec({
+        sql: `UPDATE sync_state SET ${sets.join(', ')} WHERE id = ?`,
+        bind: binds,
+      })
+      respond({ id, ok: true, data: { success: true } })
+      return
+    }
+
+    if (type === 'MARK_SNAPSHOT_EXPORTED') {
+      await dbReadyPromise
+      const now = new Date().toISOString()
+      const baseVersion = Number(payload?.baseVersion ?? 0)
+      sqliteDb.exec('BEGIN TRANSACTION;')
+      try {
+        sqliteDb.exec('DELETE FROM outbox_mutations;')
+        sqliteDb.exec({
+          sql: `UPDATE sync_state SET last_pulled_version = ?, last_pushed_at = ?, status = 'synced', last_error = NULL, updated_at = ? WHERE id = 'default'`,
+          bind: [baseVersion, now, now],
+        })
+        sqliteDb.exec('COMMIT;')
+        respond({ id, ok: true, data: { success: true } })
+      }
+      catch (err) {
+        sqliteDb.exec('ROLLBACK;')
+        throw err
+      }
+      return
+    }
+
+    if (type === 'SET_DEVICE_ID') {
+      await dbReadyPromise
+      const newDeviceId = String(payload?.deviceId || '').trim()
+      if (newDeviceId) {
+        tenantMeta = { ...tenantMeta, deviceId: newDeviceId }
+        sqliteDb.exec({
+          sql: `UPDATE farm_settings SET device_id = ? WHERE id = 'default'`,
+          bind: [newDeviceId],
+        })
+      }
+      respond({ id, ok: true, data: { deviceId: tenantMeta.deviceId } })
       return
     }
 

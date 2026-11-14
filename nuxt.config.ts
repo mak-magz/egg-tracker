@@ -7,12 +7,35 @@
 // `swr`/`isr`/`cache` route rules for authenticated pages: the SSR payload holds the session.
 const isProd = process.env.NODE_ENV === 'production'
 
+const connectSrcDirectives = [
+  `'self'`,
+  'https://identitytoolkit.googleapis.com',
+  'https://securetoken.googleapis.com',
+  'https://www.googleapis.com',
+  'https://firebaseinstallations.googleapis.com',
+  ...(isProd ? [] : ['http://127.0.0.1:9099', 'http://localhost:9099', 'ws://localhost:*', 'ws://127.0.0.1:*']),
+].join(' ')
+
+const contentSecurityPolicy = [
+  `default-src 'self'`,
+  `base-uri 'self'`,
+  `form-action 'self'`,
+  `frame-ancestors 'none'`,
+  `object-src 'none'`,
+  `script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'`,
+  `worker-src 'self' blob:`,
+  `child-src 'self' blob:`,
+  `style-src 'self' 'unsafe-inline' https://fonts.googleapis.com`,
+  `font-src 'self' data: https://fonts.gstatic.com`,
+  `img-src 'self' data: blob:`,
+  `connect-src ${connectSrcDirectives}`,
+].join('; ')
+
 const securityHeaders: Record<string, string> = {
-  // Nobody may frame the app (clickjacking: one tap marks a client inactive). The CSP carries
-  // frame-ancestors ONLY for now; a script-src/default-src policy is a follow-up (feature doc).
+  // Nobody may frame the app (clickjacking: one tap marks a client inactive).
   // `nuxt dev` is fine with this: Nuxt DevTools' iframe is served by Vite, outside Nitro.
   'X-Frame-Options': 'DENY',
-  'Content-Security-Policy': `frame-ancestors 'none'`,
+  'Content-Security-Policy': contentSecurityPolicy,
   'X-Content-Type-Options': 'nosniff',
   'Referrer-Policy': 'strict-origin-when-cross-origin',
   // The app uses none of these features; deny them so an injected script cannot either.
@@ -71,9 +94,9 @@ export default defineNuxtConfig({
     '@vite-pwa/nuxt',
   ],
 
-  ssr: false,
+  ssr: true,
 
-  devtools: { enabled: true },
+  devtools: { enabled: process.env.NUXT_DEVTOOLS !== 'false' },
 
   app: {
     head: {
@@ -99,14 +122,51 @@ export default defineNuxtConfig({
     classSuffix: '',
   },
   routeRules: {
+    // Default security headers across all routes
     '/**': { headers: securityHeaders },
+
+    // 1. Client-Side SPA execution for farm operational barnside tools & local SQLite WASM
+    '/farm/**': { ssr: false },
+
+    // 2. Client-Side SPA execution for public auth & onboarding screens
+    '/login': { ssr: false },
+    '/welcome': { ssr: false },
+    '/forgot-password': { ssr: false },
+    '/no-farm': { ssr: false },
+
+    // 3. Dynamic Server-Side Rendered (SSR) Operator Control Plane
+    '/admin/**': {
+      ssr: true,
+      headers: {
+        ...securityHeaders,
+        'X-Robots-Tag': 'noindex, nofollow',
+      },
+    },
+
+    // 4. Backward-compatible 307 temporary redirects for legacy un-namespaced routes
+    '/production': { redirect: { to: '/farm/production', statusCode: 307 } },
+    '/orders': { redirect: { to: '/farm/orders', statusCode: 307 } },
+    '/sales': { redirect: { to: '/farm/sales', statusCode: 307 } },
+    '/sales/**': { redirect: { to: '/farm/sales/**', statusCode: 307 } },
+    '/inventory': { redirect: { to: '/farm/inventory', statusCode: 307 } },
+    '/clients': { redirect: { to: '/farm/clients', statusCode: 307 } },
+    '/settings': { redirect: { to: '/farm/settings', statusCode: 307 } },
   },
 
   compatibilityDate: '2026-09-01',
 
   nitro: {
     prerender: {
-      routes: ['/'],
+      routes: [
+        '/farm',
+        '/farm/production',
+        '/farm/orders',
+        '/farm/sales',
+        '/farm/inventory',
+        '/farm/clients',
+        '/farm/settings',
+      ],
+      crawlLinks: false,
     },
   },
 
@@ -150,7 +210,7 @@ export default defineNuxtConfig({
       background_color: '#ffffff',
       display: 'standalone',
       orientation: 'portrait-primary',
-      start_url: '/',
+      start_url: '/farm',
       scope: '/',
       icons: [
         {
@@ -183,7 +243,8 @@ export default defineNuxtConfig({
       type: 'module',
     },
     workbox: {
-      navigateFallback: '/',
+      navigateFallback: '/farm',
+      navigateFallbackDenylist: [/^\/admin/, /^\/api/],
       globPatterns: ['**/*.{js,css,html,png,svg,ico,woff2,wasm}'],
     },
   },

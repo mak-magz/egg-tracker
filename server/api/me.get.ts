@@ -6,5 +6,10 @@ import { defineAuthedHandler } from '../utils/handlers'
 
 export default defineAuthedHandler(async (event, ctx): Promise<MeResponse> => {
   const membership = await getMembership(event)
-  return { email: ctx.email, farm: membership?.farm ?? null }
+  return {
+    email: ctx.email,
+    farm: membership?.farm ?? null,
+    tier: 'premium',
+    isFree: false,
+  }
 })

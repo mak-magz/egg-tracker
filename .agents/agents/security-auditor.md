@@ -2,7 +2,7 @@
 name: security-auditor
 role: Security Auditor
 description: Security Auditor for the Egg Farm Tracker. Performs deep, whole-system security audits — Firebase auth / session handling, Turso database-per-tenant isolation end-to-end, secrets exposure, input validation, dependency risk. Use periodically, before deploy, before onboarding a second farm (tenant), and after any change to auth, middleware, or the repository layer. Read-only; reports findings.
-model: flash
+model: inherit
 effort: high
 ---
 

@@ -11,6 +11,7 @@ import { normalizeSizeName } from '../../shared/utils/size-name'
 import { hasInvalidClientTextChar, hasVisibleClientTextChar, normalizeClientPhone } from '../../shared/utils/client-name'
 import { computeLineTotal } from '../../shared/utils/price'
 import { toFarmSizes } from '../../core/repositories/tenants'
+import { normalizeMutationForRpc } from '../../core/utils/sync-payload'
 
 export interface RpcErrorShape {
   code: string
@@ -58,6 +59,225 @@ function generateUuid(): string {
     const v = c === 'x' ? r : (r & 0x3) | 0x8
     return v.toString(16)
   })
+}
+
+function sanitizeSyncRejection(m: { id: string, type: string, payload: any, occurredAt: string }, err: any) {
+  const p = m.payload || {}
+  let entityRef = 'unknown'
+
+  if (['create_order', 'update_order', 'set_order_status', 'cancel_order', 'close_order', 'deliver_order'].includes(m.type)) {
+    const id = p.p_order_id || p.orderId || p.id
+    entityRef = id ? `order:${id}` : 'order:unknown'
+  }
+  else if (['create_sale', 'update_sale', 'void_sale'].includes(m.type)) {
+    const id = p.p_sale_id || p.saleId || p.id
+    entityRef = id ? `sale:${id}` : 'sale:unknown'
+  }
+  else if (['log_production', 'replace_production_day', 'delete_production_day'].includes(m.type)) {
+    const day = p.p_day || p.day || p.date || p.producedOn
+    entityRef = day ? `day:${day}` : 'day:unknown'
+  }
+  else if (['add_size', 'rename_size', 'archive_size', 'restore_size', 'reorder_sizes'].includes(m.type)) {
+    const id = p.p_size_id || p.sizeId || p.id
+    entityRef = id ? `size:${id}` : 'size:unknown'
+  }
+  else if (['add_client', 'update_client', 'archive_client', 'restore_client'].includes(m.type)) {
+    const id = p.p_client_id || p.clientId || p.id
+    entityRef = id ? `client:${id}` : 'client:unknown'
+  }
+  else if (m.type === 'update_farm_settings') {
+    entityRef = 'farm:default'
+  }
+
+  const code = String((err as any)?.code || '')
+  let errorCode = 'conflict'
+  let reason: string | null = null
+  let errorMessage = 'Mutation rejected by server validation.'
+
+  if (code === 'TM037') {
+    errorCode = 'conflict'
+    reason = 'insufficient_stock'
+    errorMessage = 'Insufficient stock on hand to fulfill this sale.'
+  }
+  else if (code === 'TM020') {
+    errorCode = 'conflict'
+    reason = 'duplicate_name'
+    errorMessage = 'A client with this name already exists.'
+  }
+  else if (code === 'TM009') {
+    errorCode = 'conflict'
+    reason = 'duplicate_name'
+    errorMessage = 'An egg size with this name already exists.'
+  }
+  else if (code === 'TM022') {
+    errorCode = 'conflict'
+    reason = 'client_changed'
+    errorMessage = 'Client details were updated on another device.'
+  }
+  else if (code === 'TM036') {
+    errorCode = 'conflict'
+    reason = 'sale_changed'
+    errorMessage = 'Sale record was updated on another device.'
+  }
+  else if (code === 'TM043') {
+    errorCode = 'conflict'
+    reason = 'already_voided'
+    errorMessage = 'This sale has already been voided.'
+  }
+  else if (code === 'TM045') {
+    errorCode = 'conflict'
+    reason = 'order_changed'
+    errorMessage = 'Order was updated on another device.'
+  }
+  else if (code === 'TM046') {
+    errorCode = 'conflict'
+    reason = 'order_closed'
+    errorMessage = 'Order has already been closed or cancelled.'
+  }
+  else if (code === 'TM047' || code === 'TM049') {
+    errorCode = 'conflict'
+    reason = 'has_delivery'
+    errorMessage = 'Order cannot be altered because deliveries have been recorded.'
+  }
+  else if (code === 'TM048') {
+    errorCode = 'conflict'
+    reason = 'not_partial'
+    errorMessage = 'Order is not in partially fulfilled state.'
+  }
+  else if (code === 'TM050') {
+    errorCode = 'conflict'
+    reason = 'over_delivery'
+    errorMessage = 'Delivery eggs exceed the remaining quantity on the order.'
+  }
+  else if (code === 'TM051' || code === 'TM053') {
+    errorCode = 'conflict'
+    reason = 'sale_locked'
+    errorMessage = 'Linked delivery or order record is locked.'
+  }
+  else if (code === 'TM052') {
+    errorCode = 'conflict'
+    reason = 'not_on_order'
+    errorMessage = 'Egg size is not part of this order.'
+  }
+  else if (code === 'TM055') {
+    errorCode = 'conflict'
+    reason = 'date_conflict'
+    errorMessage = 'Delivery date cannot be earlier than the order date.'
+  }
+  else if (['TM011', 'TM023', 'TM027', 'TM044'].includes(code)) {
+    errorCode = 'not_found'
+    reason = 'not_found'
+    errorMessage = 'Referenced record was not found.'
+  }
+  else if (code === 'TM001') {
+    errorCode = 'validation_failed'
+    reason = 'invalid_size'
+    errorMessage = 'Selected egg size was not found or has been archived.'
+  }
+  else if (code === 'TM002') {
+    errorCode = 'validation_failed'
+    reason = 'future_date'
+    errorMessage = 'Date cannot be in the future.'
+  }
+  else if (code === 'TM003') {
+    errorCode = 'not_found'
+    reason = 'not_found'
+    errorMessage = 'No production record exists for that date.'
+  }
+  else if (code === 'TM004') {
+    errorCode = 'validation_failed'
+    reason = 'empty_entry'
+    errorMessage = 'Enter at least one tray, loose egg, or reject.'
+  }
+  else if (code === 'TM007') {
+    errorCode = 'validation_failed'
+    reason = 'quantity_out_of_range'
+    errorMessage = 'Entered egg quantity exceeds the allowed limit.'
+  }
+  else if (code === 'TM008') {
+    errorCode = 'validation_failed'
+    reason = 'invalid_name'
+    errorMessage = 'Egg size name is invalid or too long.'
+  }
+  else if (code === 'TM010') {
+    errorCode = 'conflict'
+    reason = 'last_active_size'
+    errorMessage = 'A farm must keep at least one active egg size.'
+  }
+  else if (code === 'TM012') {
+    errorCode = 'conflict'
+    reason = 'archived_size'
+    errorMessage = 'Archived egg size cannot be modified.'
+  }
+  else if (code === 'TM014') {
+    errorCode = 'validation_failed'
+    reason = 'invalid_reorder'
+    errorMessage = 'Egg size sort order list is invalid or incomplete.'
+  }
+  else if (code === 'TM015') {
+    errorCode = 'conflict'
+    reason = 'limit_reached'
+    errorMessage = 'Maximum number of egg sizes for this farm has been reached.'
+  }
+  else if (code === 'TM017') {
+    errorCode = 'validation_failed'
+    reason = 'invalid_name'
+    errorMessage = 'Client name is required and must be within allowed length.'
+  }
+  else if (code === 'TM018') {
+    errorCode = 'validation_failed'
+    reason = 'invalid_phone'
+    errorMessage = 'Client phone number format or length is invalid.'
+  }
+  else if (code === 'TM019') {
+    errorCode = 'validation_failed'
+    reason = 'invalid_price'
+    errorMessage = 'Default price must be above 0 and within valid decimals.'
+  }
+  else if (code === 'TM021') {
+    errorCode = 'conflict'
+    reason = 'limit_reached'
+    errorMessage = 'Maximum number of active clients for this farm has been reached.'
+  }
+  else if (code === 'TM028') {
+    errorCode = 'validation_failed'
+    reason = 'invalid_line_count'
+    errorMessage = 'A sale or order must have between 1 and 20 lines.'
+  }
+  else if (code === 'TM029') {
+    errorCode = 'validation_failed'
+    reason = 'duplicate_size'
+    errorMessage = 'An egg size cannot appear more than once.'
+  }
+  else if (code === 'TM030') {
+    errorCode = 'validation_failed'
+    reason = 'eggs_out_of_range'
+    errorMessage = 'Egg count per line must be between 1 and 100,000.'
+  }
+  else if (code === 'TM031') {
+    errorCode = 'validation_failed'
+    reason = 'invalid_price'
+    errorMessage = 'Price per tray must be above 0 and within valid decimals.'
+  }
+  else if (code === 'TM032') {
+    errorCode = 'validation_failed'
+    reason = 'invalid_client'
+    errorMessage = 'A delivery requires an active client.'
+  }
+  else if (code === 'TM033') {
+    errorCode = 'validation_failed'
+    reason = 'invalid_size'
+    errorMessage = 'Selected egg size on line was not found or has been archived.'
+  }
+  else if (code.startsWith('TM00') || ['TM017', 'TM018', 'TM019', 'TM028', 'TM029', 'TM030', 'TM031', 'TM032', 'TM033'].includes(code)) {
+    errorCode = 'validation_failed'
+    reason = 'validation_failed'
+    errorMessage = 'Input validation failed.'
+  }
+
+  const domainCode = /^TM\d{3}$/.test(code) ? code : undefined
+
+  return { entityRef, errorCode, reason, errorMessage, domainCode }
 }
 
 export function createDrizzleBackedClient(
@@ -376,9 +596,19 @@ export function createDrizzleBackedClient(
 
     if (!withDeliveries) return base
 
-    const deliveries = []
-    for (const s of linkedSales) {
-      const sLines = await drizzleDb.select().from(schema.saleLines).where(eq(schema.saleLines.saleId, s.id))
+    const saleIds = linkedSales.map(s => s.id)
+    const allSaleLines = saleIds.length > 0
+      ? await drizzleDb.select().from(schema.saleLines).where(inArray(schema.saleLines.saleId, saleIds))
+      : []
+    const saleLinesBySale = new Map<string, typeof allSaleLines>()
+    for (const sl of allSaleLines) {
+      const list = saleLinesBySale.get(sl.saleId) ?? []
+      list.push(sl)
+      saleLinesBySale.set(sl.saleId, list)
+    }
+
+    const deliveries = linkedSales.map((s) => {
+      const sLines = [...(saleLinesBySale.get(s.id) ?? [])]
       sLines.sort((a, b) => {
         const za = sizeMap.get(a.sizeId)
         const zb = sizeMap.get(b.sizeId)
@@ -386,16 +616,102 @@ export function createDrizzleBackedClient(
         if ((za?.name ?? '') !== (zb?.name ?? '')) return (za?.name ?? '') < (zb?.name ?? '') ? -1 : 1
         return a.sizeId < b.sizeId ? -1 : 1
       })
-      deliveries.push({
+      return {
         saleId: s.id,
         saleNumber: s.saleNumber,
         deliveredDate: s.saleDate,
         voidedAt: s.voidedAt ? s.voidedAt.slice(0, 10) : null,
         lines: sLines.map(sl => ({ sizeId: sl.sizeId, eggs: sl.eggs })),
-      })
-    }
+      }
+    })
 
     return { ...base, deliveries }
+  }
+
+  async function buildOrdersJsonBatch(orderRows: (typeof schema.orders.$inferSelect)[]) {
+    if (orderRows.length === 0) return []
+    const orderIds = orderRows.map(o => o.id)
+    const allSizes = await drizzleDb.select().from(schema.sizes)
+    const sizeMap = new Map(allSizes.map(z => [z.id, z]))
+    const allOrderLines = await drizzleDb.select().from(schema.orderLines).where(inArray(schema.orderLines.orderId, orderIds))
+    const allLinkedSales = await drizzleDb.select().from(schema.sales).where(inArray(schema.sales.orderId, orderIds))
+    const nonVoidSaleIds = allLinkedSales.filter(s => s.voidedAt === null).map(s => s.id)
+    const allNonVoidSaleLines = nonVoidSaleIds.length > 0
+      ? await drizzleDb.select().from(schema.saleLines).where(inArray(schema.saleLines.saleId, nonVoidSaleIds))
+      : []
+
+    const orderIdBySaleId = new Map(allLinkedSales.map(s => [s.id, s.orderId!]))
+    const deliveredByOrder = new Map<string, Map<string, number>>()
+    for (const sl of allNonVoidSaleLines) {
+      const oid = orderIdBySaleId.get(sl.saleId)
+      if (!oid) continue
+      let m = deliveredByOrder.get(oid)
+      if (!m) {
+        m = new Map<string, number>()
+        deliveredByOrder.set(oid, m)
+      }
+      m.set(sl.sizeId, (m.get(sl.sizeId) ?? 0) + sl.eggs)
+    }
+
+    const linesByOrder = new Map<string, typeof allOrderLines>()
+    for (const ol of allOrderLines) {
+      const list = linesByOrder.get(ol.orderId) ?? []
+      list.push(ol)
+      linesByOrder.set(ol.orderId, list)
+    }
+
+    const salesByOrder = new Map<string, typeof allLinkedSales>()
+    for (const s of allLinkedSales) {
+      if (!s.orderId) continue
+      const list = salesByOrder.get(s.orderId) ?? []
+      list.push(s)
+      salesByOrder.set(s.orderId, list)
+    }
+
+    return orderRows.map((o) => {
+      const lines = [...(linesByOrder.get(o.id) ?? [])]
+      const delivered = deliveredByOrder.get(o.id) ?? new Map<string, number>()
+      lines.sort((a, b) => {
+        const za = sizeMap.get(a.sizeId)
+        const zb = sizeMap.get(b.sizeId)
+        if ((za?.sortOrder ?? 0) !== (zb?.sortOrder ?? 0)) return (za?.sortOrder ?? 0) - (zb?.sortOrder ?? 0)
+        if ((za?.name ?? '') !== (zb?.name ?? '')) return (za?.name ?? '') < (zb?.name ?? '') ? -1 : 1
+        return a.sizeId < b.sizeId ? -1 : 1
+      })
+      const linkedSales = salesByOrder.get(o.id) ?? []
+      const deliveryCount = linkedSales.filter(s => s.voidedAt === null).length
+      const voidedDeliveryCount = linkedSales.filter(s => s.voidedAt !== null).length
+      const orderTotal = Math.round(lines.reduce((acc, l) => acc + l.lineTotal, 0) * 100) / 100
+      const isClosed = o.status === 'cancelled' || o.status === 'fulfilled' || o.closedShortAt !== null
+
+      return {
+        id: o.id,
+        orderNumber: o.orderNumber,
+        clientId: o.clientId,
+        orderDate: o.orderDate,
+        wantedBy: o.wantedBy,
+        status: o.status,
+        closedShortAt: o.closedShortAt ? o.closedShortAt.slice(0, 10) : null,
+        cancelledAt: o.cancelledAt ? o.cancelledAt.slice(0, 10) : null,
+        convertedFromSaleNumber: o.convertedFromSaleNumber,
+        lines: lines.map((l) => {
+          const deliv = delivered.get(l.sizeId) ?? 0
+          return {
+            sizeId: l.sizeId,
+            orderedEggs: l.eggs,
+            deliveredEggs: deliv,
+            remainingEggs: isClosed ? 0 : Math.max(l.eggs - deliv, 0),
+            droppedEggs: l.droppedEggs,
+            pricePerTray: l.pricePerTray,
+            lineTotal: l.lineTotal,
+          }
+        }),
+        orderTotal,
+        deliveryCount,
+        voidedDeliveryCount,
+        version: o.version,
+      }
+    })
   }
 
   async function buildProductionDaysJson(from?: string | null, to?: string | null) {
@@ -504,11 +820,34 @@ export function createDrizzleBackedClient(
             ),
           )
         const owedMap = new Map<string, number>()
-        for (const o of openOrders) {
-          const oLines = await drizzleDb.select().from(schema.orderLines).where(eq(schema.orderLines.orderId, o.id))
-          const deliv = await getOrderDeliveredEggs(o.id)
-          for (const l of oLines) {
-            const rem = Math.max(l.eggs - (deliv.get(l.sizeId) ?? 0), 0)
+        if (openOrders.length > 0) {
+          const openOrderIds = openOrders.map(o => o.id)
+          const allOrderLines = await drizzleDb.select().from(schema.orderLines).where(inArray(schema.orderLines.orderId, openOrderIds))
+          const nonVoidLinkedSales = await drizzleDb
+            .select({ id: schema.sales.id, orderId: schema.sales.orderId })
+            .from(schema.sales)
+            .where(and(inArray(schema.sales.orderId, openOrderIds), isNull(schema.sales.voidedAt)))
+          const nonVoidSaleIds = nonVoidLinkedSales.map(s => s.id)
+          const orderBySale = new Map(nonVoidLinkedSales.map(s => [s.id, s.orderId!]))
+          const delivByOrder = new Map<string, Map<string, number>>()
+
+          if (nonVoidSaleIds.length > 0) {
+            const saleLines = await drizzleDb.select().from(schema.saleLines).where(inArray(schema.saleLines.saleId, nonVoidSaleIds))
+            for (const sl of saleLines) {
+              const oid = orderBySale.get(sl.saleId)
+              if (!oid) continue
+              let m = delivByOrder.get(oid)
+              if (!m) {
+                m = new Map<string, number>()
+                delivByOrder.set(oid, m)
+              }
+              m.set(sl.sizeId, (m.get(sl.sizeId) ?? 0) + sl.eggs)
+            }
+          }
+
+          for (const l of allOrderLines) {
+            const deliv = delivByOrder.get(l.orderId)?.get(l.sizeId) ?? 0
+            const rem = Math.max(l.eggs - deliv, 0)
             owedMap.set(l.sizeId, (owedMap.get(l.sizeId) ?? 0) + rem)
           }
         }
@@ -693,7 +1032,7 @@ export function createDrizzleBackedClient(
         let colorSlot = 0
         while (usedSlots.has(colorSlot)) colorSlot++
         const maxSort = allSizes.reduce((m, s) => Math.max(m, s.sortOrder), -1)
-        const id = generateUuid()
+        const id = (args.p_size_id as string) || generateUuid()
         const now = new Date().toISOString()
         const defaultPrice = args.p_default_price !== undefined ? (args.p_default_price !== null ? Number(args.p_default_price) : null) : null
 
@@ -831,7 +1170,7 @@ export function createDrizzleBackedClient(
           }
           if (allClients.length >= 500) throw new TmError('TM021', 'too many clients')
 
-          const id = generateUuid()
+          const id = (args.p_client_id as string) || generateUuid()
           const now = new Date().toISOString()
           await drizzleDb.insert(schema.clients).values({ id, name, phone, defaultPrice: price, archivedAt: null, version: 1, createdAt: now, updatedAt: now })
           await drizzleDb.insert(schema.clientSubmissions).values({ id: subId, clientId: id, payloadHash: hash, createdAt: now, updatedAt: now })
@@ -911,7 +1250,7 @@ export function createDrizzleBackedClient(
 
         const saleNumber = await getNextSaleNumber(explicitSaleNumber)
         const now = new Date().toISOString()
-        const saleId = generateUuid()
+        const saleId = (args.p_sale_id as string) || generateUuid()
 
         await drizzleDb.insert(schema.sales).values({ id: saleId, saleNumber, clientId, type, saleDate, orderId: null, version: 1, voidedAt: null, createdAt: now, updatedAt: now })
         for (let i = 0; i < sizeIds.length; i++) {
@@ -1085,7 +1424,7 @@ export function createDrizzleBackedClient(
 
         const orderNumber = await getNextOrderNumber(explicitOrderNumber)
         const now = new Date().toISOString()
-        const orderId = generateUuid()
+        const orderId = (args.p_order_id as string) || generateUuid()
 
         await drizzleDb.insert(schema.orders).values({
           id: orderId,
@@ -1272,7 +1611,7 @@ export function createDrizzleBackedClient(
 
         const saleNumber = await getNextSaleNumber(explicitSaleNumber)
         const now = new Date().toISOString()
-        const saleId = generateUuid()
+        const saleId = (args.p_sale_id as string) || generateUuid()
 
         await drizzleDb.insert(schema.sales).values({ id: saleId, saleNumber, clientId: cur.clientId, type: 'delivery', saleDate: deliveredDate, orderId, version: 1, voidedAt: null, createdAt: now, updatedAt: now })
         for (let i = 0; i < sizeIds.length; i++) {
@@ -1336,12 +1675,124 @@ export function createDrizzleBackedClient(
         }
 
         const paged = view === 'open' ? matched : matched.slice(offset, offset + limit)
-        const orders = []
-        for (const o of paged) {
-          const built = await buildOrderJson(o.id, false)
-          if (built) orders.push(built)
-        }
+        const orders = await buildOrdersJsonBatch(paged)
         return { hasAny, total: matched.length, orders }
+      }
+
+      case 'sync_export_snapshot': {
+        const [farmRow] = await drizzleDb.select().from(schema.farmSettings).where(eq(schema.farmSettings.id, 'default'))
+        const farmSettings = {
+          name: farmRow?.farmName ?? tenantMeta.name,
+          eggsPerTray: farmRow?.eggsPerTray ? Number(farmRow.eggsPerTray) : tenantMeta.eggsPerTray,
+          currency: farmRow?.currency ?? tenantMeta.currency,
+        }
+
+        const sizeRows = await drizzleDb.select().from(schema.sizes).orderBy(asc(schema.sizes.sortOrder))
+        const sizes = sizeRows.map(s => ({
+          id: s.id,
+          name: s.name,
+          sortOrder: s.sortOrder,
+          colorSlot: s.colorSlot,
+          archivedAt: s.archivedAt ?? null,
+          defaultPrice: s.defaultPrice !== null && s.defaultPrice !== undefined ? Number(s.defaultPrice) : null,
+        }))
+
+        const clientRows = await drizzleDb.select().from(schema.clients).orderBy(asc(schema.clients.name))
+        const clients = clientRows.map(c => ({
+          id: c.id,
+          name: c.name,
+          phone: c.phone ?? null,
+          defaultPrice: c.defaultPrice !== null && c.defaultPrice !== undefined ? Number(c.defaultPrice) : null,
+          archivedAt: c.archivedAt ?? null,
+          version: c.version ?? 1,
+        }))
+
+        const prodRows = await drizzleDb.select().from(schema.production).orderBy(desc(schema.production.producedOn))
+        const production = prodRows.map(p => ({
+          id: p.id,
+          producedOn: p.producedOn,
+          sizeId: p.sizeId ?? null,
+          quality: p.quality as 'good' | 'reject',
+          eggs: p.eggs,
+        }))
+
+        const prodSubRows = await drizzleDb.select().from(schema.productionSubmissions)
+        const productionSubmissions = prodSubRows.map(ps => ({
+          id: ps.id,
+          producedOn: ps.producedOn,
+          hadBefore: Boolean(ps.hadBefore),
+        }))
+
+        const orderRows = await drizzleDb.select().from(schema.orders).orderBy(desc(schema.orders.orderDate))
+        const orders = orderRows.map(o => ({
+          id: o.id,
+          orderNumber: o.orderNumber,
+          clientId: o.clientId,
+          orderDate: o.orderDate,
+          wantedBy: o.wantedBy ?? null,
+          status: o.status,
+          cancelledAt: o.cancelledAt ?? null,
+          closedShortAt: o.closedShortAt ?? null,
+          convertedFromSaleNumber: o.convertedFromSaleNumber ?? null,
+          version: o.version ?? 1,
+        }))
+
+        const orderLineRows = await drizzleDb.select().from(schema.orderLines)
+        const orderLines = orderLineRows.map(ol => ({
+          orderId: ol.orderId,
+          sizeId: ol.sizeId,
+          eggs: ol.eggs,
+          pricePerTray: Number(ol.pricePerTray),
+          lineTotal: Number(ol.lineTotal),
+          droppedEggs: ol.droppedEggs ?? 0,
+        }))
+
+        const saleRows = await drizzleDb.select().from(schema.sales).orderBy(desc(schema.sales.saleDate))
+        const sales = saleRows.map(s => ({
+          id: s.id,
+          saleNumber: s.saleNumber,
+          clientId: s.clientId ?? null,
+          type: s.type as 'delivery' | 'on_site',
+          saleDate: s.saleDate,
+          orderId: s.orderId ?? null,
+          orderNumber: s.orderNumber ?? null,
+          version: s.version ?? 1,
+          voidedAt: s.voidedAt ?? null,
+        }))
+
+        const saleLineRows = await drizzleDb.select().from(schema.saleLines)
+        const saleLines = saleLineRows.map(sl => ({
+          saleId: sl.saleId,
+          sizeId: sl.sizeId,
+          eggs: sl.eggs,
+          pricePerTray: Number(sl.pricePerTray),
+          lineTotal: Number(sl.lineTotal),
+        }))
+
+        const counterRows = await drizzleDb.select().from(schema.localCounters)
+        const localCounters = counterRows.map(lc => ({
+          id: lc.id,
+          nextNumber: lc.nextNumber,
+        }))
+
+        const [lastLog] = await drizzleDb.select().from(schema.changeLog).orderBy(desc(schema.changeLog.version)).limit(1)
+        const latestVersion = lastLog?.version ?? 0
+
+        const snapshot = {
+          deviceId: farmRow?.deviceId || tenantMeta.deviceId || 'D1',
+          farmSettings,
+          sizes,
+          clients,
+          production,
+          productionSubmissions,
+          orders,
+          orderLines,
+          sales,
+          saleLines,
+          localCounters,
+        }
+
+        return { snapshot, latestVersion }
       }
 
       case 'sync_snapshot': {
@@ -1349,20 +1800,85 @@ export function createDrizzleBackedClient(
         const now = new Date().toISOString()
         const deviceId = snap.deviceId ?? 'D1'
 
+        // 0. Update farmSettings if provided
+        if (snap.farmSettings) {
+          const fs = snap.farmSettings
+          const farmName = fs.name ?? fs.farmName ?? fs.farm_name
+          const eggsPerTray = fs.eggsPerTray ?? fs.eggs_per_tray
+          const currency = fs.currency
+          await drizzleDb.insert(schema.farmSettings).values({
+            id: 'default',
+            farmName: farmName ?? tenantMeta.name,
+            eggsPerTray: eggsPerTray ?? tenantMeta.eggsPerTray,
+            currency: currency ?? tenantMeta.currency,
+            deviceId,
+            onboardingCompleted: true,
+            createdAt: now,
+            updatedAt: now,
+          }).onConflictDoUpdate({
+            target: schema.farmSettings.id,
+            set: {
+              ...(farmName ? { farmName } : {}),
+              ...(eggsPerTray !== undefined ? { eggsPerTray: Number(eggsPerTray) } : {}),
+              ...(currency ? { currency } : {}),
+              updatedAt: now,
+            },
+          })
+          if (farmName) tenantMeta.name = farmName
+          if (eggsPerTray !== undefined) tenantMeta.eggsPerTray = Number(eggsPerTray)
+          if (currency) tenantMeta.currency = currency
+        }
+
         // 1. Bulk insert sizes
         if (Array.isArray(snap.sizes) && snap.sizes.length > 0) {
+          const [prodCount] = await drizzleDb.select({ count: sql`COUNT(*)` }).from(schema.production)
+          const [saleCount] = await drizzleDb.select({ count: sql`COUNT(*)` }).from(schema.saleLines)
+          const [orderCount] = await drizzleDb.select({ count: sql`COUNT(*)` }).from(schema.orderLines)
+          if (Number(prodCount?.count ?? 0) === 0 && Number(saleCount?.count ?? 0) === 0 && Number(orderCount?.count ?? 0) === 0) {
+            await drizzleDb.delete(schema.sizeSubmissions)
+            await drizzleDb.delete(schema.sizes)
+          }
+
+          const existingSizes = await drizzleDb.select().from(schema.sizes)
+          const usedSlots = new Set<number>(existingSizes.map(es => es.colorSlot))
+
           for (const s of snap.sizes) {
+            const existingById = existingSizes.find(es => es.id === s.id)
+            const defaultPrice = s.defaultPrice !== undefined && s.defaultPrice !== null ? Number(s.defaultPrice) : null
+            let targetSlot = Number(s.colorSlot ?? 0)
+
+            const slotOwner = existingSizes.find(es => es.colorSlot === targetSlot && es.id !== s.id)
+            if (slotOwner) {
+              if (existingById) {
+                targetSlot = existingById.colorSlot
+              }
+              else {
+                let candidate = 0
+                while (usedSlots.has(candidate)) candidate++
+                targetSlot = candidate
+              }
+            }
+            usedSlots.add(targetSlot)
+
             await drizzleDb.insert(schema.sizes).values({
               id: s.id,
               name: s.name,
               sortOrder: s.sortOrder,
-              colorSlot: s.colorSlot,
+              colorSlot: targetSlot,
               archivedAt: s.archivedAt ?? null,
+              defaultPrice,
               createdAt: now,
               updatedAt: now,
             }).onConflictDoUpdate({
               target: schema.sizes.id,
-              set: { name: s.name, sortOrder: s.sortOrder, colorSlot: s.colorSlot, archivedAt: s.archivedAt ?? null, updatedAt: now },
+              set: {
+                name: s.name,
+                sortOrder: s.sortOrder,
+                colorSlot: targetSlot,
+                archivedAt: s.archivedAt ?? null,
+                defaultPrice,
+                updatedAt: now,
+              },
             })
           }
         }
@@ -1386,21 +1902,56 @@ export function createDrizzleBackedClient(
           }
         }
 
-        // 3. Bulk insert production
-        if (Array.isArray(snap.production) && snap.production.length > 0) {
+        // 3. Bulk insert production & productionSubmissions (replace existing baseline cleanly)
+        if (Array.isArray(snap.production)) {
+          await drizzleDb.delete(schema.productionSubmissions)
+          await drizzleDb.delete(schema.production)
+
+          // Deduplicate/aggregate by (producedOn, sizeId, quality) to prevent duplicate rows
+          const prodMap = new Map<string, { id: string, producedOn: string, sizeId: string | null, quality: 'good' | 'reject', eggs: number }>()
           for (const p of snap.production) {
+            const sizeId = p.quality === 'reject' ? null : (p.sizeId ?? null)
+            const key = `${p.producedOn}|${sizeId ?? 'REJECT'}|${p.quality}`
+            const existing = prodMap.get(key)
+            if (existing) {
+              existing.eggs = p.eggs
+            }
+            else {
+              prodMap.set(key, {
+                id: p.id,
+                producedOn: p.producedOn,
+                sizeId,
+                quality: p.quality,
+                eggs: p.eggs,
+              })
+            }
+          }
+
+          for (const p of prodMap.values()) {
             await drizzleDb.insert(schema.production).values({
               id: p.id,
               producedOn: p.producedOn,
-              sizeId: p.sizeId ?? null,
+              sizeId: p.sizeId,
               quality: p.quality,
               eggs: p.eggs,
               createdAt: now,
               updatedAt: now,
             }).onConflictDoUpdate({
               target: schema.production.id,
-              set: { producedOn: p.producedOn, sizeId: p.sizeId ?? null, quality: p.quality, eggs: p.eggs, updatedAt: now },
+              set: { producedOn: p.producedOn, sizeId: p.sizeId, quality: p.quality, eggs: p.eggs, updatedAt: now },
             })
+          }
+        }
+
+        if (Array.isArray(snap.productionSubmissions) && snap.productionSubmissions.length > 0) {
+          for (const ps of snap.productionSubmissions) {
+            await drizzleDb.insert(schema.productionSubmissions).values({
+              id: ps.id,
+              producedOn: ps.producedOn,
+              hadBefore: Boolean(ps.hadBefore),
+              createdAt: now,
+              updatedAt: now,
+            }).onConflictDoNothing()
           }
         }
 
@@ -1482,7 +2033,22 @@ export function createDrizzleBackedClient(
           }
         }
 
-        // 6. Record snapshot baseline in change_log
+        // 6. Bulk insert / update localCounters
+        if (Array.isArray(snap.localCounters) && snap.localCounters.length > 0) {
+          for (const lc of snap.localCounters) {
+            await drizzleDb.insert(schema.localCounters).values({
+              id: lc.id,
+              nextNumber: lc.nextNumber,
+              updatedAt: now,
+            }).onConflictDoUpdate({
+              target: schema.localCounters.id,
+              set: { nextNumber: lc.nextNumber, updatedAt: now },
+            })
+          }
+        }
+
+        // 7. Record snapshot baseline in change_log (clear any stale pre-snapshot mutations first)
+        await drizzleDb.delete(schema.changeLog)
         await drizzleDb.insert(schema.changeLog).values({
           entityType: 'snapshot',
           entityId: tenantMeta.tenantId,
@@ -1495,6 +2061,23 @@ export function createDrizzleBackedClient(
         const [lastLog] = await drizzleDb.select().from(schema.changeLog).orderBy(desc(schema.changeLog.version)).limit(1)
         const baseVersion = lastLog?.version ?? 1
 
+        // 7. Update sync_state baseline
+        await drizzleDb.insert(schema.syncState).values({
+          id: 'default',
+          tenantId: tenantMeta.tenantId,
+          lastPulledVersion: baseVersion,
+          status: 'synced',
+          updatedAt: now,
+        }).onConflictDoUpdate({
+          target: schema.syncState.id,
+          set: {
+            tenantId: tenantMeta.tenantId,
+            lastPulledVersion: baseVersion,
+            status: 'synced',
+            updatedAt: now,
+          },
+        })
+
         return {
           success: true,
           baseVersion,
@@ -1505,7 +2088,7 @@ export function createDrizzleBackedClient(
       case 'sync_push': {
         const deviceId = args.p_device_id as string
         const mutations = (args.p_mutations as any[]) ?? []
-        const results: Array<{ id: string, status: 'applied' | 'conflict_lww' | 'rejected', version: number, error?: string }> = []
+        const results: Array<{ id: string, status: 'applied' | 'conflict_lww' | 'rejected', version: number, error?: string, code?: string, reason?: string | null }> = []
         const [latestLog] = await drizzleDb.select().from(schema.changeLog).orderBy(desc(schema.changeLog.version)).limit(1)
         let curVersion = latestLog?.version ?? 0
 
@@ -1514,7 +2097,7 @@ export function createDrizzleBackedClient(
             // LWW check for Intent Edits
             if (['update_client', 'update_order', 'rename_size'].includes(m.type)) {
               if (m.type === 'update_client') {
-                const clientId = m.payload.clientId as string
+                const clientId = (m.payload.clientId || m.payload.id) as string
                 const [existing] = await drizzleDb.select().from(schema.clients).where(eq(schema.clients.id, clientId))
                 if (existing && existing.updatedAt > m.occurredAt) {
                   results.push({ id: m.id, status: 'conflict_lww', version: curVersion })
@@ -1522,8 +2105,16 @@ export function createDrizzleBackedClient(
                 }
               }
               else if (m.type === 'update_order') {
-                const orderId = m.payload.orderId as string
+                const orderId = (m.payload.orderId || m.payload.id) as string
                 const [existing] = await drizzleDb.select().from(schema.orders).where(eq(schema.orders.id, orderId))
+                if (existing && existing.updatedAt > m.occurredAt) {
+                  results.push({ id: m.id, status: 'conflict_lww', version: curVersion })
+                  continue
+                }
+              }
+              else if (m.type === 'rename_size') {
+                const sizeId = (m.payload.sizeId || m.payload.id) as string
+                const [existing] = await drizzleDb.select().from(schema.sizes).where(eq(schema.sizes.id, sizeId))
                 if (existing && existing.updatedAt > m.occurredAt) {
                   results.push({ id: m.id, status: 'conflict_lww', version: curVersion })
                   continue
@@ -1531,26 +2122,134 @@ export function createDrizzleBackedClient(
               }
             }
 
-            // Execute domain RPC (confirmShortfall = true for Additive Facts)
-            const rpcArgs = { ...m.payload, p_confirm_shortfall: true }
-            await dispatchRpc(m.type, rpcArgs)
+            // Execute domain RPC with normalized parameters
+            const rpcArgs = normalizeMutationForRpc(m.type, m.payload)
+            const rpcResult = await dispatchRpc(m.type, rpcArgs) as any
 
-            // Append to change_log
+            // Determine canonical domain entityType, entityId, action, and payload
+            let entityType = 'farm_settings'
+            let entityId = 'default'
+            let action: 'insert' | 'update' | 'delete' = 'update'
+            let logPayload: Record<string, unknown> = { op: m.type }
+
+            if (m.type === 'update_farm_settings') {
+              entityType = 'farm_settings'
+              entityId = 'default'
+              action = 'update'
+              logPayload = { op: m.type, ...rpcResult }
+            }
+            else if (['add_size', 'rename_size', 'archive_size', 'restore_size', 'reorder_sizes'].includes(m.type)) {
+              entityType = 'sizes'
+              action = m.type === 'add_size' ? 'insert' : 'update'
+              if (m.type === 'reorder_sizes') {
+                entityId = 'reorder'
+                const activeSizes = await drizzleDb
+                  .select()
+                  .from(schema.sizes)
+                  .where(isNull(schema.sizes.archivedAt))
+                  .orderBy(asc(schema.sizes.sortOrder))
+                logPayload = {
+                  op: m.type,
+                  sizeIds: rpcArgs.p_size_ids,
+                  orders: activeSizes.map(s => ({ id: s.id, sortOrder: s.sortOrder })),
+                }
+              }
+              else {
+                const sizeId = rpcResult?.changedId || rpcArgs.p_size_id || m.payload?.id
+                entityId = sizeId
+                const [sRow] = await drizzleDb.select().from(schema.sizes).where(eq(schema.sizes.id, sizeId))
+                logPayload = { op: m.type, ...(sRow ?? { id: sizeId }) }
+              }
+            }
+            else if (['log_production', 'replace_production_day', 'delete_production_day'].includes(m.type)) {
+              entityType = 'production'
+              if (m.type === 'delete_production_day') {
+                entityId = (rpcArgs.p_day as string) || (m.payload?.day as string)
+                action = 'delete'
+                logPayload = { op: m.type, date: entityId }
+              }
+              else {
+                entityId = rpcResult?.day?.date || (rpcArgs.p_day as string)
+                action = m.type === 'log_production' ? 'insert' : 'update'
+                logPayload = { op: m.type, ...(rpcResult?.day ?? { date: entityId }) }
+              }
+            }
+            else if (['add_client', 'update_client', 'archive_client', 'restore_client'].includes(m.type)) {
+              entityType = 'clients'
+              entityId = rpcResult?.clientId || rpcArgs.p_client_id || m.payload?.id
+              action = m.type === 'add_client' ? 'insert' : 'update'
+              const [cRow] = await drizzleDb.select().from(schema.clients).where(eq(schema.clients.id, entityId))
+              logPayload = { op: m.type, ...(cRow ?? { id: entityId }) }
+            }
+            else if (['create_sale', 'update_sale', 'void_sale'].includes(m.type)) {
+              entityType = 'sales'
+              entityId = rpcResult?.sale?.id || rpcArgs.p_sale_id || m.payload?.id
+              action = m.type === 'create_sale' ? 'insert' : 'update'
+              logPayload = { op: m.type, ...(rpcResult?.sale ?? {}), order: rpcResult?.order ?? null }
+            }
+            else if (['create_order', 'update_order', 'set_order_status', 'cancel_order', 'close_order', 'deliver_order'].includes(m.type)) {
+              entityType = 'orders'
+              entityId = rpcResult?.order?.id || rpcArgs.p_order_id || m.payload?.id
+              action = m.type === 'create_order' ? 'insert' : 'update'
+              logPayload = { op: m.type, ...(rpcResult?.order ?? {}), sale: rpcResult?.sale ?? null }
+            }
+
+            // Append canonical entry to change_log
             await drizzleDb.insert(schema.changeLog).values({
-              entityType: m.type,
-              entityId: m.id,
-              action: m.type.startsWith('delete') ? 'delete' : m.type.startsWith('update') ? 'update' : 'insert',
+              entityType,
+              entityId,
+              action,
               deviceId,
               occurredAt: m.occurredAt,
-              data: JSON.stringify(m.payload),
+              data: JSON.stringify(logPayload),
             })
 
             const [newLog] = await drizzleDb.select().from(schema.changeLog).orderBy(desc(schema.changeLog.version)).limit(1)
             curVersion = newLog?.version ?? (curVersion + 1)
             results.push({ id: m.id, status: 'applied', version: curVersion })
+
+            // Mark any prior unresolved sync_rejections row for this retried mutation as resolved
+            try {
+              await drizzleDb
+                .update(schema.syncRejections)
+                .set({ resolvedAt: new Date().toISOString() })
+                .where(and(eq(schema.syncRejections.mutationId, m.id), isNull(schema.syncRejections.resolvedAt)))
+            }
+            catch {
+              // sync_rejections table may not exist in pre-v3 SQLite databases
+            }
           }
           catch (err: any) {
-            results.push({ id: m.id, status: 'rejected', version: curVersion, error: err?.message ?? 'Mutation rejected' })
+            const sanitized = sanitizeSyncRejection(m, err)
+            const now = new Date().toISOString()
+
+            try {
+              await drizzleDb.insert(schema.syncRejections).values({
+                id: generateUuid(),
+                mutationId: m.id,
+                deviceId,
+                mutationType: m.type,
+                entityRef: sanitized.entityRef,
+                errorCode: sanitized.errorCode,
+                reason: sanitized.reason,
+                errorMessage: sanitized.errorMessage,
+                occurredAt: m.occurredAt,
+                rejectedAt: now,
+                resolvedAt: null,
+              })
+            }
+            catch {
+              // sync_rejections table may not exist in pre-v3 SQLite databases
+            }
+
+            results.push({
+              id: m.id,
+              status: 'rejected',
+              version: curVersion,
+              error: sanitized.errorMessage,
+              ...(sanitized.domainCode ? { code: sanitized.domainCode } : {}),
+              ...(sanitized.reason ? { reason: sanitized.reason } : {}),
+            })
           }
         }
 

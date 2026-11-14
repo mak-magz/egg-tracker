@@ -14,13 +14,14 @@ import type { Auth } from 'firebase-admin/auth'
 import * as controlSchema from '../db/schema/control'
 import { getControlDb, initControlDbSchema, initTenantDbSchema } from '../db/turso'
 import {
+  adminOutcomeMessage,
   USAGE,
   isLocalTarget,
   outcomeMessage,
   parseProvisionArgs,
   validatePassword,
 } from './provision-args'
-import type { ProvisionCommand, ProvisionOutcome, ResetPasswordCommand } from './provision-args'
+import type { AdminCommand, ProvisionCommand, ProvisionOutcome, ResetPasswordCommand } from './provision-args'
 
 class CliError extends Error { }
 
@@ -124,6 +125,19 @@ async function findUserId(adminAuth: Auth, email: string): Promise<string | null
   }
 }
 
+function isPlatformApiToken(token: string): boolean {
+  try {
+    const parts = token.split('.')
+    if (parts.length !== 3 || !parts[1]) return false
+    const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'))
+    if (payload.rid || payload.a) return false
+    return true
+  }
+  catch {
+    return false
+  }
+}
+
 async function createTenantTursoDatabase(tenantId: string): Promise<{ dbUrl: string, dbAuthToken: string }> {
   const tursoApiToken = process.env.TURSO_API_TOKEN?.trim()
   const tursoOrg = process.env.TURSO_ORG?.trim()
@@ -131,6 +145,13 @@ async function createTenantTursoDatabase(tenantId: string): Promise<{ dbUrl: str
 
   if (!tursoApiToken || !tursoOrg) {
     return { dbUrl: `file:local-tenant-${tenantId}.db`, dbAuthToken: '' }
+  }
+
+  if (!isPlatformApiToken(tursoApiToken)) {
+    throw new CliError(
+      'TURSO_API_TOKEN is a database token, not a Turso Platform API token. '
+      + 'Platform API tokens are minted via `turso auth api-tokens mint <name>` or in the Turso Dashboard under Settings > API Tokens.',
+    )
   }
 
   const dbName = `tamago-${tenantId.replace(/[^a-z0-9-]/gi, '').toLowerCase().slice(0, 32)}`
@@ -294,6 +315,104 @@ async function resetPassword(adminAuth: Auth, cmd: ResetPasswordCommand) {
   console.log(`Password updated for ${cmd.email}. All their devices are signed out.`)
 }
 
+async function provisionAdmin(adminAuth: Auth, cmd: AdminCommand) {
+  let userId = await findUserId(adminAuth, cmd.email)
+  let status: 'created' | 'updated' = 'updated'
+
+  if (!userId) {
+    const password = cmd.password ?? await promptNewPassword()
+    try {
+      const user = await adminAuth.createUser({
+        email: cmd.email,
+        password,
+        emailVerified: true,
+      })
+      userId = user.uid
+      status = 'created'
+    }
+    catch (e) {
+      throw new CliError(`Couldn't create the admin account for ${cmd.email}: ${(e as Error).message}`)
+    }
+  }
+  else if (cmd.password) {
+    try {
+      await adminAuth.updateUser(userId, { password: cmd.password, emailVerified: true })
+      await adminAuth.revokeRefreshTokens(userId)
+    }
+    catch (e) {
+      throw new CliError(`Couldn't update admin credentials for ${cmd.email}: ${(e as Error).message}`)
+    }
+  }
+
+  // Set custom claims for defense-in-depth
+  try {
+    await adminAuth.setCustomUserClaims(userId, { admin: true })
+  }
+  catch (e) {
+    console.warn(`[admin] Warning: could not set custom claims: ${(e as Error).message}`)
+  }
+
+  console.log(adminOutcomeMessage(cmd.email, status))
+
+  // Upsert operator in Control DB admins table
+  const controlUrl = process.env.NUXT_TURSO_CONTROL_URL?.trim() || 'file:local-control.db'
+  const controlToken = process.env.NUXT_TURSO_CONTROL_AUTH_TOKEN?.trim() || undefined
+  const rawControlClient = createClient({ url: controlUrl, authToken: controlToken })
+  await initControlDbSchema(rawControlClient)
+
+  const controlDb = getControlDb()
+  const [existingAdmin] = await controlDb
+    .select()
+    .from(controlSchema.admins)
+    .where(eq(controlSchema.admins.userId, userId))
+
+  const now = new Date().toISOString()
+  const normalizedEmail = cmd.email.toLowerCase()
+
+  if (existingAdmin) {
+    await controlDb
+      .update(controlSchema.admins)
+      .set({
+        email: normalizedEmail,
+        role: 'superadmin',
+        isActive: 1,
+        updatedAt: now,
+      })
+      .where(eq(controlSchema.admins.id, existingAdmin.id))
+  }
+  else {
+    await controlDb.insert(controlSchema.admins).values({
+      id: randomUUID(),
+      userId,
+      email: normalizedEmail,
+      role: 'superadmin',
+      isActive: 1,
+      createdAt: now,
+      updatedAt: now,
+    })
+  }
+
+  console.log(`Operator recorded in Control DB admins table (${normalizedEmail}, role: superadmin, active: 1).`)
+
+  // Check ADMIN_EMAILS configuration
+  const adminEmailsRaw = process.env.ADMIN_EMAILS?.trim() || ''
+  const adminEmails = adminEmailsRaw
+    .split(',')
+    .map(e => e.trim().toLowerCase())
+    .filter(Boolean)
+
+  if (!adminEmails.includes(cmd.email.toLowerCase())) {
+    console.log(
+      `\nNotice: "${cmd.email}" is NOT currently in ADMIN_EMAILS in your environment.\n`
+      + `To allow this account to access /admin, add it to your environment variables:\n`
+      + `  ADMIN_EMAILS="${adminEmailsRaw ? `${adminEmailsRaw},${cmd.email}` : cmd.email}"\n`,
+    )
+  }
+  else {
+    console.log(`Verified: "${cmd.email}" is authorized in ADMIN_EMAILS.`)
+  }
+}
+
 async function main(argv: string[]): Promise<number> {
   const parsed = parseProvisionArgs(argv)
   if (!parsed.ok) {
@@ -312,6 +431,7 @@ async function main(argv: string[]): Promise<number> {
   const adminAuth = getFirebaseAdminAuth()
 
   if (cmd.command === 'provision') await provision(adminAuth, cmd)
+  else if (cmd.command === 'admin') await provisionAdmin(adminAuth, cmd)
   else await resetPassword(adminAuth, cmd)
   return 0
 }

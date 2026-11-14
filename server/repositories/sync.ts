@@ -1,20 +1,11 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { z } from 'zod'
+import type { FarmSnapshotPayload } from '../../core/utils/sync-payload'
 import type { DbError, TenantDb } from '../utils/db'
 import { apiError } from '../utils/errors'
+import { syncControlTenantMetadata } from './tenants'
 
-export interface FarmSnapshotPayload {
-  deviceId: string
-  farmSettings?: { name?: string, eggsPerTray?: number, currency?: string }
-  sizes?: Array<{ id: string, name: string, sortOrder: number, colorSlot: number, archivedAt?: string | null }>
-  clients?: Array<{ id: string, name: string, phone?: string | null, defaultPrice?: number | null, archivedAt?: string | null, version?: number }>
-  production?: Array<{ id: string, producedOn: string, sizeId?: string | null, quality: 'good' | 'reject', eggs: number }>
-  orders?: Array<{ id: string, orderNumber: string | number, clientId: string, orderDate: string, wantedBy?: string | null, status: string, cancelledAt?: string | null, closedShortAt?: string | null, convertedFromSaleNumber?: string | number | null, version?: number }>
-  orderLines?: Array<{ orderId: string, sizeId: string, eggs: number, pricePerTray: number, lineTotal: number, droppedEggs?: number }>
-  sales?: Array<{ id: string, saleNumber: string | number, clientId?: string | null, type: 'delivery' | 'on_site', saleDate: string, orderId?: string | null, orderNumber?: string | number | null, version?: number, voidedAt?: string | null }>
-  saleLines?: Array<{ saleId: string, sizeId: string, eggs: number, pricePerTray: number, lineTotal: number }>
-  localCounters?: Array<{ id: string, nextNumber: number }>
-}
+export type { FarmSnapshotPayload }
 
 export interface SyncPushMutation {
   id: string
@@ -46,6 +37,8 @@ const pushResponseSchema = z.object({
     status: z.enum(['applied', 'conflict_lww', 'rejected']),
     version: z.number(),
     error: z.string().optional(),
+    code: z.string().optional(),
+    reason: z.string().nullable().optional(),
   })),
   latestVersion: z.number(),
 })
@@ -77,6 +70,16 @@ export async function applyFarmSnapshot(db: TenantDb, snapshot: FarmSnapshotPayl
   if (error) throw internalError('apply snapshot failed', error)
   const parsed = snapshotResponseSchema.safeParse(data)
   if (!parsed.success) throw internalError('invalid snapshot response')
+
+  if (snapshot.farmSettings) {
+    await syncControlTenantMetadata(db.tenantId, {
+      name: snapshot.farmSettings.name,
+      eggsPerTray: snapshot.farmSettings.eggsPerTray,
+      currency: snapshot.farmSettings.currency,
+      tier: 'premium',
+    })
+  }
+
   return parsed.data
 }
 
@@ -89,6 +92,21 @@ export async function applySyncPush(db: TenantDb, params: SyncPushParams) {
   if (error) throw internalError('sync push failed', error)
   const parsed = pushResponseSchema.safeParse(data)
   if (!parsed.success) throw internalError('invalid push response')
+
+  const appliedIds = new Set(parsed.data.results.filter(r => r.status === 'applied').map(r => r.id))
+  const appliedSettings = [...params.mutations]
+    .reverse()
+    .find(m => m.type === 'update_farm_settings' && appliedIds.has(m.id))
+
+  if (appliedSettings) {
+    const p = appliedSettings.payload as Record<string, any>
+    await syncControlTenantMetadata(db.tenantId, {
+      name: p.p_farm_name ?? p.farmName ?? p.name,
+      eggsPerTray: p.p_eggs_per_tray ?? p.eggsPerTray,
+      currency: p.p_currency ?? p.currency,
+    })
+  }
+
   return parsed.data
 }
 
@@ -103,4 +121,11 @@ export async function pullSyncChanges(db: TenantDb, params: SyncPullParams) {
   const parsed = pullResponseSchema.safeParse(data)
   if (!parsed.success) throw internalError('invalid pull response')
   return parsed.data
+}
+
+export async function exportTenantSnapshot(db: TenantDb): Promise<{ snapshot: FarmSnapshotPayload, latestVersion: number }> {
+  const { data, error } = await db.client.rpc('sync_export_snapshot' as any, {} as any)
+  if (error) throw internalError('export snapshot failed', error)
+  if (!data) throw internalError('invalid export snapshot response')
+  return data as { snapshot: FarmSnapshotPayload, latestVersion: number }
 }

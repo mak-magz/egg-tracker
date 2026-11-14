@@ -423,7 +423,7 @@ watch(saleOpen, (isOpen) => {
 })
 
 async function openSaleInSales(sale: Sale) {
-  await stack.handoffTo({ kind: 'sale', id: sale.id }, '/sales')
+  await stack.handoffTo({ kind: 'sale', id: sale.id }, '/farm/sales')
 }
 
 // ---- Mount ----------------------------------------------------------------------------------------------------

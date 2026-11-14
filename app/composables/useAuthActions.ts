@@ -9,6 +9,8 @@ import {
   updatePassword as firebaseUpdatePassword,
   verifyPasswordResetCode,
 } from 'firebase/auth'
+import { localWorker } from '../local/client'
+import { syncEngine } from '../local/sync'
 import {
   mapAuthError,
   mapResetRequestError,
@@ -47,6 +49,16 @@ export function useAuthActions() {
   const hint = useSessionHint()
   const { ensure, clear } = useMe()
   const router = useRouter()
+  const toast = useToast()
+  const { upgradeToPremium, revertToFree } = useTier()
+  const { requestLocalReplaceConfirmation } = useLocalReplaceGuard()
+  const onboardedCookie = useCookie('tamago_onboarded', {
+    default: () => 'true',
+    maxAge: 60 * 60 * 24 * 400,
+    sameSite: 'lax',
+    path: '/',
+  })
+
   /** True while the user's own sign-out runs, so the session plugin doesn't treat it as "expired". */
   const signingOut = useState('auth:signingOut', () => false)
   const expiring = useState('auth:expiring', () => false)
@@ -66,16 +78,88 @@ export function useAuthActions() {
 
   async function doSignIn(email: string, password: string): Promise<Result<SignInErrorKind>> {
     if (!auth) return { ok: false, kind: 'unknown' }
+    // Pause background sync before authenticating so watch(isPremium) cannot race against snapshot import
+    syncEngine.stop()
     try {
       await signInWithEmailAndPassword(auth, email, password)
     }
     catch (e) {
       return { ok: false, kind: mapAuthError(e) }
     }
+
+    const signedInUid = auth.currentUser?.uid ?? null
+    const token = await auth.currentUser?.getIdToken()
+    if (!token) {
+      await endSessionLocally()
+      return { ok: false, kind: 'unknown' }
+    }
+
+    let replacedLocalData = false
+
+    const hydrateCloud = async () => {
+      const res = await $fetch<{ snapshot: Record<string, unknown>, latestVersion?: number }>('/api/sync/snapshot', {
+        method: 'GET',
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      })
+      if (!res?.snapshot) {
+        throw new Error('Cloud farm snapshot unavailable')
+      }
+      const latestVersion = Number(res.latestVersion ?? 0)
+      await localWorker.importSnapshot(res.snapshot, latestVersion, { tier: 'premium', ownerUid: signedInUid })
+      await localWorker.updateSyncState({
+        status: 'synced',
+        lastError: null,
+        lastPulledVersion: latestVersion,
+        needsReconcile: false,
+        ownerUid: signedInUid,
+      })
+    }
+
+    try {
+      const outcome = await confirmOrHydrateCloudFarm({
+        getSummary: async () => {
+          const summary = await localWorker.getLocalDataSummary()
+          if (summary.hasData && (!summary.ownerUid || summary.ownerUid === signedInUid)) {
+            replacedLocalData = true
+          }
+          return summary
+        },
+        hydrateCloud,
+        requestConfirmation: requestLocalReplaceConfirmation,
+        onCancel: endSessionLocally,
+        targetUid: signedInUid,
+      })
+
+      if (outcome.status === 'cancelled') {
+        return { ok: false, kind: 'cancelled' }
+      }
+    }
+    catch (snapshotErr) {
+      console.warn('[doSignIn] Failed to hydrate cloud snapshot locally:', snapshotErr)
+      await endSessionLocally()
+      return { ok: false, kind: 'network' }
+    }
+
     hint.value = '1'
+    onboardedCookie.value = 'true'
     await syncSessionCookie()
+
+    // Flip tier to premium ONLY AFTER snapshot import & lastPulledVersion are committed
+    upgradeToPremium()
+
     // A failure here isn't a sign-in failure: the middleware/layout show the farm-load state.
     await ensure({ force: true })
+
+    if (replacedLocalData) {
+      toast.add({
+        title: 'Cloud farm loaded successfully',
+        description: 'This device is now synced to your cloud farm.',
+        color: 'success',
+      })
+    }
+
     return { ok: true }
   }
 
@@ -100,15 +184,20 @@ export function useAuthActions() {
     }
     await clearSessionCookie()
     recoveryState.value = null
-    const { revertToFree } = useTier()
     revertToFree()
     clear()
   }
 
-  /** One tap, no confirmation (AC14). A full reload drops in-memory farm data, so Back can't show it. */
+  /** One tap, no confirmation (AC14). Clears local OPFS business data so shared devices never expose prior-user data. */
   async function signOut() {
     signingOut.value = true
     await endSessionLocally()
+    try {
+      await localWorker.clearLocalData()
+    }
+    catch {
+      // Proceed with reload even if OPFS worker reset fails
+    }
     hint.value = null
     // `force`: reloadNuxtApp otherwise skips a reload to the same path within 10 s (loop guard),
     // which silently broke a second sign-out shortly after a first one.

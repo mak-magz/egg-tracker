@@ -37,8 +37,10 @@ export default async function globalSetup() {
   if (run.status !== 0) throw new Error(`provision failed (status ${run.status}): ${run.stderr || run.stdout}`)
 
   mkdirSync('tests/e2e/.auth', { recursive: true })
-  const browser = await chromium.launch({ channel: 'msedge' })
-  const page = await browser.newPage({ baseURL: 'http://localhost:3000' })
+  const browser = await chromium.launch({
+    ...(process.env.BROWSER_CHANNEL ? { channel: process.env.BROWSER_CHANNEL } : process.platform === 'win32' ? { channel: 'msedge' } : {}),
+  })
+  const page = await browser.newPage({ baseURL: `http://localhost:${process.env.E2E_PORT || '3000'}` })
   const diag: string[] = [`[provision] ${run.stdout.trim()}`]
   page.on('console', m => diag.push(`[console.${m.type()}] ${m.text()}`))
   page.on('pageerror', e => diag.push(`[pageerror] ${e.message}`))
@@ -49,7 +51,7 @@ export default async function globalSetup() {
     }
   })
   await page.goto('/login')
-  await page.waitForLoadState('networkidle') // hydrated, so the click is handled by the form and not a native submit
+  await page.getByLabel('Email').waitFor({ state: 'visible' }) // hydrated and interactive
   await page.getByLabel('Email').fill(E2E_EMAIL)
   await page.locator('input[type=password]').fill(E2E_PASSWORD)
   await page.getByRole('button', { name: /^sign in$/i }).click()
@@ -59,6 +61,6 @@ export default async function globalSetup() {
   catch (e) {
     throw new Error(`Sign-in in global-setup did not navigate away from ${page.url()}.\nDiagnostics:\n${diag.join('\n')}`, { cause: e })
   }
-  await page.context().storageState({ path: STATE_PATH })
+  await page.context().storageState({ path: STATE_PATH, indexedDB: true })
   await browser.close()
 }

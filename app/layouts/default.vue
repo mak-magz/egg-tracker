@@ -18,6 +18,13 @@ const route = useRoute()
 const { me, status: meStatus, ensure } = useMe()
 const { signOut } = useAuthActions()
 const { isFree } = useTier()
+const { failedCount, openConflictsModal } = useSync()
+const conflictBannerDismissed = ref(false)
+watch(failedCount, (nextVal, prevVal) => {
+  if (nextVal > (prevVal ?? 0)) {
+    conflictBannerDismissed.value = false
+  }
+})
 const account = computed(() => ({ farmName: me.value?.farm?.name || 'My Farm', email: me.value?.email ?? '' }))
 const farmLoadFailed = computed(() => meStatus.value === 'error')
 const retrying = ref(false)
@@ -84,7 +91,7 @@ const subtitle = computed(() => resolveShellSubtitle({
 const router = useRouter()
 function goBack() {
   if (import.meta.client && window.history.state?.back) router.back()
-  else void navigateTo('/')
+  else void navigateTo('/farm')
 }
 
 // The phone bar's More sheet (feature 05 AC1). Closed by any route change, so a row tap just navigates.
@@ -224,7 +231,7 @@ const navUi = computed(() => ({
                 </span>
               </div>
               <NuxtLink
-                to="/settings"
+                to="/farm/settings"
                 class="shrink-0 font-semibold text-primary hover:underline text-[11px]"
               >
                 {{ isFree ? 'Upgrade' : 'Settings' }}
@@ -306,6 +313,38 @@ const navUi = computed(() => ({
             class="mx-auto w-full max-w-[1120px] md:pb-0"
             :class="hasFab ? 'pb-[calc(4rem+env(safe-area-inset-bottom)+84px)]' : 'pb-[calc(4rem+env(safe-area-inset-bottom))]'"
           >
+            <UAlert
+              v-if="failedCount > 0 && !conflictBannerDismissed"
+              color="warning"
+              variant="subtle"
+              icon="i-lucide-alert-triangle"
+              :title="`${failedCount} offline change${failedCount === 1 ? '' : 's'} couldn't be synced to the cloud.`"
+              description="Your local records remain safe on this phone."
+              class="mb-4"
+            >
+              <template #actions>
+                <div class="flex items-center gap-2 mt-2 sm:mt-0">
+                  <UButton
+                    size="sm"
+                    color="warning"
+                    variant="solid"
+                    class="min-h-11"
+                    @click="openConflictsModal"
+                  >
+                    Review Issues
+                  </UButton>
+                  <UButton
+                    size="sm"
+                    color="neutral"
+                    variant="ghost"
+                    icon="i-lucide-x"
+                    aria-label="Dismiss alert"
+                    class="min-h-11"
+                    @click="conflictBannerDismissed = true"
+                  />
+                </div>
+              </template>
+            </UAlert>
             <slot />
           </div>
         </template>
@@ -324,6 +363,7 @@ const navUi = computed(() => ({
 
       <AppBottomTabs v-model:more-open="moreOpen" />
       <AppMoreSheet v-model:open="moreOpen" />
+      <SyncConflictsModal />
     </UDashboardGroup>
   </div>
 </template>

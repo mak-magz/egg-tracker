@@ -17,7 +17,7 @@ The project rules in `GEMINI.md` and below win over any general advice. Never ex
 
 ## Database rules
 - Drizzle schemas live in `server/db/schema/control.ts` (control DB: tenants, memberships) and `server/db/schema/tenant.ts` (tenant DB: sizes, production, clients, sales, sale_lines, orders, order_lines).
-- Migrations are managed with Drizzle Kit: `bun run db:generate:control` / `bun run db:generate:tenant`, and applied with `bun run db:push:control` / `bun run db:push:tenant`.
+- Migrations are managed with Drizzle Kit: `bun run db:generate:control` / `bun run db:generate:tenant`, and applied with `bun run db:push:control` / `bun run db:push:tenant`. Always create Drizzle migrations with clean, descriptive names using `-- --name <descriptive_name>` (e.g. `bun run db:generate:control -- --name create_control_admins`). Never use default random superhero slug names (e.g. `eminent_terrax`).
 - Every tenant table gets `tenant_id text not null` and timestamps. Each tenant's data lives in an isolated Turso/libSQL database, and queries go through `TenantDb` (`server/utils/db.ts`) which enforces `tenant_id` scoping.
 - Multi-row transactions / atomic operations are handled in repository methods with Drizzle transactions (`db.transaction(...)`).
 - Quantities are integer egg counts `>= 0`. Size, quality, and fulfillment_type are values, not columns. Checks: `size is null` exactly when `quality = 'reject'`.

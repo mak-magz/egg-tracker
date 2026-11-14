@@ -22,6 +22,22 @@ export function useMe() {
   async function load(): Promise<MeEnsureResult> {
     status.value = 'loading'
     try {
+      if (import.meta.server) {
+        me.value = null
+        status.value = 'idle'
+        return 'unauthenticated'
+      }
+
+      // Defense-in-depth: Never query local SQLite worker on admin routes
+      if (typeof window !== 'undefined') {
+        const currentPath = window.location.pathname
+        if (currentPath.startsWith('/admin') || currentPath.startsWith('/login/admin')) {
+          me.value = null
+          status.value = 'idle'
+          return 'unauthenticated'
+        }
+      }
+
       const { isFree, getAuthToken } = useTier()
 
       // Free / Offline mode (Feature 08 AC1):

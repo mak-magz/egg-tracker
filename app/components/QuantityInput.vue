@@ -140,15 +140,15 @@ const parts = computed(() => [
 
 <template>
   <div class="flex flex-col gap-1.5">
-    <div class="flex flex-wrap items-center gap-x-3 gap-y-2">
+    <div class="flex flex-nowrap items-center gap-x-2.5 sm:gap-x-2">
       <div
         v-for="p in parts"
         :key="p.part"
-        class="flex items-center gap-1.5 lg:gap-1"
+        class="flex items-center gap-1"
       >
         <span
           v-if="inlineLabels"
-          class="hidden w-8 shrink-0 text-sm text-dimmed lg:inline"
+          class="hidden w-8 shrink-0 text-sm text-dimmed sm:inline"
           aria-hidden="true"
         >{{ p.inline }}</span>
         <UFormField
@@ -182,7 +182,7 @@ const parts = computed(() => [
               :enterkeyhint="p.enterkeyhint"
               autocomplete="off"
               data-qty-input
-              class="w-15 lg:w-12"
+              class="w-14 sm:w-12"
               :ui="{ base: 'h-11 lg:h-10 px-1 text-center text-base tabular-nums' }"
               @update:model-value="(v: number | null) => setPart(p.part, v)"
               @input="(e: Event) => onTyped(p.part, e)"

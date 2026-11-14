@@ -54,7 +54,7 @@ const isLoading = computed(() => inv.status.value === 'loading' || (inv.status.v
       :body="INVENTORY_COPY.emptyBody"
     >
       <UButton
-        to="/production"
+        to="/farm/production"
         size="xl"
         icon="i-lucide-clipboard"
         :label="INVENTORY_COPY.emptyAction"

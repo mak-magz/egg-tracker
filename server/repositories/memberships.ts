@@ -1,6 +1,6 @@
 import { eq } from 'drizzle-orm'
 import type { FarmSummary } from '../../shared/types/api'
-import { getControlDb, getTenantDrizzleDb } from '../db/turso'
+import { ensureControlDbBootstrapped, ensureTenantDbBootstrapped, getControlDb, getTenantDrizzleDb } from '../db/turso'
 import * as controlSchema from '../db/schema/control'
 import * as tenantSchema from '../db/schema/tenant'
 import { RepositoryError } from '../utils/errors'
@@ -20,6 +20,7 @@ export async function findMembershipWithFarm(
   userId: string,
 ): Promise<MembershipWithFarm | null> {
   try {
+    await ensureControlDbBootstrapped()
     const controlDb = getControlDb()
     const [membership] = await controlDb
       .select()
@@ -36,15 +37,32 @@ export async function findMembershipWithFarm(
     }
 
     const tenantDb = getTenantDrizzleDb(tenant.dbUrl, tenant.dbAuthToken || undefined)
-    const sizes = await tenantDb
-      .select({
-        id: tenantSchema.sizes.id,
-        name: tenantSchema.sizes.name,
-        sort_order: tenantSchema.sizes.sortOrder,
-        color_slot: tenantSchema.sizes.colorSlot,
-        archived_at: tenantSchema.sizes.archivedAt,
-      })
-      .from(tenantSchema.sizes)
+    let sizes
+    try {
+      sizes = await tenantDb
+        .select({
+          id: tenantSchema.sizes.id,
+          name: tenantSchema.sizes.name,
+          sort_order: tenantSchema.sizes.sortOrder,
+          color_slot: tenantSchema.sizes.colorSlot,
+          archived_at: tenantSchema.sizes.archivedAt,
+          default_price: tenantSchema.sizes.defaultPrice,
+        })
+        .from(tenantSchema.sizes)
+    }
+    catch {
+      await ensureTenantDbBootstrapped(tenant.dbUrl, tenant.dbAuthToken || undefined)
+      sizes = await tenantDb
+        .select({
+          id: tenantSchema.sizes.id,
+          name: tenantSchema.sizes.name,
+          sort_order: tenantSchema.sizes.sortOrder,
+          color_slot: tenantSchema.sizes.colorSlot,
+          archived_at: tenantSchema.sizes.archivedAt,
+          default_price: tenantSchema.sizes.defaultPrice,
+        })
+        .from(tenantSchema.sizes)
+    }
 
     return {
       tenantId: tenant.id,

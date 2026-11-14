@@ -40,6 +40,7 @@ export default defineNuxtPlugin((nuxtApp) => {
       || path.startsWith('/api/account/upgrade')
       || path.startsWith('/api/sync/')
       || path.startsWith('/api/__session')
+      || path.startsWith('/api/admin/')
     )
   }
 
@@ -51,8 +52,17 @@ export default defineNuxtPlugin((nuxtApp) => {
   const networkApi = $fetch.create({
     headers,
     retry: 0,
-    async onResponseError({ response }) {
+    async onResponseError({ request, response }) {
       if (import.meta.client && response?.status === 401) {
+        const path = extractPathname(request)
+        if (path.startsWith('/api/admin/')) {
+          return
+        }
+        const router = (nuxtApp as any).$router
+        const routePath = router?.currentRoute?.value?.path || ''
+        if (routePath.startsWith('/admin') || routePath.startsWith('/login/admin')) {
+          return
+        }
         await nuxtApp.runWithContext(() => useAuthActions().handleSessionExpired())
       }
     },
@@ -64,7 +74,18 @@ export default defineNuxtPlugin((nuxtApp) => {
       if (import.meta.client) {
         const path = extractPathname(request)
         if (isDataRoute(path)) {
-          return await localRouter.dispatch(request, opts)
+          const result = await localRouter.dispatch(request, opts)
+          const method = String(opts?.method || 'GET').toUpperCase()
+          if (method !== 'GET') {
+            try {
+              const { syncEngine } = await import('../local/sync')
+              void syncEngine.triggerSync().catch(() => {})
+            }
+            catch {
+              // ignore
+            }
+          }
+          return result
         }
       }
       return await baseFetch(request, opts)
@@ -86,11 +107,16 @@ export default defineNuxtPlugin((nuxtApp) => {
     globalThis.$fetch = apiFetch as any
     nuxtApp.$fetch = apiFetch
 
-    const { ensure, me } = useMe()
-    if (!me.value) {
-      void ensure().catch((err) => {
-        console.warn('[api-plugin] Failed to initialize local farm on startup:', err)
-      })
+    const currentPath = typeof window !== 'undefined' ? window.location.pathname : ''
+    const isAdminPath = currentPath.startsWith('/admin') || currentPath.startsWith('/login/admin')
+
+    if (!isAdminPath) {
+      const { ensure, me } = useMe()
+      if (!me.value) {
+        void ensure().catch((err) => {
+          console.warn('[api-plugin] Failed to initialize local farm on startup:', err)
+        })
+      }
     }
   }
 

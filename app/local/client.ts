@@ -1,4 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
+import type { DiscardMutationResult, FailedOutboxMutation, LocalDataSummary } from '#shared/types/api'
 import type { WorkerRequest, WorkerResponse } from './worker'
 
 function toCloneable<T>(val: T): T {
@@ -177,12 +178,112 @@ export class LocalWorkerClient {
     return this.callWorker('EXPORT_DATA')
   }
 
-  async importSnapshot(snapshot: any): Promise<{ success: boolean }> {
-    return this.callWorker('IMPORT_SNAPSHOT', snapshot)
+  async importSnapshot(
+    snapshot: any,
+    latestVersion?: number,
+    options?: { preserveOutbox?: boolean, tier?: 'free' | 'premium', ownerUid?: string | null },
+  ): Promise<{ success: boolean }> {
+    return this.callWorker('IMPORT_SNAPSHOT', { snapshot, latestVersion, ...options })
   }
 
-  async getSyncStatus(): Promise<{ syncState: any, pendingOutboxCount: number }> {
+  async clearLocalData(): Promise<{ success: boolean }> {
+    return this.callWorker('CLEAR_LOCAL_DATA')
+  }
+
+  async reconcileFromSnapshot(snapshot: any, latestVersion?: number): Promise<{ success: boolean }> {
+    return this.callWorker('RECONCILE_FROM_SNAPSHOT', { snapshot, latestVersion })
+  }
+
+  async markSnapshotExported(baseVersion: number): Promise<{ success: boolean }> {
+    return this.callWorker('MARK_SNAPSHOT_EXPORTED', { baseVersion })
+  }
+
+  async getSyncStatus(): Promise<{
+    syncState: any
+    pendingOutboxCount: number
+    failedOutboxCount: number
+    needsReconcile: boolean
+  }> {
     return this.callWorker('GET_SYNC_STATUS')
+  }
+
+  async getLocalDataSummary(): Promise<LocalDataSummary> {
+    return this.callWorker('GET_LOCAL_DATA_SUMMARY')
+  }
+
+  async getFailedMutations(): Promise<{ mutations: FailedOutboxMutation[] }> {
+    return this.callWorker('GET_FAILED_MUTATIONS')
+  }
+
+  async retryFailedMutation(id: string): Promise<{ retried: boolean, remainingFailedCount: number }> {
+    return this.callWorker('RETRY_FAILED_MUTATION', { id })
+  }
+
+  async retryAllFailedMutations(): Promise<{ success: boolean }> {
+    return this.callWorker('RETRY_ALL_FAILED_MUTATIONS')
+  }
+
+  async discardFailedMutation(id: string): Promise<DiscardMutationResult> {
+    return this.callWorker('DISCARD_FAILED_MUTATION', { id })
+  }
+
+  async getPendingMutations(limit?: number): Promise<{
+    mutations: Array<{
+      id: string
+      deviceId: string
+      type: string
+      payload: Record<string, any>
+      occurredAt: string
+    }>
+  }> {
+    return this.callWorker('GET_PENDING_MUTATIONS', { limit })
+  }
+
+  async markMutationsProcessed(results: Array<{
+    id: string
+    status: 'applied' | 'conflict_lww' | 'rejected'
+    error?: string
+    code?: string
+    reason?: string | null
+  }>): Promise<{ success: boolean }> {
+    return this.callWorker('MARK_MUTATIONS_PROCESSED', { results })
+  }
+
+  async resetInFlightMutations(): Promise<{ success: boolean }> {
+    return this.callWorker('RESET_IN_FLIGHT_MUTATIONS')
+  }
+
+  async getLastPulledVersion(): Promise<{
+    lastPulledVersion: number
+    lastPulledAt: string | null
+  }> {
+    return this.callWorker('GET_LAST_PULLED_VERSION')
+  }
+
+  async applyRemoteChanges(changes: any[], latestVersion: number): Promise<{
+    appliedCount: number
+    latestVersion: number
+  }> {
+    return this.callWorker('APPLY_REMOTE_CHANGES', { changes, latestVersion })
+  }
+
+  async updateSyncState(patch: {
+    status?: string
+    lastError?: string | null
+    tenantId?: string
+    cloudUrl?: string
+    cloudToken?: string
+    lastPulledVersion?: number
+    lastPulledAt?: string | null
+    lastPushedAt?: string | null
+    needsReconcile?: boolean
+    ownerUid?: string | null
+  }): Promise<{ success: boolean }> {
+    return this.callWorker('UPDATE_SYNC_STATE', patch)
+  }
+
+  async setDeviceId(deviceId: string): Promise<{ deviceId: string }> {
+    return this.callWorker('SET_DEVICE_ID', { deviceId })
   }
 }
 

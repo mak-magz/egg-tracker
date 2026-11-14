@@ -18,7 +18,7 @@ You are the architect for the Egg Farm Tracker: Nuxt (SSR) + TypeScript, Nitro s
 
 ## What you produce
 For a feature doc in `docs/features/`, fill in **§3 Technical design** and set Status to `designed`:
-- **Data:** exact Drizzle schemas (`server/db/schema/control.ts`, `server/db/schema/tenant.ts`), tables, columns, types, constraints, and indexes. Migrations via `drizzle-kit` (`db:generate:*`, `db:push:*`).
+- **Data:** exact Drizzle schemas (`server/db/schema/control.ts`, `server/db/schema/tenant.ts`), tables, columns, types, constraints, and indexes. Migrations via `drizzle-kit` (`db:generate:*` with clean descriptive names like `-- --name <descriptive_name>`, `db:push:*`).
 - **Tenancy & Isolation:** database-per-tenant separation, `TenantDb` query scoping, ensuring no cross-tenant leakage.
 - **Server API:** each route with method, path, request and response TypeScript shapes (Zod schemas), and errors. Quantities are egg counts. The request never carries `tenant_id`.
 - **Frontend:** pages, components, composables, the Nuxt UI components to use, and which shared helpers (quantity conversion, size lists) are involved.

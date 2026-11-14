@@ -57,7 +57,7 @@ import { test, expect } from './fixtures'
 
 test.describe('Barnside Production Entry', () => {
   test('logs production for active sizes and updates summary', async ({ page }) => {
-    await page.goto('/production')
+    await page.goto('/farm/production')
 
     // Expect date picker / day tracker
     await expect(page.getByRole('heading', { name: /production/i })).toBeVisible()

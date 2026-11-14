@@ -12,6 +12,8 @@ export default defineNuxtPlugin(() => {
 
   function onSessionLost() {
     if (signingOut.value) return
+    const currentPath = router.currentRoute.value.path || ''
+    if (currentPath.startsWith('/admin')) return
     const { isFree } = useTier()
     if (isFree.value) return
     const level = router.currentRoute.value.meta.auth ?? 'farm'

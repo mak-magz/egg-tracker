@@ -2,15 +2,97 @@
 // The tenant ALWAYS comes from the signed-in user's membership, never from the request (AC23).
 // Verifies the Firebase session cookie (`__session`) or `Authorization: Bearer <idToken>` via Firebase Admin Auth,
 // then looks up the user's membership and farm in the Turso Control DB + Tenant DB.
+import { existsSync } from 'node:fs'
 import { getCookie, getRequestHeader } from 'h3'
 import type { H3Event } from 'h3'
 import { getApps, initializeApp, cert } from 'firebase-admin/app'
-import type { App as AdminApp } from 'firebase-admin/app'
+import type { App as AdminApp, ServiceAccount } from 'firebase-admin/app'
 import { getAuth as getAdminAuth } from 'firebase-admin/auth'
 import type { FarmSummary } from '../../shared/types/api'
 import { findMembershipWithFarm } from '../repositories/memberships'
 import type { MembershipWithFarm } from '../repositories/memberships'
+import { findAdminByUserId, upsertAdminUser } from '../repositories/admin-users'
 import { apiError } from './errors'
+
+/**
+ * Safely parses a Firebase service account from a raw JSON string, quoted JSON string,
+ * base64-encoded JSON string, or file path. Normalizes escaped `\\n` newlines in `private_key`.
+ */
+export function parseServiceAccountConfig(raw?: string | null): { certInput?: ServiceAccount | string, projectId?: string } {
+  if (!raw) return {}
+  let trimmed = raw.trim()
+  if (!trimmed) return {}
+
+  // Strip surrounding single or double quotes often added in cloud env dashboards
+  if (
+    (trimmed.startsWith('"') && trimmed.endsWith('"'))
+    || (trimmed.startsWith('\'') && trimmed.endsWith('\''))
+  ) {
+    trimmed = trimmed.slice(1, -1).trim()
+  }
+
+  let jsonCandidate: string | null = null
+  if (trimmed.startsWith('{')) {
+    jsonCandidate = trimmed
+  }
+  else if (!trimmed.includes('/') && !trimmed.includes('\\') && !trimmed.endsWith('.json')) {
+    // Attempt base64 decode if it looks like base64-encoded JSON
+    try {
+      const decoded = Buffer.from(trimmed, 'base64').toString('utf8').trim()
+      if (decoded.startsWith('{')) {
+        jsonCandidate = decoded
+      }
+    }
+    catch {
+      // Not base64
+    }
+  }
+
+  if (jsonCandidate) {
+    try {
+      const parsed = JSON.parse(jsonCandidate) as Record<string, unknown>
+      if (typeof parsed.private_key === 'string') {
+        parsed.private_key = parsed.private_key.replace(/\\n/g, '\n')
+      }
+      if (typeof parsed.privateKey === 'string') {
+        parsed.privateKey = parsed.privateKey.replace(/\\n/g, '\n')
+      }
+      const projectId = (typeof parsed.project_id === 'string' ? parsed.project_id : undefined)
+        || (typeof parsed.projectId === 'string' ? parsed.projectId : undefined)
+      return { certInput: parsed as ServiceAccount, projectId }
+    }
+    catch {
+      return {}
+    }
+  }
+
+  // Otherwise treat as file path only if the file actually exists on disk
+  if (existsSync(trimmed)) {
+    return { certInput: trimmed }
+  }
+
+  return {}
+}
+
+// Bridge FIREBASE_SERVICE_ACCOUNT into GOOGLE_APPLICATION_CREDENTIALS if omitted,
+// enabling nuxt-vuefire's session cookie minter (/api/__session) to authenticate on Vercel.
+if (typeof process !== 'undefined' && process.env) {
+  if (process.env.VERCEL || process.env.NODE_ENV === 'production') {
+    delete process.env.FIREBASE_AUTH_EMULATOR_HOST
+  }
+  if (!process.env.GOOGLE_APPLICATION_CREDENTIALS && process.env.FIREBASE_SERVICE_ACCOUNT) {
+    const parsed = parseServiceAccountConfig(process.env.FIREBASE_SERVICE_ACCOUNT)
+    if (parsed.certInput && typeof parsed.certInput === 'object') {
+      process.env.GOOGLE_APPLICATION_CREDENTIALS = JSON.stringify(parsed.certInput)
+    }
+  }
+  else if (process.env.GOOGLE_APPLICATION_CREDENTIALS && !process.env.GOOGLE_APPLICATION_CREDENTIALS.trim().startsWith('{')) {
+    // Prevent non-existent local file path from crashing applicationDefault() in serverless
+    if (!existsSync(process.env.GOOGLE_APPLICATION_CREDENTIALS.trim())) {
+      delete process.env.GOOGLE_APPLICATION_CREDENTIALS
+    }
+  }
+}
 
 export interface AuthContext {
   userId: string
@@ -22,12 +104,15 @@ export interface TenantContext extends AuthContext {
   farm: FarmSummary
 }
 
+// Admin routes operate across the fleet; tenantId is NOT bound to the context.
+export type AdminContext = AuthContext
+
 declare module 'h3' {
   interface H3EventContext {
     /** Per-request caches (promises, so concurrent callers share one lookup). */
     tamagoAuth?: Promise<AuthContext | null>
     tamagoMembership?: Promise<MembershipWithFarm | null>
-
+    tamagoAdmin?: Promise<AdminContext>
   }
 }
 
@@ -46,28 +131,102 @@ export function isTransientAuthFailure(error: { status?: number, code?: string, 
 }
 
 function getOrInitAdminApp(event: H3Event): AdminApp {
-  if (process.env.NODE_ENV !== 'production' && !process.env.FIREBASE_SERVICE_ACCOUNT?.trim()) {
+  const isProdOrVercel = process.env.NODE_ENV === 'production' || Boolean(process.env.VERCEL)
+  if (isProdOrVercel && process.env.FIREBASE_AUTH_EMULATOR_HOST) {
+    delete process.env.FIREBASE_AUTH_EMULATOR_HOST
+  }
+  if (!isProdOrVercel && !process.env.FIREBASE_SERVICE_ACCOUNT?.trim() && !process.env.GOOGLE_APPLICATION_CREDENTIALS?.trim()) {
     process.env.FIREBASE_AUTH_EMULATOR_HOST ||= '127.0.0.1:9099'
   }
-  if (
-    event.context.firebaseApp
-    && (!('options' in event.context.firebaseApp) || Boolean(event.context.firebaseApp.options?.projectId))
-  ) {
-    return event.context.firebaseApp
+
+  const rawServiceAccount = (process.env.FIREBASE_SERVICE_ACCOUNT || process.env.GOOGLE_APPLICATION_CREDENTIALS)?.trim()
+  const { certInput, projectId: saProjectId } = parseServiceAccountConfig(rawServiceAccount)
+
+  // Prefer our explicitly configured 'tamago-admin' app if already initialized
+  const existingTamago = getApps().find(app => app.name === 'tamago-admin')
+  if (existingTamago) return existingTamago
+
+  if (!certInput) {
+    if (
+      event.context?.firebaseApp
+      && (!('options' in event.context.firebaseApp) || Boolean(event.context.firebaseApp.options?.projectId))
+    ) {
+      return event.context.firebaseApp
+    }
+    const existing = getApps().find(app => !('options' in app) || Boolean(app.options?.projectId))
+    if (existing) return existing
   }
-  const existing = getApps().find(app => !('options' in app) || Boolean(app.options?.projectId))
-  if (existing) return existing
 
-  const rawServiceAccount = process.env.FIREBASE_SERVICE_ACCOUNT?.trim()
-  const projectId = process.env.NUXT_PUBLIC_FIREBASE_PROJECT_ID?.trim() || 'demo-no-project'
+  const projectId = saProjectId
+    || process.env.NUXT_PUBLIC_FIREBASE_PROJECT_ID?.trim()
+    || process.env.FIREBASE_PROJECT_ID?.trim()
+    || 'demo-no-project'
 
-  if (rawServiceAccount && rawServiceAccount.startsWith('{')) {
+  if (certInput) {
     return initializeApp({
-      credential: cert(JSON.parse(rawServiceAccount)),
+      credential: cert(certInput),
       projectId,
     }, 'tamago-admin')
   }
+
+  if (process.env.FIREBASE_PRIVATE_KEY && process.env.FIREBASE_CLIENT_EMAIL) {
+    return initializeApp({
+      credential: cert({
+        projectId,
+        clientEmail: process.env.FIREBASE_CLIENT_EMAIL.trim(),
+        privateKey: process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n'),
+      }),
+      projectId,
+    }, 'tamago-admin')
+  }
+
   return initializeApp({ projectId }, 'tamago-admin')
+}
+
+function isClientTokenError(code: string): boolean {
+  return (
+    code.startsWith('auth/session-cookie-')
+    || code.startsWith('auth/id-token-')
+    || code === 'auth/argument-error'
+    || code === 'auth/user-not-found'
+    || code === 'auth/user-disabled'
+  )
+}
+
+const TRANSIENT_REVOCATION_FALLBACK_CODES = new Set([
+  'auth/internal-error',
+  'app/network-error',
+])
+
+function hasServiceAccountCredentials(): boolean {
+  return Boolean(
+    process.env.FIREBASE_SERVICE_ACCOUNT
+    || process.env.GOOGLE_APPLICATION_CREDENTIALS
+    || (process.env.FIREBASE_PRIVATE_KEY && process.env.FIREBASE_CLIENT_EMAIL),
+  )
+}
+
+export async function verifyBearerTokenWithFallback(adminAuth: ReturnType<typeof getAdminAuth>, token: string) {
+  if (process.env.FIREBASE_AUTH_EMULATOR_HOST) {
+    return await adminAuth.verifyIdToken(token, false)
+  }
+
+  try {
+    // checkRevoked = true ensures revoked sessions are rejected when service account credentials are available
+    return await adminAuth.verifyIdToken(token, true)
+  }
+  catch (e) {
+    const code = (e as { code?: string })?.code ?? ''
+    const allowCredentialFallback = code === 'app/invalid-credential'
+      && process.env.NODE_ENV !== 'production'
+      && !hasServiceAccountCredentials()
+    if (!TRANSIENT_REVOCATION_FALLBACK_CODES.has(code) && !allowCredentialFallback) {
+      throw e
+    }
+    console.warn(`[auth] verifyIdToken checkRevoked fallback triggered: ${code}`)
+    // Only fall back to public JWKS verification when revocation check itself is unavailable
+    return await adminAuth.verifyIdToken(token, false)
+  }
 }
 
 async function resolveAuth(event: H3Event): Promise<AuthContext | null> {
@@ -82,23 +241,22 @@ async function resolveAuth(event: H3Event): Promise<AuthContext | null> {
   try {
     const adminApp = getOrInitAdminApp(event)
     const adminAuth = getAdminAuth(adminApp)
-    // checkRevoked = true ensures revoked sessions (e.g. from `provision reset-password`) are rejected immediately.
-    const decoded = sessionCookie
-      ? await adminAuth.verifySessionCookie(sessionCookie, true)
-      : await adminAuth.verifyIdToken(bearerToken!, true)
 
-    if (!decoded.uid) return null
+    let decoded = null
+    if (bearerToken) {
+      // Explicit Authorization: Bearer header is authoritative; do not fall back to stale session cookies on failure.
+      decoded = await verifyBearerTokenWithFallback(adminAuth, bearerToken)
+    }
+    else if (sessionCookie) {
+      decoded = await adminAuth.verifySessionCookie(sessionCookie, true)
+    }
+
+    if (!decoded?.uid) return null
     return { userId: decoded.uid, email: decoded.email ?? '' }
   }
   catch (e) {
     const code = (e as { code?: string })?.code ?? ''
-    if (
-      code.startsWith('auth/session-cookie-')
-      || code.startsWith('auth/id-token-')
-      || code === 'auth/argument-error'
-      || code === 'auth/user-not-found'
-      || code === 'auth/user-disabled'
-    ) {
+    if (isClientTokenError(code)) {
       return null
     }
     console.error('[auth] token verification failed', safeErrorId(e))
@@ -132,4 +290,45 @@ export async function requireTenant(event: H3Event): Promise<TenantContext> {
   const membership = await getMembership(event)
   if (!membership) throw apiError(403, 'no_farm')
   return { ...auth, tenantId: membership.tenantId, farm: membership.farm }
+}
+
+export function getFirebaseAdminAuth(event?: H3Event) {
+  const adminApp = getOrInitAdminApp(event || ({} as H3Event))
+  return getAdminAuth(adminApp)
+}
+
+/** Enforces verified Firebase Auth and platform operator authorization via Control DB admins table (with ADMIN_EMAILS fallback). */
+export function requireAdmin(event: H3Event): Promise<AdminContext> {
+  if (event.context.tamagoAdmin) {
+    return event.context.tamagoAdmin
+  }
+
+  const promise = (async () => {
+    const auth = await requireAuth(event)
+    const adminRecord = await findAdminByUserId(auth.userId)
+
+    if (adminRecord) {
+      if (adminRecord.isActive) {
+        return auth
+      }
+      throw apiError(403, 'forbidden')
+    }
+
+    const adminEmailsRaw = process.env.ADMIN_EMAILS?.trim() || ''
+    const adminEmails = adminEmailsRaw
+      .split(',')
+      .map(e => e.trim().toLowerCase())
+      .filter(Boolean)
+
+    const userEmail = (auth.email || '').toLowerCase()
+    if (userEmail && adminEmails.includes(userEmail)) {
+      await upsertAdminUser(auth.userId, userEmail, 'superadmin')
+      return auth
+    }
+
+    throw apiError(403, 'forbidden')
+  })()
+
+  event.context.tamagoAdmin = promise
+  return promise
 }

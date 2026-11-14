@@ -9,6 +9,8 @@ if (existsSync('.env')) {
 const emulatorHost = process.env.FIREBASE_AUTH_EMULATOR_HOST || '127.0.0.1:9099'
 const controlDbUrl = process.env.NUXT_TURSO_CONTROL_URL || 'file:local-control.db'
 const projectId = process.env.NUXT_PUBLIC_FIREBASE_PROJECT_ID || 'demo-no-project'
+const e2ePort = process.env.E2E_PORT || '3000'
+const e2eOrigin = `http://localhost:${e2ePort}`
 
 export default defineConfig({
   testDir: 'tests/e2e',
@@ -18,8 +20,8 @@ export default defineConfig({
   retries: 0,
   reporter: [['list']],
   use: {
-    baseURL: 'http://localhost:3000',
-    channel: 'msedge',
+    baseURL: e2eOrigin,
+    ...(process.env.BROWSER_CHANNEL ? { channel: process.env.BROWSER_CHANNEL } : process.platform === 'win32' ? { channel: 'msedge' } : {}),
     storageState: 'tests/e2e/.auth/state.json',
     trace: 'on-first-retry',
   },
@@ -31,14 +33,16 @@ export default defineConfig({
       timeout: 120_000,
     },
     {
-      command: 'bun run dev',
-      url: 'http://localhost:3000',
+      command: `bun run dev -- --port ${e2ePort}`,
+      url: e2eOrigin,
       reuseExistingServer: true,
       timeout: 120_000,
       env: {
+        PORT: e2ePort,
         FIREBASE_AUTH_EMULATOR_HOST: emulatorHost,
         NUXT_PUBLIC_FIREBASE_PROJECT_ID: projectId,
         NUXT_TURSO_CONTROL_URL: controlDbUrl,
+        NUXT_DEVTOOLS: 'false',
       },
     },
   ],

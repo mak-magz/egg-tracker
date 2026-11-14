@@ -28,9 +28,19 @@ describe('security headers (nuxt.config.ts routeRules)', () => {
     expect(headers['Cross-Origin-Embedder-Policy']).toBe('credentialless')
   })
 
-  it('CSP is exactly frame-ancestors none (no script-src or default-src yet)', async () => {
+  it('sets hardened CSP directives preserving wasm-unsafe-eval, workers, and Firebase Auth', async () => {
     const { routeRules } = await loadConfig('production')
-    expect(routeRules['/**']?.headers?.['Content-Security-Policy']).toBe(`frame-ancestors 'none'`)
+    const csp = routeRules['/**']?.headers?.['Content-Security-Policy'] ?? ''
+    expect(csp).toContain(`default-src 'self'`)
+    expect(csp).toContain(`frame-ancestors 'none'`)
+    expect(csp).toContain(`object-src 'none'`)
+    expect(csp).toContain(`script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'`)
+    expect(csp).toContain(`worker-src 'self' blob:`)
+    expect(csp).toContain('https://identitytoolkit.googleapis.com')
+    expect(csp).not.toContain('http://127.0.0.1:9099')
+
+    const dev = await loadConfig('development')
+    expect(dev.routeRules['/**']?.headers?.['Content-Security-Policy']).toContain('http://127.0.0.1:9099')
   })
 
   it('denies the browser features the app does not use', async () => {

@@ -21,6 +21,8 @@ describe('mapAuthError', () => {
     expect(mapAuthError(firebaseErr('auth/invalid-credential'))).toBe('invalid_credentials')
     expect(mapAuthError(firebaseErr('auth/user-not-found'))).toBe('invalid_credentials')
     expect(mapAuthError(firebaseErr('auth/wrong-password'))).toBe('invalid_credentials')
+    expect(mapAuthError(firebaseErr('auth/invalid-email'))).toBe('invalid_credentials')
+    expect(mapAuthError(firebaseErr('auth/invalid-login-credentials'))).toBe('invalid_credentials')
     expect(mapAuthError(authErr('Invalid login credentials', 400, 'invalid_credentials'))).toBe('invalid_credentials')
     expect(mapAuthError(authErr('Invalid login credentials', 400, undefined))).toBe('invalid_credentials')
   })

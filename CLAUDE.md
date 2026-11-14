@@ -12,7 +12,7 @@ Features are tracked in `docs/features/`. Setup is in `README.md`.
 - `bun run test`: runs unit tests (`bun run test:unit`)
 - `bun run test:unit`: Vitest (`bunx vitest run tests/unit/<file>.spec.ts`)
 - `bun run test:e2e`: Playwright specs in `tests/e2e/` (needs `.env` seeded locally)
-- `bun run db:generate:control` / `bun run db:generate:tenant`: Generate Drizzle migrations
+- `bun run db:generate:control` / `bun run db:generate:tenant`: Generate Drizzle migrations. Always pass `-- --name <descriptive_name>` (e.g. `bun run db:generate:control -- --name create_control_admins`). Never use default random superhero slug names.
 - `bun run db:push:control` / `bun run db:push:tenant`: Push Drizzle schema to control / tenant database
 - `bun run provision`: local CLI that creates a farm and owner account (`server/cli/provision.ts`)
 - `bun run check:build`: Verifies production build does not leak secret key material

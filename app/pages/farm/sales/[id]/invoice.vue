@@ -53,8 +53,8 @@ function print() {
 if (import.meta.client) useEventListener(window, 'afterprint', () => printBtn.value?.$el.focus())
 
 function back() {
-  if (state.value.status === 'ready') return handoffTo({ kind: 'sale', id: state.value.sale.id }, '/sales')
-  return navigateTo('/sales')
+  if (state.value.status === 'ready') return handoffTo({ kind: 'sale', id: state.value.sale.id }, '/farm/sales')
+  return navigateTo('/farm/sales')
 }
 </script>
 
@@ -130,7 +130,7 @@ function back() {
       class="print:hidden"
     >
       <UButton
-        to="/sales"
+        to="/farm/sales"
         size="xl"
         class="min-h-11 w-full justify-center"
         :label="INVOICE_COPY.backToSales"

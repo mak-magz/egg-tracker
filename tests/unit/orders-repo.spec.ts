@@ -87,6 +87,17 @@ describe('orders repository: calls', () => {
     }])
   })
 
+  it('createOrder handles device-stamped string orderNumber', async () => {
+    const { db } = fakeDb({ create_order: { data: { order: { ...orderRow, orderNumber: 'D1-0012' }, replayed: false }, error: null } })
+    const res = await repo.createOrder(db, {
+      submissionId: SUBMISSION,
+      clientId: CLIENT_A,
+      orderDate: '2026-10-03',
+      lines: [{ sizeId: SIZE_A, eggs: 300, pricePerTray: 6.5 }],
+    })
+    expect(res.order.orderNumber).toBe('D1-0012')
+  })
+
   it('updateOrder, setOrderStatus, cancelOrder and closeOrder send what the functions take', async () => {
     const change = { data: { order: orderRow, changed: true }, error: null }
     const { db, calls } = fakeDb({ update_order: change, set_order_status: change, cancel_order: change, close_order: change })

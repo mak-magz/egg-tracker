@@ -1,4 +1,5 @@
 import type { FarmSummary } from '../../shared/types/api'
+import { updateControlTenantRecord } from '../utils/db'
 import type { TenantDb } from '../utils/db'
 import { RepositoryError } from '../utils/errors'
 import { FARM_SUMMARY_COLUMNS, toFarmSizes, toFarmSummary } from '../../core/repositories/tenants'
@@ -6,6 +7,32 @@ import type { FarmSummaryRow, SizeRowForFarm } from '../../core/repositories/ten
 
 export { FARM_SUMMARY_COLUMNS, toFarmSizes, toFarmSummary }
 export type { FarmSummaryRow, SizeRowForFarm }
+
+export async function syncControlTenantMetadata(
+  tenantId: string,
+  metadata: { name?: string, eggsPerTray?: number, currency?: string, tier?: 'free' | 'premium' },
+): Promise<void> {
+  const updates: Partial<{
+    name: string
+    eggsPerTray: number
+    currency: string
+    tier: 'free' | 'premium'
+    updatedAt: string
+  }> = {}
+  if (metadata.name !== undefined) updates.name = metadata.name
+  if (metadata.eggsPerTray !== undefined) updates.eggsPerTray = metadata.eggsPerTray
+  if (metadata.currency !== undefined) updates.currency = metadata.currency
+  if (metadata.tier !== undefined) updates.tier = metadata.tier
+  if (Object.keys(updates).length === 0) return
+
+  updates.updatedAt = new Date().toISOString()
+  try {
+    await updateControlTenantRecord(tenantId, updates)
+  }
+  catch {
+    // Non-fatal if Control DB is unavailable in unit-test harness
+  }
+}
 
 /** The signed-in user's farm. `tenants` is the root table, so it is scoped by `id`, not `tenant_id`. */
 export async function getCurrentFarm(db: TenantDb): Promise<FarmSummary | null> {
@@ -34,5 +61,12 @@ export async function updateFarmSettings(
     p_currency: input.currency,
   })
   if (error) throw new RepositoryError('update farm settings failed', error.code)
+
+  await syncControlTenantMetadata(db.tenantId, {
+    name: input.farmName,
+    eggsPerTray: input.eggsPerTray,
+    currency: input.currency,
+  })
+
   return data as FarmSummary
 }

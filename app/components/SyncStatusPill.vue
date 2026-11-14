@@ -1,59 +1,35 @@
 <script setup lang="ts">
-import { useOnline } from '@vueuse/core'
-import { localWorker } from '../local/client'
+import { computed, ref } from 'vue'
+import { useSync } from '../composables/useSync'
 
-const isOnline = useOnline()
-const { isFree } = useTier()
+const {
+  syncStatus,
+  pendingOutboxCount,
+  failedCount,
+  lastSyncedAt,
+  isSyncing,
+  triggerSync,
+  openConflictsModal,
+} = useSync()
 
-const pendingOutboxCount = ref(0)
-const syncStatus = ref<'local_only' | 'syncing' | 'synced' | 'offline_changes' | 'offline'>('local_only')
-
-async function refreshSyncState() {
-  if (typeof window === 'undefined') return
-  try {
-    const res = await localWorker.getSyncStatus()
-    pendingOutboxCount.value = res.pendingOutboxCount
-
-    if (!isOnline.value) {
-      syncStatus.value = pendingOutboxCount.value > 0 ? 'offline_changes' : 'offline'
-      return
-    }
-
-    if (isFree.value) {
-      syncStatus.value = 'local_only'
-      return
-    }
-
-    if (pendingOutboxCount.value > 0) {
-      syncStatus.value = 'syncing'
-      return
-    }
-
-    syncStatus.value = 'synced'
-  }
-  catch {
-    syncStatus.value = isOnline.value ? 'local_only' : 'offline'
-  }
-}
-
-let timer: ReturnType<typeof setInterval> | null = null
-
-onMounted(() => {
-  refreshSyncState()
-  timer = setInterval(refreshSyncState, 5000)
-})
-
-onUnmounted(() => {
-  if (timer) clearInterval(timer)
-})
-
-watch(isOnline, refreshSyncState)
+const popoverOpen = ref(false)
 
 const pillConfig = computed(() => {
+  if (failedCount.value > 0) {
+    return {
+      label: `${failedCount.value} sync issue${failedCount.value === 1 ? '' : 's'}`,
+      statusText: 'Action required',
+      icon: 'i-lucide-alert-circle',
+      color: 'error' as const,
+      variant: 'subtle' as const,
+    }
+  }
+
   switch (syncStatus.value) {
     case 'offline':
       return {
         label: 'Offline',
+        statusText: 'Offline',
         icon: 'i-lucide-wifi-off',
         color: 'neutral' as const,
         variant: 'subtle' as const,
@@ -61,6 +37,7 @@ const pillConfig = computed(() => {
     case 'offline_changes':
       return {
         label: `${pendingOutboxCount.value} saved offline`,
+        statusText: 'Offline with pending edits',
         icon: 'i-lucide-cloud-off',
         color: 'warning' as const,
         variant: 'subtle' as const,
@@ -68,6 +45,7 @@ const pillConfig = computed(() => {
     case 'syncing':
       return {
         label: 'Syncing...',
+        statusText: 'Syncing to cloud',
         icon: 'i-lucide-refresh-cw',
         color: 'primary' as const,
         variant: 'subtle' as const,
@@ -75,34 +53,148 @@ const pillConfig = computed(() => {
     case 'synced':
       return {
         label: 'Cloud synced',
+        statusText: 'Connected to cloud',
         icon: 'i-lucide-cloud',
         color: 'success' as const,
+        variant: 'subtle' as const,
+      }
+    case 'error':
+      return {
+        label: pendingOutboxCount.value > 0 ? `${pendingOutboxCount.value} unsynced (error)` : 'Sync error',
+        statusText: 'Sync connection error',
+        icon: 'i-lucide-alert-triangle',
+        color: 'error' as const,
         variant: 'subtle' as const,
       }
     case 'local_only':
     default:
       return {
         label: 'Local storage',
+        statusText: 'Local offline device',
         icon: 'i-lucide-hard-drive',
         color: 'neutral' as const,
         variant: 'subtle' as const,
       }
   }
 })
+
+const formattedLastSynced = computed(() => {
+  if (!lastSyncedAt.value) return 'Never'
+  try {
+    const d = new Date(lastSyncedAt.value)
+    if (Number.isNaN(d.getTime())) return 'Never'
+    return d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
+  }
+  catch {
+    return 'Never'
+  }
+})
+
+function handleSyncNow() {
+  void triggerSync()
+}
+
+function handleOpenIssues() {
+  popoverOpen.value = false
+  openConflictsModal()
+}
 </script>
 
 <template>
-  <UBadge
-    size="sm"
-    :color="pillConfig.color"
-    :variant="pillConfig.variant"
-    class="flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium cursor-default"
+  <UPopover
+    v-model:open="popoverOpen"
+    :content="{ side: 'bottom', align: 'end', sideOffset: 8 }"
   >
-    <UIcon
-      :name="pillConfig.icon"
-      class="size-3.5"
-      :class="{ 'animate-spin': syncStatus === 'syncing' }"
-    />
-    <span class="hidden sm:inline">{{ pillConfig.label }}</span>
-  </UBadge>
+    <button
+      type="button"
+      aria-label="Sync status"
+      class="inline-flex min-h-11 md:min-h-9 items-center focus-visible:outline-2 focus-visible:outline-primary rounded-full"
+    >
+      <UBadge
+        size="sm"
+        :color="pillConfig.color"
+        :variant="pillConfig.variant"
+        class="flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium cursor-pointer select-none transition-opacity active:opacity-75"
+      >
+        <UIcon
+          :name="pillConfig.icon"
+          class="size-3.5"
+          :class="{ 'animate-spin': isSyncing && failedCount === 0 }"
+        />
+        <span class="hidden sm:inline">{{ pillConfig.label }}</span>
+        <span
+          v-if="failedCount > 0"
+          class="sm:hidden font-bold"
+        >
+          {{ failedCount }}
+        </span>
+      </UBadge>
+    </button>
+
+    <template #content>
+      <div class="w-72 p-4 space-y-3">
+        <div class="flex items-center justify-between">
+          <span class="text-xs font-semibold uppercase tracking-wider text-muted">
+            Cloud Sync Status
+          </span>
+          <UButton
+            color="neutral"
+            variant="ghost"
+            icon="i-lucide-x"
+            size="xs"
+            aria-label="Close popover"
+            @click="popoverOpen = false"
+          />
+        </div>
+
+        <div class="space-y-1.5 text-xs">
+          <div class="flex items-center justify-between gap-2">
+            <span class="text-muted">Connection</span>
+            <span class="font-medium text-highlighted">{{ pillConfig.statusText }}</span>
+          </div>
+          <div class="flex items-center justify-between gap-2">
+            <span class="text-muted">Last synced</span>
+            <span class="font-medium text-default">{{ formattedLastSynced }}</span>
+          </div>
+          <div class="flex items-center justify-between gap-2">
+            <span class="text-muted">Pending queue</span>
+            <span class="font-medium text-default">{{ pendingOutboxCount }} waiting</span>
+          </div>
+        </div>
+
+        <div
+          v-if="failedCount > 0"
+          class="rounded-lg bg-error/10 border border-error/20 p-2.5 space-y-2"
+        >
+          <p class="text-xs text-error font-medium">
+            {{ failedCount }} change{{ failedCount === 1 ? '' : 's' }} could not be synced to the cloud.
+          </p>
+          <UButton
+            color="error"
+            size="sm"
+            block
+            class="min-h-11 justify-center"
+            icon="i-lucide-wrench"
+            @click="handleOpenIssues"
+          >
+            Review Sync Issues ({{ failedCount }})
+          </UButton>
+        </div>
+
+        <UButton
+          v-if="syncStatus !== 'local_only'"
+          color="neutral"
+          variant="outline"
+          size="sm"
+          block
+          class="min-h-11 justify-center"
+          icon="i-lucide-refresh-cw"
+          :loading="isSyncing"
+          @click="handleSyncNow"
+        >
+          Sync Now
+        </UButton>
+      </div>
+    </template>
+  </UPopover>
 </template>

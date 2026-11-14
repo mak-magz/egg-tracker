@@ -21,12 +21,12 @@ export interface AppNavItem {
 }
 
 export const APP_NAV: readonly AppNavItem[] = [
-  { key: 'dashboard', label: 'Dashboard', tabLabel: 'Home', to: '/', icon: 'i-lucide-layout-dashboard', title: 'Dashboard', subtitle: null, subtitleIsToday: true, mobile: 'tab' },
-  { key: 'production', label: 'Production', to: '/production', icon: 'i-lucide-clipboard', title: 'Production', subtitle: 'Logged by day, most recent first', mobile: 'tab' },
-  { key: 'orders', label: 'Orders', to: '/orders', icon: 'i-lucide-clipboard-list', title: 'Orders', subtitle: 'What customers are waiting for', mobile: 'tab' },
-  { key: 'sales', label: 'Sales', to: '/sales', icon: 'i-lucide-shopping-cart', title: 'Sales', subtitle: 'Deliveries and on-site sales', mobile: 'tab' },
-  { key: 'inventory', label: 'Inventory', to: '/inventory', icon: 'i-lucide-package', title: 'Inventory', subtitle: 'Live view, produced minus sold', mobile: 'more' },
-  { key: 'clients', label: 'Clients', to: '/clients', icon: 'i-lucide-users', title: 'Clients', subtitle: 'Your customers', mobile: 'more' },
+  { key: 'dashboard', label: 'Dashboard', tabLabel: 'Home', to: '/farm', icon: 'i-lucide-layout-dashboard', title: 'Dashboard', subtitle: null, subtitleIsToday: true, mobile: 'tab' },
+  { key: 'production', label: 'Production', to: '/farm/production', icon: 'i-lucide-clipboard', title: 'Production', subtitle: 'Logged by day, most recent first', mobile: 'tab' },
+  { key: 'orders', label: 'Orders', to: '/farm/orders', icon: 'i-lucide-clipboard-list', title: 'Orders', subtitle: 'What customers are waiting for', mobile: 'tab' },
+  { key: 'sales', label: 'Sales', to: '/farm/sales', icon: 'i-lucide-shopping-cart', title: 'Sales', subtitle: 'Deliveries and on-site sales', mobile: 'tab' },
+  { key: 'inventory', label: 'Inventory', to: '/farm/inventory', icon: 'i-lucide-package', title: 'Inventory', subtitle: 'Live view, produced minus sold', mobile: 'more' },
+  { key: 'clients', label: 'Clients', to: '/farm/clients', icon: 'i-lucide-users', title: 'Clients', subtitle: 'Your customers', mobile: 'more' },
 ]
 
 /** The tabs on the phone bar, in order (the More button follows them). */
@@ -40,9 +40,9 @@ export function navTabLabel(item: AppNavItem): string {
   return item.tabLabel ?? item.label
 }
 
-/** Dashboard (`/`) matches only itself; other items also match their sub-paths (e.g. `/sales/123`). */
+/** Dashboard (`/farm`) matches only itself; other items also match their sub-paths (e.g. `/farm/sales/123`). */
 export function isNavItemActive(item: AppNavItem, path: string): boolean {
-  if (item.to === '/') return path === '/'
+  if (item.to === '/farm') return path === '/farm'
   return path === item.to || path.startsWith(`${item.to}/`)
 }
 

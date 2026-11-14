@@ -2,15 +2,26 @@ import { createError, isError } from 'h3'
 import type { H3Error } from 'h3'
 import type { ApiErrorCode, ApiErrorData } from '../../shared/types/api'
 
-const API_ERROR_CODES: readonly ApiErrorCode[] = ['unauthenticated', 'no_farm', 'validation_failed', 'not_found', 'conflict', 'internal']
+const API_ERROR_CODES: readonly ApiErrorCode[] = [
+  'unauthenticated',
+  'forbidden',
+  'no_farm',
+  'validation_failed',
+  'not_found',
+  'conflict',
+  'internal',
+  'bad_request',
+]
 
 const STATUS_MESSAGES: Record<ApiErrorCode, string> = {
   unauthenticated: 'Unauthorized',
+  forbidden: 'Forbidden',
   no_farm: 'Forbidden',
   validation_failed: 'Bad Request',
   not_found: 'Not Found',
   conflict: 'Conflict',
   internal: 'Internal Server Error',
+  bad_request: 'Bad Request',
 }
 
 /** Optional extras on an error body (feature 02 §3.3, feature 03 §3.3, feature 04 §3.3): why a 409 happened, the clashing row, the current sizes, the current client, the current sale, the stock shortfall, and (feature 05) the current order. */
@@ -24,11 +35,20 @@ export type ApiErrorExtra = Pick<ApiErrorData, 'reason' | 'existing' | 'sizes' |
 export function apiError(
   statusCode: number,
   code: ApiErrorCode,
-  fields?: Record<string, string>,
+  fieldsOrMessage?: Record<string, string> | string,
   extra?: ApiErrorExtra,
 ): H3Error<ApiErrorData> {
   const data: ApiErrorData = { code }
-  if (fields) data.fields = fields
+  let statusMessage = STATUS_MESSAGES[code]
+  let message: string | undefined
+  if (typeof fieldsOrMessage === 'string') {
+    statusMessage = fieldsOrMessage
+    message = fieldsOrMessage
+    data.message = fieldsOrMessage
+  }
+  else if (fieldsOrMessage) {
+    data.fields = fieldsOrMessage
+  }
   if (extra?.reason !== undefined) data.reason = extra.reason
   if (extra?.existing !== undefined) data.existing = extra.existing
   if (extra?.sizes !== undefined) data.sizes = extra.sizes
@@ -36,7 +56,7 @@ export function apiError(
   if (extra?.sale !== undefined) data.sale = extra.sale
   if (extra?.shortfall !== undefined) data.shortfall = extra.shortfall
   if (extra?.order !== undefined) data.order = extra.order
-  return createError<ApiErrorData>({ statusCode, statusMessage: STATUS_MESSAGES[code], data })
+  return createError<ApiErrorData>({ statusCode, statusMessage, message, data })
 }
 
 export function isApiError(e: unknown): e is H3Error<ApiErrorData> {
@@ -65,6 +85,7 @@ export function toApiError(e: unknown): H3Error<ApiErrorData> {
   if (isError(e)) {
     if (e.statusCode === 400 || e.statusCode === 422) return apiError(400, 'validation_failed')
     if (e.statusCode === 401) return apiError(401, 'unauthenticated')
+    if (e.statusCode === 403) return apiError(403, 'forbidden')
     if (e.statusCode === 404) return apiError(404, 'not_found')
   }
   const o = (e ?? {}) as { name?: unknown, code?: unknown }

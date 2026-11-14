@@ -2,7 +2,7 @@ import { test, expect, seed } from './fixtures'
 
 test('invoice shows heading and total, and prints without the app shell', async ({ page }) => {
   const s = await seed(page)
-  await page.goto(`/sales/${s.saleId}/invoice`)
+  await page.goto(`/farm/sales/${s.saleId}/invoice`)
   await expect(page.getByRole('heading').first()).toBeVisible()
   await expect(page.getByText('Total', { exact: true }).first()).toBeVisible()
   await expect(page.getByText(s.clientName)).toBeVisible()

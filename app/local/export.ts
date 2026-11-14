@@ -17,6 +17,8 @@ export const farmBackupSnapshotSchema = z.object({
     colorSlot: z.number().optional(),
     archived_at: z.string().nullable().optional(),
     archivedAt: z.string().nullable().optional(),
+    default_price: z.number().nullable().optional(),
+    defaultPrice: z.number().nullable().optional(),
   })),
   clients: z.array(z.object({
     id: z.string(),
@@ -213,5 +215,5 @@ export async function exportClientsCsv(): Promise<void> {
 export async function importFarmSnapshotFromJson(jsonString: string): Promise<void> {
   const parsed = JSON.parse(jsonString)
   const validated = farmBackupSnapshotSchema.parse(parsed)
-  await localWorker.importSnapshot(validated)
+  await localWorker.importSnapshot(validated, undefined, { tier: 'free' })
 }

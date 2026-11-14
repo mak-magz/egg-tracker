@@ -2,7 +2,8 @@
 // exact shapes; change them only together with the feature doc.
 
 // 'conflict' (409) is new in feature 02 (docs/features/02-farm-settings.md §3.3).
-export type ApiErrorCode = 'unauthenticated' | 'no_farm' | 'validation_failed' | 'not_found' | 'conflict' | 'internal'
+// 'forbidden' (403) is added in feature 10 (docs/features/10-admin-dashboard-and-control-plane.md §3.2).
+export type ApiErrorCode = 'unauthenticated' | 'forbidden' | 'no_farm' | 'validation_failed' | 'not_found' | 'conflict' | 'internal' | 'bad_request'
 
 /** Why a 'conflict' (409) happened. The UI has copy for each (feature 02 §2.5 "Copy"; feature 04 §3.3 for the sales reasons). */
 export type ApiErrorReason
@@ -30,6 +31,7 @@ export interface ShortfallLine { sizeId: string, onHandEggs: number, neededEggs:
  */
 export interface ApiErrorData {
   code: ApiErrorCode
+  message?: string
   /** Per-field messages when `code === 'validation_failed'`. */
   fields?: Record<string, string>
   /** With code 'conflict'. */
@@ -378,3 +380,62 @@ export interface DeliverOrderRequest {
   confirmShortfall?: boolean
 }
 export interface DeliverOrderResponse { order: OrderDetail, sale: Sale, replayed: boolean }
+
+// ---- Offline Sync Guard & Conflict Management (docs/features/12-sync-conflict-and-multi-device-guard.md §3.1) ----
+
+export interface LocalDataSummary {
+  hasData: boolean
+  productionDays: number
+  clients: number
+  orders: number
+  sales: number
+  customSizesCount: number
+  pendingOutboxCount: number
+  failedOutboxCount: number
+  farmName: string | null
+  ownerUid?: string | null
+}
+
+export interface FailedOutboxMutation {
+  id: string
+  seq: number
+  type: string
+  entityLabel: string
+  detailLabel: string
+  errorCode: string
+  errorMessage: string
+  createdAt: string
+}
+
+export interface DiscardMutationResult {
+  discarded: boolean
+  remainingPendingCount: number
+  remainingFailedCount: number
+  needsReconcile: boolean
+}
+
+export interface AdminSyncTelemetryItem {
+  tenantId: string
+  farmName: string
+  changeLogVersion: number
+  activeDevices30d: number
+  lastPush: { timestamp: string, deviceId: string } | null
+  lastPull: { timestamp: string, deviceId: string } | null
+  health: 'synced' | 'idle' | 'conflict' | 'error'
+  unresolvedRejectionCount: number
+}
+
+export interface AdminSyncIssueItem {
+  id: string
+  mutationId: string
+  deviceId: string
+  mutationType: string
+  entityRef: string
+  errorCode: string
+  reason: string | null
+  error: string
+  occurredAt: string
+  rejectedAt: string
+  resolvedAt: string | null
+  payload: Record<string, unknown>
+}

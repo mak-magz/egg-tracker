@@ -24,7 +24,7 @@ useHead({ title: 'Page not found · Tamago' })
       body="We couldn't find that page."
     >
       <UButton
-        to="/"
+        to="/farm"
         size="xl"
         block
         label="Go to Dashboard"

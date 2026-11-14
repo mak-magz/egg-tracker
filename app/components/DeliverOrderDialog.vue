@@ -345,6 +345,7 @@ const ui = sheetUi(480)
             color="warning"
             variant="soft"
             icon="i-lucide-triangle-alert"
+            class="shrink-0"
           >
             <template #description>
               <p class="font-medium">

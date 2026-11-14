@@ -2,7 +2,7 @@
 // Pure (no Nuxt imports) so tests/unit/auth-errors.spec.ts can import it directly.
 // Never distinguishes "no such email" from "wrong password" (AC3): both are `invalid_credentials`.
 
-export type SignInErrorKind = 'invalid_credentials' | 'network' | 'rate_limited' | 'unknown'
+export type SignInErrorKind = 'invalid_credentials' | 'network' | 'rate_limited' | 'unknown' | 'cancelled'
 export type ResetRequestErrorKind = 'network' | 'rate_limited' | 'unknown'
 export type UpdatePasswordErrorKind = 'network' | 'weak_password' | 'unknown'
 export type VerifyRecoveryResult = 'valid' | 'expired' | 'network'
@@ -13,6 +13,7 @@ export const AUTH_ERROR_COPY = {
   network: 'Couldn\'t connect. Check your connection and try again.',
   rate_limited: 'Please wait a minute before trying again.',
   unknown: 'Something went wrong. Try again.',
+  cancelled: 'Sign-in cancelled. Local farm data was kept on this device.',
   weak_password: 'Couldn\'t save your new password. Try again.',
   session_expired: 'Your session has expired. Please sign in again.',
 } as const

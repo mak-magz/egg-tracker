@@ -11,7 +11,7 @@ const syncPushRequestSchema = z.object({
     type: z.string().min(1),
     payload: z.record(z.string(), z.any()),
     occurredAt: z.string(),
-  })),
+  })).max(100),
 })
 
 export default defineTenantHandler(async (event, ctx) => {
