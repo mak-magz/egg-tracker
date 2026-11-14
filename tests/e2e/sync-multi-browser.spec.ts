@@ -15,14 +15,14 @@ test.describe('Multi-Browser Sync: Production Duplication Regression', () => {
     const page1 = await context1.newPage()
 
     await page1.goto('/')
+    await page1.waitForURL(u => u.pathname === '/welcome' || u.pathname.startsWith('/farm'), { timeout: 15_000 })
 
     // Complete first-run welcome if routed to /welcome
     if (page1.url().includes('/welcome')) {
       const startBtn = page1.getByRole('button', { name: /start tracking/i })
-      if (await startBtn.isVisible()) {
-        await startBtn.click()
-        await page1.waitForURL('**/farm**')
-      }
+      await expect(startBtn).toBeVisible()
+      await startBtn.click()
+      await page1.waitForURL('**/farm**', { timeout: 15_000 })
     }
 
     // 1. Navigate to Production screen
@@ -35,9 +35,9 @@ test.describe('Multi-Browser Sync: Production Duplication Regression', () => {
     await expect(page1.getByRole('heading', { name: /log production/i })).toBeVisible()
 
     // 3. Fill 1 tray for Large eggs and save
-    const trayInput = page1.getByRole('spinbutton', { name: /large trays/i }).or(page1.getByLabel(/large trays/i)).first()
-    await expect(trayInput).toBeVisible()
-    await trayInput.fill('1')
+    const incLargeBtn = page1.getByRole('button', { name: 'Increase Large trays' })
+    await expect(incLargeBtn).toBeVisible()
+    await incLargeBtn.click()
     await page1.getByRole('button', { name: 'Save', exact: true }).click()
 
     // Verify day card in Browser 1 shows strictly 1 tray
@@ -59,9 +59,12 @@ test.describe('Multi-Browser Sync: Production Duplication Regression', () => {
     await page1.getByPlaceholder('Min 8 characters').fill(password)
     await page1.getByRole('button', { name: /create & sync|upgrade/i }).click()
 
-    // Wait for successful upgrade toast and sync pill indicator
-    await expect(page1.getByText(/upgraded to cloud sync/i)).toBeVisible({ timeout: 15000 })
-    await expect(page1.getByText('Cloud synced')).toBeVisible({ timeout: 15000 })
+    // Wait for successful upgrade toast and sync pill state (status text is inside popover on mobile too)
+    await expect(page1.getByText('Upgraded to Cloud Sync', { exact: true })).toBeVisible({ timeout: 15000 })
+    const syncBtn1 = page1.getByRole('button', { name: 'Sync status' })
+    await expect(syncBtn1).toBeVisible()
+    await syncBtn1.click()
+    await expect(page1.getByText('Connected to cloud', { exact: true })).toBeVisible({ timeout: 15000 })
 
     // -----------------------------------------------------------------------------------
     // CONTEXT 2: Browser 2 (Fresh Secondary Device / Clean Session)
@@ -72,8 +75,8 @@ test.describe('Multi-Browser Sync: Production Duplication Regression', () => {
     // 1. Go to /login and authenticate with the newly created account
     await page2.goto('/login')
     await page2.getByLabel('Email').fill(email)
-    await page2.getByLabel('Password').fill(password)
-    await page2.getByRole('button', { name: /sign in/i }).click()
+    await page2.locator('input[type=password]').fill(password)
+    await page2.getByRole('button', { name: /^sign in$/i }).click()
 
     // 2. Verify redirect directly to /farm (no bouncing to /welcome)
     await page2.waitForURL('**/farm**', { timeout: 15000 })

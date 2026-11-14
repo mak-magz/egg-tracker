@@ -4,8 +4,12 @@ import { test as base, expect, type APIRequestContext, type Page } from '@playwr
 const ORIGIN = 'http://localhost:3000'
 
 /** Fails the test on a page error, console.error or any Vue warning (a warning is logged with console.warn). */
-export const test = base.extend<{ consoleErrors: string[] }>({
-  consoleErrors: [async ({ page }, use) => {
+export const test = base.extend<{
+  consoleErrors: string[]
+  allowedHttpPatterns: Array<string | RegExp>
+}>({
+  allowedHttpPatterns: [[], { option: true }],
+  consoleErrors: [async ({ page, allowedHttpPatterns }, use) => {
     const errors: string[] = []
     // The Nuxt dev overlay sits on top of the page and intercepts clicks on mobile.
     await page.addInitScript(() => {
@@ -14,7 +18,11 @@ export const test = base.extend<{ consoleErrors: string[] }>({
       document.addEventListener('DOMContentLoaded', () => document.head.appendChild(style))
     })
     page.on('response', (r) => {
-      if (r.status() >= 400) errors.push(`http ${r.status()}: ${r.request().method()} ${r.url()}`)
+      if (r.status() >= 400) {
+        const url = r.url()
+        const allowed = allowedHttpPatterns.some(p => typeof p === 'string' ? url.includes(p) : p.test(url))
+        if (!allowed) errors.push(`http ${r.status()}: ${r.request().method()} ${url}`)
+      }
     })
     page.on('pageerror', e => errors.push(`pageerror: ${e.message}\n${e.stack ?? ''}`))
     page.on('console', (m) => {
@@ -60,13 +68,19 @@ export async function seed(page: Page): Promise<Seeded> {
     submissionId: randomUUID(), clientId, orderDate: today(), lines: [{ sizeId, eggs: 90, pricePerTray: 250 }],
   })
 
-  // Hydrate local worker database with snapshot if browser page is already open
+  // Ensure browser context is on the app origin so OPFS worker exists, then hydrate seeded snapshot into local OPFS.
+  if (page.url() === 'about:blank') {
+    await page.goto('/farm')
+  }
   const snapshotRes = await api<{ snapshot: unknown, latestVersion: number }>(r, 'GET', '/api/sync/snapshot').catch(() => null)
   if (snapshotRes?.snapshot) {
+    await page.waitForFunction(() => Boolean((window as unknown as { __tamagoLocalWorker?: unknown }).__tamagoLocalWorker))
     await page.evaluate(async ({ snap, ver }) => {
-      const w = (window as unknown as { __tamagoLocalWorker?: { importSnapshot: (s: unknown, v: number) => Promise<unknown> } }).__tamagoLocalWorker
-      if (w) await w.importSnapshot(snap, ver)
-    }, { snap: snapshotRes.snapshot, ver: snapshotRes.latestVersion }).catch(() => {})
+      const w = (window as unknown as {
+        __tamagoLocalWorker?: { importSnapshot: (s: unknown, v: number, opts?: Record<string, unknown>) => Promise<unknown> }
+      }).__tamagoLocalWorker
+      if (w) await w.importSnapshot(snap, ver, { tier: 'premium' })
+    }, { snap: snapshotRes.snapshot, ver: snapshotRes.latestVersion })
   }
 
   return { clientName, saleId: sale.sale.id, saleNumber: sale.sale.saleNumber, orderId: order.order.id, orderNumber: order.order.orderNumber }

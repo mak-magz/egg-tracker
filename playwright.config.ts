@@ -39,6 +39,7 @@ export default defineConfig({
         FIREBASE_AUTH_EMULATOR_HOST: emulatorHost,
         NUXT_PUBLIC_FIREBASE_PROJECT_ID: projectId,
         NUXT_TURSO_CONTROL_URL: controlDbUrl,
+        NUXT_DEVTOOLS: 'false',
       },
     },
   ],

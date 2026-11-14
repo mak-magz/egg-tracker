@@ -61,6 +61,6 @@ export default async function globalSetup() {
   catch (e) {
     throw new Error(`Sign-in in global-setup did not navigate away from ${page.url()}.\nDiagnostics:\n${diag.join('\n')}`, { cause: e })
   }
-  await page.context().storageState({ path: STATE_PATH })
+  await page.context().storageState({ path: STATE_PATH, indexedDB: true })
   await browser.close()
 }
