@@ -177,7 +177,7 @@ function onPriceInput() {
 
     <!-- Column labels hint for mobile -->
     <div
-      class="grid grid-cols-[148px_148px] gap-x-3 px-1 text-xs text-dimmed lg:hidden"
+      class="grid grid-cols-[142px_142px] gap-x-2.5 text-xs text-dimmed sm:hidden"
       aria-hidden="true"
     >
       <span class="text-center">{{ SALE_COPY.traysLabel }}</span>

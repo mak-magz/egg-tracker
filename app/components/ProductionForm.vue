@@ -345,6 +345,7 @@ defineExpose({ dirty, saving, focusFirstQuantity: () => focusQty(0) })
         icon="i-lucide-info"
         :title="note.title"
         :description="note.body"
+        class="shrink-0"
       />
 
       <!-- Good eggs, by size -->
@@ -352,9 +353,9 @@ defineExpose({ dirty, saving, focusFirstQuantity: () => focusQty(0) })
         <legend class="mb-2 text-base font-medium text-default">
           {{ PRODUCTION_COPY.goodGroup }}
         </legend>
-        <!-- Column headers once (phones/tablets); desktop rows use the design's inline labels. -->
+        <!-- Column headers once (phones); sm+ rows use the design's inline labels. -->
         <div
-          class="grid grid-cols-[148px_148px] gap-x-3 px-3 text-sm text-dimmed lg:hidden"
+          class="grid grid-cols-[142px_142px] gap-x-2.5 px-3 text-sm text-dimmed sm:hidden"
           aria-hidden="true"
         >
           <span class="text-center">Trays</span>
@@ -363,12 +364,12 @@ defineExpose({ dirty, saving, focusFirstQuantity: () => focusQty(0) })
         <div
           v-for="size in sizeLines"
           :key="size.id"
-          class="flex flex-col gap-2 rounded-md bg-muted p-3 lg:flex-row lg:items-start lg:gap-3"
+          class="flex flex-col gap-2 rounded-md bg-muted p-3 sm:flex-row sm:items-start sm:gap-2"
         >
           <!-- An archived size that is on this day (Edit only) comes after the active ones, with an "Archived"
                text badge after the name and "{Name} (archived)" in the inputs' accessible names (AC13). -->
           <span
-            class="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-base font-medium break-words text-default lg:w-24 lg:shrink-0 lg:self-start lg:pt-2"
+            class="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-base font-medium break-words text-default sm:w-20 sm:shrink-0 sm:self-start sm:pt-2.5 lg:pt-2"
             :title="size.name"
           >
             {{ size.name }}
@@ -390,7 +391,7 @@ defineExpose({ dirty, saving, focusFirstQuantity: () => focusQty(0) })
             :error="lineError(size.id)"
             :disabled="saving"
             inline-labels
-            class="min-w-0"
+            class="min-w-0 sm:flex-1"
           />
         </div>
       </fieldset>
@@ -400,9 +401,9 @@ defineExpose({ dirty, saving, focusFirstQuantity: () => focusQty(0) })
         <legend class="mb-2 text-base font-medium text-default">
           {{ PRODUCTION_COPY.rejectsGroup }}
         </legend>
-        <div class="flex flex-col gap-2 rounded-md bg-muted p-3 lg:flex-row lg:gap-3">
+        <div class="flex flex-col gap-2 rounded-md bg-muted p-3 sm:flex-row sm:gap-2">
           <span
-            class="hidden lg:block lg:w-24 lg:shrink-0"
+            class="hidden sm:block sm:w-20 sm:shrink-0"
             aria-hidden="true"
           />
           <QuantityInput
@@ -415,7 +416,7 @@ defineExpose({ dirty, saving, focusFirstQuantity: () => focusQty(0) })
             :disabled="saving"
             last
             inline-labels
-            class="min-w-0"
+            class="min-w-0 sm:flex-1"
           />
         </div>
       </fieldset>
@@ -431,9 +432,9 @@ defineExpose({ dirty, saving, focusFirstQuantity: () => focusQty(0) })
         icon="i-lucide-circle-alert"
         :title="(amountsError || formError)!"
       />
-      <div class="flex flex-col gap-3 lg:flex-row lg:items-center">
+      <div class="flex flex-col gap-3 sm:flex-row sm:items-center">
         <p
-          class="text-sm text-muted lg:flex-1"
+          class="text-sm text-muted sm:flex-1"
         >
           {{ liveTotal }}
         </p>
@@ -450,7 +451,7 @@ defineExpose({ dirty, saving, focusFirstQuantity: () => focusQty(0) })
           <UButton
             type="submit"
             size="xl"
-            class="flex-1 justify-center lg:flex-none lg:px-6"
+            class="flex-1 justify-center sm:flex-none sm:px-6"
             :label="PRODUCTION_COPY.save"
             :loading="saving"
             :disabled="saving"

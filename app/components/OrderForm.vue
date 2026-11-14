@@ -602,6 +602,7 @@ defineExpose({ dirty, saving: busy, focusFirstProblem })
         variant="subtle"
         icon="i-lucide-info"
         :title="ORDER_COPY.becomesFulfilled"
+        class="shrink-0"
       />
     </div>
 
