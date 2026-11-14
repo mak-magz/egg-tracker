@@ -102,7 +102,7 @@ function sanitizeSyncRejection(m: { id: string, type: string, payload: any, occu
   else if (code === 'TM020') {
     errorCode = 'conflict'
     reason = 'duplicate_name'
-    errorMessage = 'A customer with this name already exists.'
+    errorMessage = 'A client with this name already exists.'
   }
   else if (code === 'TM009') {
     errorCode = 'conflict'
@@ -112,7 +112,7 @@ function sanitizeSyncRejection(m: { id: string, type: string, payload: any, occu
   else if (code === 'TM022') {
     errorCode = 'conflict'
     reason = 'client_changed'
-    errorMessage = 'Customer details were updated on another device.'
+    errorMessage = 'Client details were updated on another device.'
   }
   else if (code === 'TM036') {
     errorCode = 'conflict'
@@ -169,13 +169,115 @@ function sanitizeSyncRejection(m: { id: string, type: string, payload: any, occu
     reason = 'not_found'
     errorMessage = 'Referenced record was not found.'
   }
+  else if (code === 'TM001') {
+    errorCode = 'validation_failed'
+    reason = 'invalid_size'
+    errorMessage = 'Selected egg size was not found or has been archived.'
+  }
+  else if (code === 'TM002') {
+    errorCode = 'validation_failed'
+    reason = 'future_date'
+    errorMessage = 'Date cannot be in the future.'
+  }
+  else if (code === 'TM003') {
+    errorCode = 'not_found'
+    reason = 'not_found'
+    errorMessage = 'No production record exists for that date.'
+  }
+  else if (code === 'TM004') {
+    errorCode = 'validation_failed'
+    reason = 'empty_entry'
+    errorMessage = 'Enter at least one tray, loose egg, or reject.'
+  }
+  else if (code === 'TM007') {
+    errorCode = 'validation_failed'
+    reason = 'quantity_out_of_range'
+    errorMessage = 'Entered egg quantity exceeds the allowed limit.'
+  }
+  else if (code === 'TM008') {
+    errorCode = 'validation_failed'
+    reason = 'invalid_name'
+    errorMessage = 'Egg size name is invalid or too long.'
+  }
+  else if (code === 'TM010') {
+    errorCode = 'conflict'
+    reason = 'last_active_size'
+    errorMessage = 'A farm must keep at least one active egg size.'
+  }
+  else if (code === 'TM012') {
+    errorCode = 'conflict'
+    reason = 'archived_size'
+    errorMessage = 'Archived egg size cannot be modified.'
+  }
+  else if (code === 'TM014') {
+    errorCode = 'validation_failed'
+    reason = 'invalid_reorder'
+    errorMessage = 'Egg size sort order list is invalid or incomplete.'
+  }
+  else if (code === 'TM015') {
+    errorCode = 'conflict'
+    reason = 'limit_reached'
+    errorMessage = 'Maximum number of egg sizes for this farm has been reached.'
+  }
+  else if (code === 'TM017') {
+    errorCode = 'validation_failed'
+    reason = 'invalid_name'
+    errorMessage = 'Client name is required and must be within allowed length.'
+  }
+  else if (code === 'TM018') {
+    errorCode = 'validation_failed'
+    reason = 'invalid_phone'
+    errorMessage = 'Client phone number format or length is invalid.'
+  }
+  else if (code === 'TM019') {
+    errorCode = 'validation_failed'
+    reason = 'invalid_price'
+    errorMessage = 'Default price must be above 0 and within valid decimals.'
+  }
+  else if (code === 'TM021') {
+    errorCode = 'conflict'
+    reason = 'limit_reached'
+    errorMessage = 'Maximum number of active clients for this farm has been reached.'
+  }
+  else if (code === 'TM028') {
+    errorCode = 'validation_failed'
+    reason = 'invalid_line_count'
+    errorMessage = 'A sale or order must have between 1 and 20 lines.'
+  }
+  else if (code === 'TM029') {
+    errorCode = 'validation_failed'
+    reason = 'duplicate_size'
+    errorMessage = 'An egg size cannot appear more than once.'
+  }
+  else if (code === 'TM030') {
+    errorCode = 'validation_failed'
+    reason = 'eggs_out_of_range'
+    errorMessage = 'Egg count per line must be between 1 and 100,000.'
+  }
+  else if (code === 'TM031') {
+    errorCode = 'validation_failed'
+    reason = 'invalid_price'
+    errorMessage = 'Price per tray must be above 0 and within valid decimals.'
+  }
+  else if (code === 'TM032') {
+    errorCode = 'validation_failed'
+    reason = 'invalid_client'
+    errorMessage = 'A delivery requires an active client.'
+  }
+  else if (code === 'TM033') {
+    errorCode = 'validation_failed'
+    reason = 'invalid_size'
+    errorMessage = 'Selected egg size on line was not found or has been archived.'
+  }
   else if (code.startsWith('TM00') || ['TM017', 'TM018', 'TM019', 'TM028', 'TM029', 'TM030', 'TM031', 'TM032', 'TM033'].includes(code)) {
     errorCode = 'validation_failed'
     reason = 'validation_failed'
     errorMessage = 'Input validation failed.'
   }
 
-  return { entityRef, errorCode, reason, errorMessage }
+  const domainCode = /^TM\d{3}$/.test(code) ? code : undefined
+
+  return { entityRef, errorCode, reason, errorMessage, domainCode }
 }
 
 export function createDrizzleBackedClient(
@@ -1986,7 +2088,7 @@ export function createDrizzleBackedClient(
       case 'sync_push': {
         const deviceId = args.p_device_id as string
         const mutations = (args.p_mutations as any[]) ?? []
-        const results: Array<{ id: string, status: 'applied' | 'conflict_lww' | 'rejected', version: number, error?: string }> = []
+        const results: Array<{ id: string, status: 'applied' | 'conflict_lww' | 'rejected', version: number, error?: string, code?: string, reason?: string | null }> = []
         const [latestLog] = await drizzleDb.select().from(schema.changeLog).orderBy(desc(schema.changeLog.version)).limit(1)
         let curVersion = latestLog?.version ?? 0
 
@@ -2140,7 +2242,14 @@ export function createDrizzleBackedClient(
               // sync_rejections table may not exist in pre-v3 SQLite databases
             }
 
-            results.push({ id: m.id, status: 'rejected', version: curVersion, error: sanitized.errorMessage })
+            results.push({
+              id: m.id,
+              status: 'rejected',
+              version: curVersion,
+              error: sanitized.errorMessage,
+              ...(sanitized.domainCode ? { code: sanitized.domainCode } : {}),
+              ...(sanitized.reason ? { reason: sanitized.reason } : {}),
+            })
           }
         }
 

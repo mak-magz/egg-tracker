@@ -37,6 +37,8 @@ const pushResponseSchema = z.object({
     status: z.enum(['applied', 'conflict_lww', 'rejected']),
     version: z.number(),
     error: z.string().optional(),
+    code: z.string().optional(),
+    reason: z.string().nullable().optional(),
   })),
   latestVersion: z.number(),
 })

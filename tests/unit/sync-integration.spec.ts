@@ -370,4 +370,136 @@ describe('Tier 2: Real Local LibSQL Sync Integration', () => {
       { id: 'sub-race-tray1', producedOn: '2026-11-12', hadBefore: false },
     ])
   })
+
+  it('8. rejects duplicate client creation with structured code TM020, reason duplicate_name, and PII-free telemetry', async () => {
+    const seedClientRes = await applySyncPush(tenantDb, {
+      deviceId: 'D1',
+      mutations: [
+        {
+          id: 'mut-seed-cli-dup',
+          type: 'add_client',
+          occurredAt: new Date().toISOString(),
+          payload: {
+            id: 'cli-seed-dup-1',
+            submissionId: 'sub-cli-seed-dup-1',
+            name: 'Duplicate Target Bakery',
+            phone: '09170000001',
+            defaultPrice: 200,
+          },
+        },
+      ],
+    })
+    expect(seedClientRes.results[0]?.status).toBe('applied')
+
+    const duplicateClientMutation = {
+      id: 'mut-dup-cli',
+      type: 'add_client',
+      occurredAt: new Date().toISOString(),
+      payload: {
+        id: 'cli-dup-1',
+        submissionId: 'sub-cli-dup-1',
+        name: 'duplicate target bakery',
+        phone: '09170000002',
+        defaultPrice: 210,
+      },
+    }
+
+    const pushRes = await applySyncPush(tenantDb, {
+      deviceId: 'D2',
+      mutations: [duplicateClientMutation],
+    })
+
+    expect(pushRes.results).toHaveLength(1)
+    const result = pushRes.results[0]!
+    expect(result.id).toBe('mut-dup-cli')
+    expect(result.status).toBe('rejected')
+    expect(result.code).toBe('TM020')
+    expect(result.reason).toBe('duplicate_name')
+    expect(result.error).toBe('A client with this name already exists.')
+    expect(result.error?.toLowerCase()).not.toContain('duplicate target bakery')
+
+    const rejections = await drizzleDb
+      .select()
+      .from(tenantSchema.syncRejections)
+      .where(eq(tenantSchema.syncRejections.mutationId, 'mut-dup-cli'))
+    expect(rejections).toHaveLength(1)
+    expect(rejections[0].errorCode).toBe('conflict')
+    expect(rejections[0].reason).toBe('duplicate_name')
+    expect(rejections[0].errorMessage).toBe('A client with this name already exists.')
+    expect(rejections[0].errorMessage.toLowerCase()).not.toContain('duplicate target bakery')
+  })
+
+  it('9. rejects duplicate size creation with structured code TM009 and reason duplicate_name', async () => {
+    const pushRes = await applySyncPush(tenantDb, {
+      deviceId: 'D2',
+      mutations: [
+        {
+          id: 'mut-dup-size',
+          type: 'add_size',
+          occurredAt: new Date().toISOString(),
+          payload: {
+            id: 'size-dup-1',
+            submissionId: 'sub-size-dup-1',
+            name: 'small',
+          },
+        },
+      ],
+    })
+
+    expect(pushRes.results).toHaveLength(1)
+    const result = pushRes.results[0]!
+    expect(result.id).toBe('mut-dup-size')
+    expect(result.status).toBe('rejected')
+    expect(result.code).toBe('TM009')
+    expect(result.reason).toBe('duplicate_name')
+    expect(result.error).toBe('An egg size with this name already exists.')
+
+    const rejections = await drizzleDb
+      .select()
+      .from(tenantSchema.syncRejections)
+      .where(eq(tenantSchema.syncRejections.mutationId, 'mut-dup-size'))
+    expect(rejections).toHaveLength(1)
+    expect(rejections[0].errorCode).toBe('conflict')
+    expect(rejections[0].reason).toBe('duplicate_name')
+  })
+
+  it('10. rejects retiring last active size with structured code TM010 and reason last_active_size', async () => {
+    const allSizes = await drizzleDb.select().from(tenantSchema.sizes)
+    const activeSizes = allSizes.filter((s: any) => s.archivedAt === null)
+
+    for (let i = 0; i < activeSizes.length - 1; i++) {
+      await drizzleDb
+        .update(tenantSchema.sizes)
+        .set({ archivedAt: new Date().toISOString() })
+        .where(eq(tenantSchema.sizes.id, activeSizes[i].id))
+    }
+
+    const lastSize = activeSizes[activeSizes.length - 1]
+    const pushRes = await applySyncPush(tenantDb, {
+      deviceId: 'D2',
+      mutations: [
+        {
+          id: 'mut-archive-last-size',
+          type: 'archive_size',
+          occurredAt: new Date().toISOString(),
+          payload: { id: lastSize.id },
+        },
+      ],
+    })
+
+    expect(pushRes.results).toHaveLength(1)
+    const result = pushRes.results[0]!
+    expect(result.id).toBe('mut-archive-last-size')
+    expect(result.status).toBe('rejected')
+    expect(result.code).toBe('TM010')
+    expect(result.reason).toBe('last_active_size')
+    expect(result.error).toBe('A farm must keep at least one active egg size.')
+
+    for (let i = 0; i < activeSizes.length - 1; i++) {
+      await drizzleDb
+        .update(tenantSchema.sizes)
+        .set({ archivedAt: null })
+        .where(eq(tenantSchema.sizes.id, activeSizes[i].id))
+    }
+  })
 })
